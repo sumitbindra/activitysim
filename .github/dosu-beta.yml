@@ -1,0 +1,15 @@
+# .github/dosu-beta.yml
+
+# The number of related issues to consider for context when answering.
+related_issue_count: 3
+
+# The format for Dosu's answers. You can customize this heavily.
+# Use {{answer}} as a placeholder for the generated content.
+answer_format: |
+  Hello! I'm Dosu, and I'm helping the maintainers triage issues.
+
+  I noticed you're running into an issue. Here's what I've found to help you get started:
+
+  {{answer}}
+
+  If this is helpful, please leave a 👍 on this issue.
