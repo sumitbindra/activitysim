@@ -10,6 +10,7 @@ import pandas as pd
 from activitysim.core import chunk, interaction_simulate, logit, tracing, util, workflow
 from activitysim.core.configuration.base import ComputeSettings
 from activitysim.core.simulate import set_skim_wrapper_targets
+from activitysim.core.exceptions import SegmentedSpecificationError
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +116,7 @@ def _interaction_sample_simulate(
         )
 
     if len(spec.columns) > 1:
-        raise RuntimeError("spec must have only one column")
+        raise SegmentedSpecificationError("spec must have only one column")
 
     # if using skims, copy index into the dataframe, so it will be
     # available as the "destination" for the skims dereference below
@@ -133,7 +134,7 @@ def _interaction_sample_simulate(
 
     # assert alternatives.index.name == choosers.index.name
     # asserting the index names are the same tells us nothing about the underlying data so why?
-    logger.info(
+    logger.debug(
         f"{trace_label} start merging choosers and alternatives to create interaction_df"
     )
 
@@ -169,7 +170,7 @@ def _interaction_sample_simulate(
         )
 
     interaction_df = alternatives.join(choosers, how="left", rsuffix="_chooser")
-    logger.info(
+    logger.debug(
         f"{trace_label} end merging choosers and alternatives to create interaction_df"
     )
 
@@ -349,6 +350,11 @@ def _interaction_sample_simulate(
         # need to get from an integer offset into the alternative sample to the alternative index
         # that is, we want the index value of the row that is offset by <position> rows into the
         # tranche of this choosers alternatives created by cross join of alternatives and choosers
+
+        # when skip failed choices is enabled, the position may be -99 for failed choices, which gets droppped eventually
+        # here we just need to clip to zero to avoid getting the wrong index in the take() below
+        if state.settings.skip_failed_choices:
+            positions = positions.clip(lower=0)
 
         # resulting pandas Int64Index has one element per chooser row and is in same order as choosers
         choices = alternatives[choice_column].take(positions + first_row_offsets)

@@ -11,6 +11,7 @@ from activitysim.abm.misc import override_hh_ids
 from activitysim.abm.tables.util import simple_table_join
 from activitysim.core import tracing, workflow
 from activitysim.core.input import read_input_table
+from activitysim.core.exceptions import MissingInputTableDefinition
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ def households(state: workflow.State) -> pd.DataFrame:
             )
 
         if df.shape[0] == 0:
-            raise RuntimeError("No override households found in store")
+            raise MissingInputTableDefinition("No override households found in store")
 
     # if we are tracing hh exclusively
     elif _trace_hh_id and households_sample_size == 1:
@@ -98,6 +99,9 @@ def households(state: workflow.State) -> pd.DataFrame:
         if households_sample_size == 0:
             sample_rate = 1
         else:
+            # TODO: do not round, keep full precision to avoid creating 0 sample_rate for small samples
+            # Existing CI tests will fail when performing bitwise comparisons with the unrounded sample_rate
+            # We should update the CI tests
             sample_rate = round(households_sample_size / tot_households, 3)
 
         df["sample_rate"] = sample_rate
@@ -109,6 +113,12 @@ def households(state: workflow.State) -> pd.DataFrame:
 
     # replace table function with dataframe
     state.add_table("households", df)
+    if state.settings.skip_failed_choices:
+        logger.info(
+            "Note: 'skip_failed_choices' is enabled; households may be skipped when simulation fails."
+        )
+    # initialize skipped households table as empty and same columns as households
+    state.add_table("households_skipped", df.iloc[0:0])
 
     state.get_rn_generator().add_channel("households", df)
 

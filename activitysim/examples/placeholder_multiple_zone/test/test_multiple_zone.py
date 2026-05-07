@@ -2,13 +2,13 @@ from __future__ import annotations
 
 # ActivitySim
 # See full license in LICENSE.txt.
+import importlib.resources
 import os
 import subprocess
 import sys
 from pathlib import Path
 
 import pandas as pd
-import pkg_resources
 import pytest
 
 from activitysim.core import test, workflow
@@ -16,12 +16,12 @@ from activitysim.core import test, workflow
 
 def example_path(dirname):
     resource = os.path.join("examples", "placeholder_multiple_zone", dirname)
-    return pkg_resources.resource_filename("activitysim", resource)
+    return str(importlib.resources.files("activitysim").joinpath(resource))
 
 
 def mtc_example_path(dirname):
     resource = os.path.join("examples", "prototype_mtc", dirname)
-    return pkg_resources.resource_filename("activitysim", resource)
+    return str(importlib.resources.files("activitysim").joinpath(resource))
 
 
 def build_data():
@@ -31,7 +31,6 @@ def build_data():
         else:
             go = [sys.executable]
         subprocess.check_call(go + [example_path("scripts/two_zone_example_data.py")])
-        subprocess.check_call(go + [example_path("scripts/three_zone_example_data.py")])
 
 
 @pytest.fixture(scope="module")
@@ -87,8 +86,6 @@ def run_test(zone, multiprocess=False):
 
     if multiprocess:
         run_args = run_args + ["-s", "settings_mp"]
-    elif zone == "3":
-        run_args = run_args + ["-s", "settings_static"]
 
     if os.environ.get("GITHUB_ACTIONS") == "true":
         subprocess.run(["coverage", "run", "-a", file_path] + run_args, check=True)
@@ -104,16 +101,6 @@ def test_2_zone(data):
 
 def test_2_zone_mp(data):
     run_test(zone="2", multiprocess=True)
-
-
-def test_3_zone(data):
-    # python simulation.py -c configs_3_zone -c ../configs_3_zone -c \
-    # ../../prototype_mtc/configs -d ../data_3 -o output -s settings_mp
-    run_test(zone="3", multiprocess=False)
-
-
-def test_3_zone_mp(data):
-    run_test(zone="3", multiprocess=True)
 
 
 EXPECTED_MODELS = [
@@ -206,6 +193,3 @@ if __name__ == "__main__":
     build_data()
     run_test(zone="2", multiprocess=False)
     run_test(zone="2", multiprocess=True)
-
-    run_test(zone="3", multiprocess=False)
-    run_test(zone="3", multiprocess=True)

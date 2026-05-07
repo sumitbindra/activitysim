@@ -82,7 +82,7 @@ def skims_for_logsums(
     elif isinstance(destination_for_tour_purpose, dict):
         dest_col_name = destination_for_tour_purpose.get(tour_purpose)
     else:
-        raise RuntimeError(
+        raise TypeError(
             f"expected string or dict DESTINATION_FOR_TOUR_PURPOSE model_setting for {tour_purpose}"
         )
 
@@ -110,31 +110,6 @@ def skims_for_logsums(
         "dest_col_name": dest_col_name,
     }
 
-    if network_los.zone_system == los.THREE_ZONE:
-        # fixme - is this a lightweight object?
-        tvpb = network_los.tvpb
-
-        tvpb_logsum_odt = tvpb.wrap_logsum(
-            orig_key=orig_col_name,
-            dest_key=dest_col_name,
-            tod_key="out_period",
-            segment_key="demographic_segment",
-            trace_label=trace_label,
-            tag="tvpb_logsum_odt",
-        )
-        tvpb_logsum_dot = tvpb.wrap_logsum(
-            orig_key=dest_col_name,
-            dest_key=orig_col_name,
-            tod_key="in_period",
-            segment_key="demographic_segment",
-            trace_label=trace_label,
-            tag="tvpb_logsum_dot",
-        )
-
-        skims.update(
-            {"tvpb_logsum_odt": tvpb_logsum_odt, "tvpb_logsum_dot": tvpb_logsum_dot}
-        )
-
     return skims
 
 
@@ -161,7 +136,7 @@ def _compute_logsums(
             mandatory=False,
         )
         choosers = alt_tdd.join(tours_merged, how="left", rsuffix="_chooser")
-        logger.info(
+        logger.debug(
             f"{trace_label} compute_logsums for {choosers.shape[0]} choosers {alt_tdd.shape[0]} alts"
         )
 
@@ -169,12 +144,6 @@ def _compute_logsums(
         constants = config.get_model_constants(logsum_settings)
         locals_dict = {}
         locals_dict.update(constants)
-
-        if network_los.zone_system == los.THREE_ZONE:
-            # TVPB constants can appear in expressions
-            locals_dict.update(
-                network_los.setting("TVPB_SETTINGS.tour_mode_choice.CONSTANTS")
-            )
 
         locals_dict.update(skims)
 
@@ -194,7 +163,7 @@ def _compute_logsums(
 
         if preprocessor_settings:
             simulate.set_skim_wrapper_targets(choosers, skims)
-            logger.info(
+            logger.debug(
                 f"{trace_label} start preprocessing prior to compute_logsums for {choosers.shape[0]} choosers {alt_tdd.shape[0]} alts"
             )
             expressions.assign_columns(
@@ -204,7 +173,7 @@ def _compute_logsums(
                 locals_dict=locals_dict,
                 trace_label=trace_label,
             )
-            logger.info(
+            logger.debug(
                 f"{trace_label} end preprocessing prior to compute_logsums for {choosers.shape[0]} choosers {alt_tdd.shape[0]} alts"
             )
 
@@ -426,7 +395,7 @@ def compute_tour_scheduling_logsums(
         )
         chunk_sizer.log_df(trace_label, "deduped_alt_tdds", deduped_alt_tdds)
 
-        logger.info(
+        logger.debug(
             f"{trace_label} compute_logsums "
             f"deduped_alt_tdds reduced number of rows by "
             f"{round(100 * (len(alt_tdd) - len(deduped_alt_tdds)) / len(alt_tdd), 2)}% "
@@ -758,7 +727,7 @@ def _schedule_tours(
 
     """
 
-    logger.info(
+    logger.debug(
         "%s schedule_tours running %d tour choices" % (tour_trace_label, len(tours))
     )
 
@@ -908,7 +877,7 @@ def schedule_tours(
         logger.info("schedule_tours %s tours not monotonic_increasing - sorting df")
         tours = tours.sort_index()
 
-    logger.info(
+    logger.debug(
         "%s schedule_tours running %d tour choices" % (tour_trace_label, len(tours))
     )
 
@@ -919,7 +888,6 @@ def schedule_tours(
         assert not tours[timetable_window_id_col].duplicated().any()
 
     if model_settings.LOGSUM_SETTINGS:
-        # we need skims to calculate tvpb skim overhead in 3_ZONE systems for use by calc_rows_per_chunk
         skims = skims_for_logsums(
             state, logsum_tour_purpose, model_settings, tour_trace_label
         )

@@ -21,6 +21,7 @@ from activitysim.core.simulate import (
     eval_nest_coefficients,
     read_model_coefficient_template,
 )
+from activitysim.core.exceptions import ModelConfigurationError
 
 # import model settings
 from activitysim.abm.models.accessibility import AccessibilitySettings
@@ -159,10 +160,6 @@ CHECKER_SETTINGS = {
     "initialize_landuse": {
         "settings_cls": InitializeTableSettings,
         "settings_file": "initialize_landuse.yaml",
-    },
-    "initialize_los": {
-        "settings_cls": NetworkSettings,
-        "settings_file": "network_los.yaml",
     },
     "input_checker": {
         "settings_cls": PydanticReadable,  # input checker uses state.filesystem.read_model_settings directly
@@ -322,7 +319,7 @@ def try_load_model_settings(
 ) -> tuple[PydanticBase | None, Exception | None]:
 
     msg = f"Attempting to load model settings for {model_name} via {model_settings_class.__name__} and {model_settings_file}"
-    logger.info(msg)
+    logger.debug(msg)
     file_logger.info(msg)
 
     try:
@@ -348,7 +345,7 @@ def try_load_model_settings(
             )
         result = model_settings, None
         msg = f"Successfully loaded model settings from {model_settings_file}"
-        logger.info(msg)
+        logger.debug(msg)
     except Exception as e:
         result = None, e
     return result
@@ -358,12 +355,12 @@ def try_load_spec(
     model_name: str, model_settings: PydanticBase, spec_file: str, state: State
 ) -> tuple[DataFrame | None, Exception | None]:
     msg = f"Attempting to load SPEC for {model_name} via {model_settings.__class__.__name__}"
-    logger.info(msg)
+    logger.debug(msg)
     file_logger.info(msg)
     try:
         result = state.filesystem.read_model_spec(spec_file), None
         msg = f"Successfully loaded model SPEC from {spec_file}"
-        logger.info(msg)
+        logger.debug(msg)
         file_logger.info(msg)
     except Exception as e:
         # always return a dataframe
@@ -375,13 +372,13 @@ def try_load_coefs(
     model_name: str, model_settings: PydanticBase, coefs_file: str, state: State
 ) -> tuple[DataFrame, Optional[Exception]]:
     msg = f"Attempting to load COEFFICIENTS for {model_name} via {model_settings.__class__.__name__}"
-    logger.info(msg)
+    logger.debug(msg)
     file_logger.info(msg)
 
     try:
         result = state.filesystem.read_model_coefficients(file_name=coefs_file), None
         msg = f"Successfully loaded model Coefficients from {coefs_file}"
-        logger.info(msg)
+        logger.debug(msg)
         file_logger.info(msg)
     except Exception as e:
         result = None, e
@@ -423,7 +420,7 @@ def try_eval_spec_coefs(
         else:
             result = eval_coefficients(state, spec, coefs, estimator=None), None
         msg = f"Successfully evaluated coefficients for {model_name}"
-        logger.info(msg)
+        logger.debug(msg)
         file_logger.info(msg)
     except Exception as e:
         result = None, e
@@ -662,8 +659,6 @@ def check_model_settings(
     # add shadow pricing and initalize los (not in state.settings.models)
     if state.settings.use_shadow_pricing == True:
         all_models.append("shadow_pricing")
-    if "initialize_los" in state._RUNNABLE_STEPS:
-        all_models.append("initialize_los")
 
     for model_name in all_models:
 
@@ -760,7 +755,7 @@ def check_model_settings(
         for e in all_errors:
             logger.error(f"\t{str(e)}")
             file_logger.error(f"\t{str(e)}")
-        raise RuntimeError(
+        raise ModelConfigurationError(
             f"Encountered one or more errors in settings checker. See f{log_file} for details."
         )
     msg = f"Setting Checker Complete. No runtime errors were raised. Check f{log_file} for warnings. These *may* prevent model from successfully running."

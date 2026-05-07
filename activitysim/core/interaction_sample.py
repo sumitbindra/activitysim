@@ -20,6 +20,7 @@ from activitysim.core import (
 from activitysim.core.configuration.base import ComputeSettings
 from activitysim.core.skim_dataset import DatasetWrapper
 from activitysim.core.skim_dictionary import SkimWrapper
+from activitysim.core.exceptions import SegmentedSpecificationError
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +181,7 @@ def _interaction_sample(
     zone_layer : {'taz', 'maz'}, default 'taz'
         Specify which zone layer of the skims is to be used.  You cannot use the
         'maz' zone layer in a one-zone model, but you can use the 'taz' layer in
-        a two- or three-zone model (e.g. for destination pre-sampling).
+        a two-zone model (e.g. for destination pre-sampling).
 
     compute_settings : ComputeSettings, optional
         Settings to use if compiling with sharrow
@@ -219,7 +220,7 @@ def _interaction_sample(
         )
 
     if len(spec.columns) > 1:
-        raise RuntimeError("spec must have only one column")
+        raise SegmentedSpecificationError("spec must have only one column")
 
     # if using skims, copy index into the dataframe, so it will be
     # available as the "destination" for set_skim_wrapper_targets
@@ -642,7 +643,7 @@ def interaction_sample(
     zone_layer : {'taz', 'maz'}, default 'taz'
         Specify which zone layer of the skims is to be used.  You cannot use the
         'maz' zone layer in a one-zone model, but you can use the 'taz' layer in
-        a two- or three-zone model (e.g. for destination pre-sampling).
+        a two-zone model (e.g. for destination pre-sampling).
     explicit_chunk_size : float, optional
         If > 0, specifies the chunk size to use when chunking the interaction
         simulation. If < 1, specifies the fraction of the total number of choosers.

@@ -9,11 +9,14 @@ import os
 import sys
 import warnings
 from datetime import datetime
+import struct
+import time
 
 import numpy as np
 
 from activitysim.core import chunk, config, mem, timing, tracing, workflow
 from activitysim.core.configuration import FileSystem, Settings
+from activitysim.core.run_id import RunId
 
 from activitysim.abm.models.settings_checker import check_model_settings
 
@@ -29,6 +32,7 @@ INJECTABLES = [
     "settings_file_name",
     "imported_extensions",
     "run_timestamp",
+    "run_id",
 ]
 
 
@@ -161,6 +165,8 @@ def handle_standard_args(state: workflow.State, args, multiprocess=True):
         # 'configs', 'data', and 'output' folders by default
         os.chdir(args.working_dir)
 
+    inject_arg("run_id", state.tracing.run_id)
+
     if args.ext:
         for e in args.ext:
             basepath, extpath = os.path.split(e)
@@ -268,6 +274,7 @@ def run(args):
     """
 
     state = workflow.State()
+    _init_run_id = state.tracing.run_id
 
     # register abm steps and other abm-specific injectables
     # by default, assume we are running activitysim.abm
@@ -468,6 +475,24 @@ def run(args):
 
     if memory_sidecar_process:
         memory_sidecar_process.stop()
+
+    # print out a summary of households skipped due to failed choices
+    # we want to see number of unique households skipped by trace_label
+    if state.settings.skip_failed_choices:
+        skipped_household_ids_dict = state.get("skipped_household_ids", dict())
+        for trace_label, hh_id_set in skipped_household_ids_dict.items():
+            logger.warning(
+                f"Number of unique households skipped for trace_label '{trace_label}': {len(hh_id_set)}. They are: {sorted(hh_id_set)}"
+            )
+        # also log the total number of unique households skipped across all trace_labels
+        import itertools
+
+        all_skipped_hh_ids = set(
+            itertools.chain.from_iterable(skipped_household_ids_dict.values())
+        )
+        logger.warning(
+            f"Total number of unique households skipped across all trace_labels: {len(all_skipped_hh_ids)}."
+        )
 
     if state.settings.expression_profile:
         # generate a summary of slower expression evaluation times

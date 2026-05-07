@@ -3,8 +3,8 @@
 # Transform the TM1 TAZ-based model 25 zone inputs to a two-zone (MAZ and TAZ) set of inputs for software development.
 #
 # The 25 zones are downtown San Francisco and they are converted to 25 MAZs.
-# MAZs 1,2,3,4 are small and adjacent and assigned TAZ 2 and TAP 10002.
-# MAZs 13,14,15 are small and adjacent and as signed TAZ 14 and TAP 10014.
+# MAZs 1,2,3,4 are small and adjacent and assigned TAZ 2.
+# MAZs 13,14,15 are small and adjacent and as signed TAZ 14.
 # TAZs 1,3,4,13,15 are removed from the final data set.
 #
 # This script should work for the full TM1 example as well.
@@ -104,11 +104,10 @@ print("taz.csv\n%s" % (taz_df.head(6),))
 
 # ### Create taz skims
 
-with omx.open_file(
-    os.path.join(input_data, "skims.omx"), "r"
-) as skims_file, omx.open_file(
-    os.path.join(output_data, "taz_skims.omx"), "w"
-) as output_skims_file:
+with (
+    omx.open_file(os.path.join(input_data, "skims.omx"), "r") as skims_file,
+    omx.open_file(os.path.join(output_data, "taz_skims.omx"), "w") as output_skims_file,
+):
     skims = skims_file.list_matrices()
     num_zones = skims_file.shape()[0]
 

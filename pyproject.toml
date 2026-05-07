@@ -26,7 +26,7 @@ dependencies = [
     "requests >= 2.7",
     "scikit-learn >= 1.2",
     "setuptools>=80.9.0",
-    "sharrow >= 2.9.1",
+    "sharrow>=2.15",
     "sparse",
     "tables >= 3.9",  # pytables is tables in pypi
     "xarray >= 2024.05",
@@ -118,7 +118,7 @@ dev = [
     "isort==5.12.0",
     "jupyter-book",
     "jupyterlab",
-    "larch>=6.0.42",
+    "larch>=6.0.46",
     "matplotlib",
     "myst-nb",
     "myst-parser",  # allows markdown in sphinx

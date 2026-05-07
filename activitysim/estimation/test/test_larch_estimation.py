@@ -44,7 +44,7 @@ def _regression_check(dataframe_regression, df, basename=None, rtol=None):
         # pandas 1.3 handles int8 dtypes as actual numbers, so holdfast needs to be dropped manually
         # we're dropping it not adding to the regression check so older pandas will also work.
         basename=basename,
-        default_tolerance=dict(atol=1e-6, rtol=rtol)
+        default_tolerance=dict(atol=1e-6, rtol=rtol),
         # can set a little loose, as there is sometimes a little variance in these
         # results when switching backend implementations. We're checking all
         # the parameters and the log likelihood, so modest variance in individual
@@ -129,7 +129,7 @@ def test_location_model(
     dataframe_regression.check(
         size_spec,
         basename=f"test_loc_{name}_{method}_size_spec",
-        default_tolerance=dict(atol=1e-6, rtol=5e-2)
+        default_tolerance=dict(atol=1e-6, rtol=5e-2),
         # set a little loose, as there is sometimes a little variance in these
         # results when switching backend implementations.
     )
@@ -226,9 +226,25 @@ def test_school_location(est_data, num_regression, dataframe_regression):
 
 
 def test_cdap_model(est_data, num_regression, dataframe_regression):
+    from larch import P
+
     from activitysim.estimation.larch.cdap import cdap_model
 
     m = cdap_model()
+
+    assert len(m) == 5
+    assert len(m[0].utility_co) == 3
+    assert len(m[1].utility_co) == 9
+    assert len(m[2].utility_co) == 27
+    assert len(m[3].utility_co) == 81
+    assert len(m[4].utility_co) == 243
+
+    # check that interaction parameters are assigned correctly
+    assert P.coef_M_xxx in m[2].utility_co[1]
+    assert P.coef_M_xxxxx not in m[2].utility_co[1]
+    assert P.coef_M_xxx not in m[4].utility_co[1]
+    assert P.coef_M_xxxxx in m[4].utility_co[1]
+
     m.load_data()
     loglike_prior = m.loglike()
     r = m.maximize_loglike(method="SLSQP", options={"maxiter": 1000, "ftol": 1.0e-7})
