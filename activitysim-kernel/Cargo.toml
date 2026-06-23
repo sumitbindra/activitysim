@@ -1,0 +1,31 @@
+[package]
+name = "activitysim-kernel"
+version = "0.1.0"
+edition = "2021"
+description = "Rust kernel for ActivitySim destination/location choice hot path"
+license = "BSD-3-Clause"
+repository = "https://github.com/ActivitySim/activitysim"
+readme = "README.md"
+
+# The library is built both as a cdylib (the importable Python extension, via the
+# optional `python` feature) and as an rlib so the pure-Rust numeric core can be
+# unit-tested with `cargo test` on machines without a Python toolchain.
+[lib]
+name = "activitysim_kernel"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# `python` pulls in PyO3 + rust-numpy and builds the importable extension module.
+# It is enabled by default for maturin builds; verification of the numeric core
+# uses `cargo test --no-default-features`, which needs no Python installed.
+default = ["python"]
+python = ["dep:pyo3", "dep:numpy"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py39"], optional = true }
+numpy = { version = "0.23", optional = true }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
