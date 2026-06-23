@@ -11,6 +11,7 @@
 
 pub mod choice;
 pub mod error;
+pub mod spec;
 
 /// Crate version, surfaced to Python for diagnostics.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
