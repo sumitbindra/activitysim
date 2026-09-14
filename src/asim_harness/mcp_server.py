@@ -153,12 +153,17 @@ def summarize_run(run_id: str, detail: str = "full") -> dict[str, Any]:
 
 
 @server.tool()
-def check_targets(run_id: str) -> dict[str, Any]:
-    """Score a run against targets/<model>.yaml. Failed metrics come with per-category deltas (run minus target) and n."""
+def check_targets(run_id: str, detail: str = "failed", metric: str | None = None) -> dict[str, Any]:
+    """Score a run against targets/<model>.yaml: per metric pass/fail, max |delta|, n.
+
+    delta = run share minus target share. detail="failed" (default) gives per-category share/target/delta
+    only for failed metrics; detail="all" gives them for every metric; metric="trip_mode_share.overall"
+    (a name or a prefix such as "trip_mode_share") selects metrics and always includes every category.
+    """
     run_id = _resolve(run_id)
     try:
-        return targets.compact(targets.check_run(run_id))
-    except (targets.TargetsError, summarize.SummaryError) as e:
+        return targets.compact(targets.check_run(run_id), detail=detail, metric=metric)
+    except (targets.TargetsError, summarize.SummaryError, ValueError, KeyError) as e:
         raise ToolError(str(e)) from e
 
 

@@ -129,3 +129,35 @@ def test_check_reads_only_summary(tmp_root, monkeypatch):
     targets.bootstrap("20260101")
     monkeypatch.setattr(summarize, "summarize_output", lambda *a, **k: (_ for _ in ()).throw(AssertionError("raw tables read")))
     assert targets.check_run("20260101")["passed"] is True
+
+
+def test_scorecard_keeps_shares_and_targets_and_compact_detail(tmp_root):
+    _make_run(tmp_root, "20260101-000000-aaaaaa", _summary("20260101-000000-aaaaaa"))
+    targets.bootstrap("20260101")
+    drifted = _summary("20260102-000000-bbbbbb", walk=0.65, bike=0.05)
+    _make_run(tmp_root, "20260102-000000-bbbbbb", drifted)
+    card = targets.check_run("20260102")
+    m = card["metrics"]["trip_mode_share.overall"]
+    assert m["actual"]["WALK"] == 0.65 and m["target"]["WALK"] == 0.6 and m["deltas"]["WALK"] == 0.05
+    default = targets.compact(card)
+    assert default["detail"] == "failed"
+    failed = {r["metric"]: r for r in default["failed"]}
+    assert failed["trip_mode_share.overall"]["categories"]["WALK"] == {"delta": 0.05, "share": 0.65, "target": 0.6}
+    assert "DRIVEALONEFREE" not in failed["trip_mode_share.overall"]["categories"]  # |delta| < 0.0005 dropped
+    assert all("categories" not in r for r in default["passed_metrics"])
+    everything = targets.compact(card, detail="all")
+    assert everything["detail"] == "all"
+    assert all("categories" in r for r in everything["passed_metrics"] + everything["failed"])
+    one = targets.compact(card, metric="trip_mode_share.overall")
+    assert [r["metric"] for r in one["failed"] + one["passed_metrics"]] == ["trip_mode_share.overall"]
+    assert set(one["failed"][0]["categories"]) == {"WALK", "BIKE", "DRIVEALONEFREE"}
+    prefix = targets.compact(card, metric="tour_frequency")
+    assert {r["metric"] for r in prefix["passed_metrics"]} == {"tour_frequency.mandatory", "tour_frequency.non_mandatory"}
+    with pytest.raises(KeyError, match="no metric"):
+        targets.compact(card, metric="nope")
+    with pytest.raises(ValueError):
+        targets.compact(card, detail="some")
+    # old scorecards without actual/target still render
+    old = {k: v for k, v in card.items()}
+    old["metrics"] = {n: {k: v for k, v in r.items() if k not in ("actual", "target")} for n, r in card["metrics"].items()}
+    assert targets.compact(old, detail="all")["failed"][0]["categories"]["WALK"] == {"delta": 0.05}

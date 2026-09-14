@@ -87,6 +87,10 @@ def test_tools_and_read_only_calls(tmp_root, server_env):
         out["summarize"] = r.structured_content
         r = await _call(s, "check_targets", {"run_id": "20260102"})
         out["check"] = r.structured_content
+        r = await _call(s, "check_targets", {"run_id": "20260102", "metric": "trip_mode_share.overall"})
+        out["check_one"] = r.structured_content
+        r = await _call(s, "check_targets", {"run_id": "20260102", "metric": "nope"})
+        out["check_bad_metric"] = (r.is_error, r.content[0].text)
         r = await _call(s, "compare_runs", {"run_a": "20260101", "run_b": "20260102"})
         out["compare"] = r.structured_content
         r = await _call(s, "get_error", {"run_id": "20260103", "log_tail_lines": 5})
@@ -122,6 +126,9 @@ def test_tools_and_read_only_calls(tmp_root, server_env):
     assert "failed in step trip_mode_choice" in out["get_run_failed"]["explanation"]
     assert "by_purpose" not in out["summarize"]["trip_mode_share"] and "trips_by_purpose" not in out["summarize"]["counts"]
     assert out["check"]["passed"] is False and out["check"]["failed"][0]["metric"].endswith("mode_share.overall") or out["check"]["n_failed"] == 4
+    assert out["check_one"]["detail"] == "all" and len(out["check_one"]["failed"]) == 1
+    assert out["check_one"]["failed"][0]["categories"]["WALK"] == {"delta": pytest.approx(0.1), "share": 0.7, "target": 0.6}
+    assert out["check_bad_metric"][0] is True and "no metric" in out["check_bad_metric"][1]
     assert out["compare"]["n_drifted"] == 4 and out["compare"]["drifted"][0]["deltas"]["WALK"] == pytest.approx(0.1)
     assert out["error"]["exception_type"] == "NameError" and len(out["error"]["log_tail"]) == 5
     assert out["no_error"]["error"] is None

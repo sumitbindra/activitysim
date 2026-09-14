@@ -109,6 +109,8 @@ def score(summary: dict, targets: dict) -> dict:
             "max_abs_delta": round(max_abs, 6),
             "worst_category": worst,
             "deltas": deltas,
+            "actual": {c: round(actual.get(c, 0.0), 6) for c in cats},
+            "target": {c: round(target.get(c, 0.0), 6) for c in cats},
             "n": summarize.metric_n(summary, name),
         }
     failed = [n for n, r in results.items() if not r["passed"]]
@@ -163,23 +165,57 @@ def finalize_hook(run_dir: Path, manifest: dict) -> None:
     write_json(run_dir / SCORECARD_NAME, card)
 
 
-def compact(card: dict, max_failed: int = 25) -> dict:
-    """A scorecard sized for a tool result: failures with deltas, passes as one line each."""
-    failed, passed = [], []
-    for name, r in sorted(card["metrics"].items(), key=lambda kv: -(kv[1].get("max_abs_delta") or 0)):
-        row = {"metric": name, "max_abs_delta": r.get("max_abs_delta"), "tolerance_abs": r.get("tolerance_abs"),
+def _categories(r: dict, min_abs: float = 0.0) -> dict:
+    """{category: {share, target, delta}} sorted by |delta| desc; share/target absent on old scorecards."""
+    actual, target = r.get("actual") or {}, r.get("target") or {}
+    out = {}
+    for cat, delta in sorted(r.get("deltas", {}).items(), key=lambda kv: -abs(kv[1])):
+        if abs(delta) < min_abs:
+            continue
+        row = {"delta": delta}
+        if cat in actual:
+            row["share"] = actual[cat]
+        if cat in target:
+            row["target"] = target[cat]
+        out[cat] = row
+    return out
+
+
+def compact(card: dict, detail: str = "failed", metric: str | None = None, max_metrics: int = 40) -> dict:
+    """A scorecard sized for a tool result.
+
+    detail="failed" (default): failed metrics carry per-category share/target/delta (deltas below
+    0.0005 dropped), passing metrics are one line each. detail="all": every metric carries all
+    categories. metric="<dotted name or prefix>" selects metrics and always gives all categories.
+    """
+    if detail not in ("failed", "all"):
+        raise ValueError("detail must be 'failed' or 'all'")
+    items = sorted(card["metrics"].items(), key=lambda kv: -(kv[1].get("max_abs_delta") or 0))
+    if metric:
+        items = [(n, r) for n, r in items if n == metric or n.startswith(metric.rstrip(".") + ".")]
+        if not items:
+            raise KeyError(f"no metric named or starting with {metric!r}; metrics are: "
+                           + ", ".join(sorted(card["metrics"])))
+    metrics = []
+    for name, r in items[:max_metrics]:
+        row = {"metric": name, "status": r.get("status"), "passed": r.get("passed"),
+               "max_abs_delta": r.get("max_abs_delta"), "tolerance_abs": r.get("tolerance_abs"),
                "worst_category": r.get("worst_category"), "n": r.get("n")}
-        if r["passed"]:
-            passed.append(row)
-        else:
-            row["status"] = r.get("status")
-            row["deltas"] = {k: v for k, v in sorted(r["deltas"].items(), key=lambda kv: -abs(kv[1])) if abs(v) > 0.0005}
-            failed.append(row)
+        if metric or detail == "all":
+            row["categories"] = _categories(r)
+        elif not r.get("passed"):
+            row["categories"] = _categories(r, min_abs=0.0005)
+        metrics.append(row)
     return {
         "run_id": card.get("run_id"), "passed": card.get("passed"), "n_metrics": card.get("n_metrics"),
         "n_failed": card.get("n_failed"), "targets_file": card.get("targets_file"),
         "source_run": card.get("source_run"), "checks_passed": card.get("checks_passed"),
-        "failed": failed[:max_failed], "passed_metrics": passed,
+        "detail": "all" if (metric or detail == "all") else "failed",
+        "note": "delta = run share minus target share; categories with |delta| < 0.0005 are omitted for failed "
+                "metrics in the default view, and passing metrics carry none; use detail='all' or metric=<name> "
+                "for every category with share, target and delta",
+        "failed": [m for m in metrics if not m["passed"]],
+        "passed_metrics": [m for m in metrics if m["passed"]],
     }
 
 

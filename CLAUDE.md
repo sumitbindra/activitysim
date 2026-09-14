@@ -61,15 +61,22 @@ read-only; all variation goes through per-run override config directories.
   households the by-purpose mode share metrics will miss their targets from
   sampling noise alone; read the `n` on each metric before drawing
   conclusions, and confirm at full size.
-- A run longer than a couple of minutes should be started with
-  `run_model(..., wait=false)` and polled with `get_run(run_id)` until
-  `run.status` is `succeeded` or `failed`.
+- A 500-household run (about 90 s) and a resume (about 15 s) are fine with
+  `run_model(..., wait=true)`. Start anything longer, such as a full run,
+  with `wait=false` and poll `get_run(run_id)` until `run.status` is
+  `succeeded` or `failed`. `run_model` and `get_run` already attach the
+  scorecard, so a separate `check_targets` call is only needed for detail.
 - When only downstream steps changed, pass `resume_from=<run_id>` and
   `resume_after=<last step to keep>`: for mode choice work,
   `resume_after="trip_scheduling"` reruns only `trip_mode_choice` and the
   writers (about 15 seconds).
 - A successful run already has its summary and scorecard; `check_targets`
-  and `summarize_run` return them without touching the output tables.
+  and `summarize_run` return them without touching the output tables. The
+  default scorecard view gives per-category numbers only for failed
+  metrics; `check_targets(run_id, metric="trip_mode_share.overall")` (a
+  name or prefix) or `detail="all"` gives share, target and delta for every
+  category, so there is no need to open `scorecard.json` or the targets
+  file.
 
 ## Rules
 

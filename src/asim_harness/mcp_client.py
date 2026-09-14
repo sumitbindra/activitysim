@@ -45,7 +45,31 @@ async def _list_tools() -> list[dict[str, Any]]:
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.list_tools()
-            return [{"name": t.name, "description": (t.description or "").strip()} for t in result.tools]
+            tools = []
+            for t in result.tools:
+                schema = getattr(t, "input_schema", None) or getattr(t, "inputSchema", None) or {}
+                tools.append({"name": t.name, "description": (t.description or "").strip(),
+                              "parameters": _describe_params(schema)})
+            return tools
+
+
+def _describe_params(schema: dict) -> list[str]:
+    """['label: string (required)', 'sample_size: integer|null = null', ...] from a JSON schema."""
+    props = schema.get("properties") or {}
+    required = set(schema.get("required") or [])
+    out = []
+    for name, spec in props.items():
+        if "anyOf" in spec:
+            kind = "|".join(str(a.get("type", "?")) for a in spec["anyOf"])
+        else:
+            kind = str(spec.get("type", "?"))
+        text = f"{name}: {kind}"
+        if name in required:
+            text += " (required)"
+        elif "default" in spec:
+            text += f" = {json.dumps(spec['default'])}"
+        out.append(text)
+    return out
 
 
 async def _call(name: str, arguments: dict, timeout: float) -> tuple[bool, Any]:

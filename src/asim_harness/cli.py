@@ -242,8 +242,9 @@ def tool(name, arguments, list_only, timeout):
 
     if list_only or not name:
         for t in mcp_client.list_tools():
-            first = t["description"].splitlines()[0] if t["description"] else ""
-            click.echo(f"{t['name']:<15s} {first}")
+            click.echo(f"{t['name']}({', '.join(t['parameters'])})")
+            for line in t["description"].splitlines():
+                click.echo(f"    {line.strip()}" if line.strip() else "")
         return
     try:
         args = json.loads(arguments) if arguments else {}
