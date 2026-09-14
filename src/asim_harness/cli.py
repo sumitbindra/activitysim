@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -228,6 +229,33 @@ def mcp():
     from .mcp_server import main as serve  # slow import, keep local
 
     serve()
+
+
+@main.command()
+@click.argument("name", required=False)
+@click.argument("arguments", required=False)
+@click.option("--list", "list_only", is_flag=True, help="List the server's tools and exit.")
+@click.option("--timeout", default=3600.0, show_default=True, help="Seconds to wait for the tool.")
+def tool(name, arguments, list_only, timeout):
+    """Call one MCP tool through a stdio client: asim tool get_run '{"run_id": "2026..."}'."""
+    from . import mcp_client  # slow import, keep local
+
+    if list_only or not name:
+        for t in mcp_client.list_tools():
+            first = t["description"].splitlines()[0] if t["description"] else ""
+            click.echo(f"{t['name']:<15s} {first}")
+        return
+    try:
+        args = json.loads(arguments) if arguments else {}
+    except json.JSONDecodeError as e:
+        raise click.ClickException(f"arguments must be a JSON object: {e}") from e
+    if not isinstance(args, dict):
+        raise click.ClickException("arguments must be a JSON object")
+    is_error, payload = mcp_client.call_tool(name, args, timeout=timeout)
+    if is_error:
+        click.echo(payload if isinstance(payload, str) else dumps(payload), err=True)
+        sys.exit(1)
+    click.echo(payload if isinstance(payload, str) else dumps(payload))
 
 
 @main.command()

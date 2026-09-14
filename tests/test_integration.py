@@ -57,7 +57,12 @@ def test_smoke_run_produces_summary_and_scorecard(real_example_tmp_runs):
 
 
 def test_failure_fixture_yields_error_json(real_example_tmp_runs):
-    """A run with a broken preprocessor override fails in trip_mode_choice with an expression context."""
+    """A broken trip mode choice preprocessor override fails with an expression context.
+
+    In a full run the failure surfaces in trip_destination, which evaluates the trip
+    mode choice preprocessor while computing its mode choice logsums; only a resume
+    after trip_scheduling fails in trip_mode_choice itself (see NOTES.md, Phase 5).
+    """
     fixture = Path(__file__).parent / "fixtures" / "failures" / "bad_preprocessor_expression" / "trip_mode_choice_annotate_trips_preprocessor.csv"
     models = "initialize_landuse,initialize_households,compute_accessibility,school_location,workplace_location," \
              "auto_ownership_simulate,free_parking,cdap_simulate,mandatory_tour_frequency,mandatory_tour_scheduling," \
@@ -69,8 +74,8 @@ def test_failure_fixture_yields_error_json(real_example_tmp_runs):
     m = runner.run("integration failure", sample_size=50, models=models, override_files=[fixture])
     assert m["status"] == "failed" and m["exit_code"] != 0
     record = errors.error_for_run(m["run_id"])
-    assert record["failed_step"] == "trip_mode_choice"
+    assert record["failed_step"] == "trip_destination"
     assert record["exception_type"] == "NameError"
     assert record["expression_context"]["expression"] == "no_such_column_xyz + 1"
     assert record["override_files"] == [fixture.name]
-    assert "failed in step trip_mode_choice" in runner.failure_explanation(paths.run_dir(m["run_id"]), m)
+    assert "failed in step trip_destination" in runner.failure_explanation(paths.run_dir(m["run_id"]), m)

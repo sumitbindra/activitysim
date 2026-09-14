@@ -33,7 +33,7 @@ INSTRUCTIONS = (
     "raw shares. Nothing here edits files under example/."
 )
 
-server = MCPServer(name="asim-harness", instructions=INSTRUCTIONS, version=__version__)
+server = MCPServer(name="asim-harness", instructions=INSTRUCTIONS, version=__version__, log_level="WARNING")
 
 
 def _resolve(run_id: str) -> str:

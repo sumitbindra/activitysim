@@ -393,3 +393,7 @@ Command, run from inside `example/`:
 - `tests/test_integration.py` (marked `slow`): a real 500-household run
   producing summary + scorecard, and a real failure-fixture run producing
   `error.json`.
+- Addendum: the blocking path was verified too: `run_model(label="mcp resume
+  check: mode choice only", resume_from=<baseline>,
+  resume_after="trip_scheduling", wait=true)` returned after 15 s with
+  `status: succeeded` and a passing scorecard (4.7 KB).
