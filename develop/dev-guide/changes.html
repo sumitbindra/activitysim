@@ -54,7 +54,7 @@
     <script>
         DOCUMENTATION_OPTIONS.theme_version = '0.16.1';
         DOCUMENTATION_OPTIONS.theme_switcher_json_url = 'https://sumitbindra.github.io/activitysim/switcher.json';
-        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1000.dev3508.g498a1ce18';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '1000.dev3528.g8c41c073c';
         DOCUMENTATION_OPTIONS.show_version_warning_banner =
             false;
         </script>
@@ -63,8 +63,8 @@
     <link rel="prev" title="Documentation" href="build-docs.html" />
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <meta name="docsearch:language" content="en"/>
-  <meta name="docsearch:version" content="1000.dev3508.g498a1ce18" />
-    <meta name="docbuild:last-update" content="May 07, 2026"/>
+  <meta name="docsearch:version" content="1000.dev3528.g8c41c073c" />
+    <meta name="docbuild:last-update" content="Sep 14, 2026"/>
   </head>
   
   
@@ -372,6 +372,8 @@
 </ul>
 </details></li>
 <li class="toctree-l1"><a class="reference internal" href="../core.html">Core Components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="explicit-error-terms.html">Explicit Error Terms</a></li>
+<li class="toctree-l1"><a class="reference internal" href="sampling-methods.html">Sampling Methods for Interaction Sample</a></li>
 <li class="toctree-l1"><a class="reference internal" href="../benchmarking.html">Benchmarking</a></li>
 <li class="toctree-l1"><a class="reference internal" href="build-docs.html">Documentation</a></li>
 <li class="toctree-l1 current active"><a class="current reference internal" href="#">Change Log</a></li>
@@ -435,7 +437,7 @@
 <div id="searchbox"></div>
                 <article class="bd-article">
                   
-  <section id="change-log">
+  <section class="tex2jax_ignore mathjax_ignore" id="change-log">
 <h1>Change Log<a class="headerlink" href="#change-log" title="Permalink to this heading">#</a></h1>
 <p>This document describes significant changes to ActivitySim.  This includes
 major new features that may require modifications to existing model configurations
@@ -447,6 +449,38 @@ configurations or code to fail to run correctly.</p>
 branch (i.e., the main branch on GitHub), but not yet released in a stable version
 of ActivitySim.  See below under the various version headings for changes in
 released versions.</p>
+<section id="deprecated-simulate-chooser-columns-and-logsum-chooser-columns">
+<h3>Deprecated <code class="docutils literal notranslate"><span class="pre">SIMULATE_CHOOSER_COLUMNS</span></code> and <code class="docutils literal notranslate"><span class="pre">LOGSUM_CHOOSER_COLUMNS</span></code><a class="headerlink" href="#deprecated-simulate-chooser-columns-and-logsum-chooser-columns" title="Permalink to this heading">#</a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">SIMULATE_CHOOSER_COLUMNS</span></code> and <code class="docutils literal notranslate"><span class="pre">LOGSUM_CHOOSER_COLUMNS</span></code> settings were added
+as memory hacks, to reduce the size of the interaction dataframe for components
+that combine a chooser table with an alternatives table.  These settings have
+been superseded by <code class="docutils literal notranslate"><span class="pre">drop_unused_columns</span></code>, which automatically drops the columns
+that are not needed based on the model spec, and which is enabled by default in
+the <code class="docutils literal notranslate"><span class="pre">compute_settings</span></code> for every component.  As such, these settings are now
+unnecessary, and they are a common source of hard-to-diagnose errors when a
+column used by a spec is inadvertently omitted from the list.</p>
+<p>These settings are now deprecated.  If either setting appears in a model
+configuration file, a <code class="docutils literal notranslate"><span class="pre">DeprecationWarning</span></code> is issued and the value is ignored.
+Users should remove these settings from their configuration files.  Nothing else
+needs to be done to take advantage of this change; unused columns continue to be
+dropped automatically.</p>
+<p>Relatedly, <code class="docutils literal notranslate"><span class="pre">interaction_sample</span></code> (used for destination sampling) previously
+skipped dropping unused columns entirely when a run had trace targets, which
+could result in very large interaction dataframes for traced runs.  Unused
+columns are now dropped in that case as well, retaining only the columns needed
+to identify the traced rows.  The complete chooser and alternatives tables are
+still written to the trace output before the columns are dropped.</p>
+</section>
+<section id="changed-default-for-sharrow-fastmath-optimization">
+<h3>Changed Default for Sharrow “Fastmath” Optimization<a class="headerlink" href="#changed-default-for-sharrow-fastmath-optimization" title="Permalink to this heading">#</a></h3>
+<p>The default setting for the “fastmath” optimization in sharrow has been changed
+from <code class="docutils literal notranslate"><span class="pre">True</span></code> to <code class="docutils literal notranslate"><span class="pre">False</span></code>.  This optimization can improve performance in some cases,
+but can also cause subtle and hard to diagnose bugs, particularly when the
+data being processed contains <code class="docutils literal notranslate"><span class="pre">NaN</span></code> or <code class="docutils literal notranslate"><span class="pre">Inf</span></code> values.  By defaulting to
+<code class="docutils literal notranslate"><span class="pre">False</span></code>, we aim to improve platform stability for most users.  Users who wish
+to enable the “fastmath” optimization can do so by setting the <code class="docutils literal notranslate"><span class="pre">fastmath</span></code> option
+to <code class="docutils literal notranslate"><span class="pre">True</span></code> in the <code class="docutils literal notranslate"><span class="pre">compute_settings</span></code> for each model component where it is desired.</p>
+</section>
 <section id="skipping-failed-choices">
 <h3>Skipping Failed Choices<a class="headerlink" href="#skipping-failed-choices" title="Permalink to this heading">#</a></h3>
 <p>A new feature is introduced to ActivitySim to skip failed choices during model execution.
@@ -907,6 +941,8 @@ development cycle, including:</p>
   <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
     <ul class="visible nav section-nav flex-column">
 <li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#upcoming-changes">Upcoming Changes</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#deprecated-simulate-chooser-columns-and-logsum-chooser-columns">Deprecated <code class="docutils literal notranslate"><span class="pre">SIMULATE_CHOOSER_COLUMNS</span></code> and <code class="docutils literal notranslate"><span class="pre">LOGSUM_CHOOSER_COLUMNS</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#changed-default-for-sharrow-fastmath-optimization">Changed Default for Sharrow “Fastmath” Optimization</a></li>
 <li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#skipping-failed-choices">Skipping Failed Choices</a><ul class="nav section-nav flex-column">
 <li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#potential-impact-on-existing-model-runs">Potential Impact on Existing Model Runs:</a></li>
 </ul>
@@ -980,7 +1016,7 @@ development cycle, including:</p>
       
         <div class="footer-item"><!-- This will display the version of the docs -->
 <p class="last-updated">
-ActivitySim 1000.dev3508+g498a1ce18, documentation last updated May 07, 2026.<br/>
+ActivitySim 1000.dev3528+g8c41c073c, documentation last updated Sep 14, 2026.<br/>
 </p></div>
       
         <div class="footer-item">
