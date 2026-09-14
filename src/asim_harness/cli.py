@@ -53,7 +53,8 @@ def init():
 @click.option("--override-file", "override_files", multiple=True,
               type=click.Path(exists=True, dir_okay=False, path_type=Path),
               help="File that shadows the same-named file in example/configs (repeatable).")
-def run(label, sample_size, resume_from, resume_after, models, trace_hh_id, override_files):
+@click.option("--run-id", default=None, hidden=True, help="Use this run id (set by the MCP server for detached runs).")
+def run(label, sample_size, resume_from, resume_after, models, trace_hh_id, override_files, run_id):
     """Run the example into a new runs/<run_id>/ directory."""
 
     def started(m):
@@ -64,7 +65,7 @@ def run(label, sample_size, resume_from, resume_after, models, trace_hh_id, over
         m = runner.run(
             label, sample_size=sample_size, resume_from=resume_from, resume_after=resume_after,
             models=models, trace_hh_id=trace_hh_id, override_files=list(override_files) or None,
-            on_start=started,
+            run_id=run_id, on_start=started,
         )
     except runner.HarnessError as e:
         raise click.ClickException(str(e)) from e
@@ -219,6 +220,14 @@ def error(run_id, as_json, tail_lines, force):
         click.echo(f"run {run_id} did not fail; no error record")
         return
     click.echo(dumps(errors.compact(record, tail_lines)) if as_json else errors.text(record, tail_lines))
+
+
+@main.command()
+def mcp():
+    """Serve the harness as MCP tools over stdio (registered in .mcp.json)."""
+    from .mcp_server import main as serve  # slow import, keep local
+
+    serve()
 
 
 @main.command()

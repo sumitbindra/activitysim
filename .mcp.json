@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "asim": {
+      "type": "stdio",
+      "command": ".venv/bin/asim",
+      "args": ["mcp"],
+      "env": {
+        "ASIM_HARNESS_ROOT": "${CLAUDE_PROJECT_DIR}"
+      }
+    }
+  }
+}

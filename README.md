@@ -1,4 +1,86 @@
-# activitysim-prototype-mtc
+# asim-harness
+
+A minimal harness for running ActivitySim's shipped example (`prototype_mtc`)
+in a reproducible, agent-operable way. Every run gets an ID, a manifest, a
+summary, a scorecard against targets (or a structured error), and a row in a
+ledger. A small CLI (`asim`) and an MCP server (`asim mcp`) expose the same
+operations. No LLM code lives in this repo.
+
+`PLAN.md` is the spec, `NOTES.md` is the build log (read it first in a new
+session), `CLAUDE.md` is the playbook for agents operating the harness.
+
+## Setup
+
+```bash
+uv sync --locked           # Python 3.11 venv with ActivitySim 1.4.0 and the harness (editable)
+source .venv/bin/activate
+asim init                  # recreates example/data from the ActivitySim package (data is gitignored)
+asim run --label "baseline full"
+```
+
+The example lives in `example/` (configs committed, data and output ignored)
+and is never edited: every variation goes through a per-run override config
+directory.
+
+## Commands
+
+```
+asim run --label "smoke" --sample-size 500                          # households_sample_size
+asim run --label "mc only" --resume-from <run_id> --resume-after trip_scheduling
+asim run --label "x" --models initialize_landuse,initialize_households,...
+asim run --label "y" --override-file my/trip_mode_choice_coefficients.csv   # shadows the example file
+asim list                    # ledger, newest first
+asim show <run_id>           # manifest (unique id prefixes are accepted everywhere)
+asim summarize <run_id>      # metrics -> runs/<id>/summary.json
+asim check <run_id>          # scorecard vs targets/prototype_mtc.yaml -> runs/<id>/scorecard.json
+asim compare <run_a> <run_b> # per-metric deltas, b minus a
+asim error <run_id>          # what failed: step, exception, expression context, traceback tail
+asim targets bootstrap <run_id>   # write a run's share metrics as targets (refuses to overwrite)
+asim reindex                 # rebuild runs/index.jsonl from manifests
+asim mcp                     # serve the same operations as MCP tools over stdio
+```
+
+A run directory `runs/<run_id>/` holds `overrides/configs/` (the
+`settings.yaml` with `inherit_settings: True` plus any shadowing files),
+`output/` (ActivitySim's output, logs under `output/log/`), `manifest.json`,
+`stdout.log`, `stderr.log`, and after the run `summary.json` and
+`scorecard.json`, or `error.json` when it failed.
+
+Timing on 4 cores: the full 5000-household example takes about 2 minutes, a
+500-household sample about 1.5 minutes, a resume after `trip_scheduling`
+(mode choice and the writers only) about 15 seconds.
+
+## MCP server
+
+`.mcp.json` registers `asim mcp` for Claude Code (project scope; approve it on
+first use). Tools: `list_runs`, `run_model` (use `wait=false` and poll
+`get_run` for anything longer than a couple of minutes), `get_run`,
+`summarize_run`, `check_targets`, `compare_runs`, `get_error`,
+`get_log_tail`, `read_config`, `list_configs`. Nothing writes under `example/`.
+
+## Tests
+
+```bash
+pytest                      # unit tests, ~1 s, all in temp directories
+pytest -m slow              # one integration test: a 500-household run, ~1.5 min
+```
+
+## Layout
+
+```
+src/asim_harness/   cli, runner, manifest, ledger, summarize, targets, compare, errors, mcp_server
+example/            the packaged prototype_mtc example (configs committed; data, output ignored)
+runs/               one directory per run (ignored) + index.jsonl
+targets/            prototype_mtc.yaml, bootstrapped from the baseline run
+tests/              unit tests and fixtures (output tables, failure overrides, real failure logs)
+```
+
+Environment variables `ASIM_HARNESS_ROOT`, `ASIM_EXAMPLE_DIR` and
+`ASIM_RUNS_DIR` relocate the pieces without code changes.
+
+---
+
+## About the prototype_mtc example (upstream README)
 
 The primary ActivitySim example model.
 

@@ -340,3 +340,56 @@ Command, run from inside `example/`:
   instead (the example file has no trailing newline, so an appended row
   merged with the last line). Harmless, but a reminder that override CSVs
   need a newline check; the fixture build now writes one explicitly.
+
+## Phase 4 — MCP server
+
+### What was built
+
+- `mcp_server.py` on the official `mcp` SDK, version 2.2.0. Drift: the plan
+  names `FastMCP`; in 2.x that class is `MCPServer`
+  (`from mcp.server.mcpserver import MCPServer`), same decorator API.
+  Two 2.x details that matter: a tool must annotate its return as
+  `dict[str, Any]` (a bare `dict` gives text-only results, no
+  `structured_content`), and anticipated failures must raise
+  `mcp.server.mcpserver.exceptions.ToolError`, otherwise the agent only sees
+  "Error executing tool <name>" and the message stays on the server. Sync
+  tool functions run in a worker thread, so a blocking `run_model` does not
+  freeze the server.
+- Tools, all returning compact JSON: `list_runs`, `run_model` (`wait=true`
+  blocks; `wait=false` validates the arguments up front, then detaches
+  `asim run --run-id <id>` with `start_new_session=True`, launcher output in
+  `runs/.launch/<id>.log`, and returns the id to poll), `get_run` (manifest
+  summary + compact scorecard + compact error + failure explanation),
+  `summarize_run` (`detail="overall"` drops the by-purpose blocks),
+  `check_targets`, `compare_runs`, `get_error`, `get_log_tail` (capped at
+  500 lines), `read_config` (sandboxed to `example/configs`, rejects `..`,
+  absolute and drive paths), `list_configs`. No tool writes under `example/`;
+  there is no edit tool.
+- `asim mcp` runs it over stdio. `.mcp.json` (project scope, checked against
+  the Claude Code docs at code.claude.com/docs/en/mcp): `type: "stdio"`,
+  `command: ".venv/bin/asim"` (relative commands resolve against the project
+  directory, which is also the server's cwd), `args: ["mcp"]`, and
+  `ASIM_HARNESS_ROOT=${CLAUDE_PROJECT_DIR}` in `env`. Claude Code asks for
+  approval of a project `.mcp.json` on first use.
+- The runner's argument validation was factored into `runner.validate_args`
+  so the server can fail fast before detaching a run; `asim run` gained a
+  hidden `--run-id`.
+
+### Verified
+
+- Through a real stdio client (`mcp.client.stdio`), against
+  `.venv/bin/asim mcp` exactly as `.mcp.json` launches it: the 10 tools are
+  listed; `list_runs` returns the ledger; `run_model(label="mcp smoke",
+  sample_size=500, wait=false)` returned a run id at once and, after 10
+  polls of `get_run` (100 s; the run itself took 91.5 s), the run was
+  `succeeded` with the scorecard attached (FAIL 19 of 27, identical to the
+  CLI smoke run since ActivitySim is deterministic for a given sample); the
+  result was 10.5 KB. Escaping paths, unknown run ids, an empty label and a
+  `resume_from` without `resume_after` all come back as `is_error` results
+  with the harness's own message.
+- `tests/test_mcp_server.py` drives the server over stdio against a temp
+  runs dir and checks every tool, the sandbox, error surfacing, and result
+  sizes (< 20 KB each). 51 unit tests pass in about 4 s.
+- `tests/test_integration.py` (marked `slow`): a real 500-household run
+  producing summary + scorecard, and a real failure-fixture run producing
+  `error.json`.

@@ -123,24 +123,18 @@ def parent_checkpoints(parent_output: Path) -> list[str]:
     return [str(x) for x in df[col].tolist()]
 
 
-def run(
+def validate_args(
     label: str,
     *,
     sample_size: int | None = None,
     resume_from: str | None = None,
     resume_after: str | None = None,
     models: str | Iterable[str] | None = None,
-    trace_hh_id: int | None = None,
-    override_files: Iterable[Path] | None = None,
-    extra_settings: dict | None = None,
-    run_id: str | None = None,
-    on_start: Callable[[dict], None] | None = None,
-) -> dict:
-    """Execute one ActivitySim run synchronously and return its final manifest.
+) -> tuple:
+    """Check run arguments and prerequisites without touching the filesystem.
 
-    A model failure is a normal outcome: the manifest comes back with
-    ``status == "failed"`` and the caller decides what to do. Only argument
-    and prerequisite problems raise ``HarnessError``.
+    Returns (label, models, sample_size, parent_id, parent_manifest, parent_pipeline).
+    Raises HarnessError with a user-facing message.
     """
     label = (label or "").strip()
     if not label:
@@ -160,8 +154,7 @@ def run(
     if sample_size is not None and sample_size < 0:
         raise HarnessError("--sample-size must be >= 0 (0 means all households)")
 
-    parent_id = parent = None
-    parent_pipeline = None
+    parent_id = parent = parent_pipeline = None
     if resume_from:
         try:
             parent_id = ledger.resolve_run_id(resume_from)
@@ -179,8 +172,33 @@ def run(
                     f"run {parent_id} has no checkpoint named {resume_after!r}; "
                     f"available: {', '.join(checkpoints)}"
                 )
-        if sample_size is None:
-            sample_size = parent.get("sample_size")
+    return label, models, sample_size, parent_id, parent, parent_pipeline
+
+
+def run(
+    label: str,
+    *,
+    sample_size: int | None = None,
+    resume_from: str | None = None,
+    resume_after: str | None = None,
+    models: str | Iterable[str] | None = None,
+    trace_hh_id: int | None = None,
+    override_files: Iterable[Path] | None = None,
+    extra_settings: dict | None = None,
+    run_id: str | None = None,
+    on_start: Callable[[dict], None] | None = None,
+) -> dict:
+    """Execute one ActivitySim run synchronously and return its final manifest.
+
+    A model failure is a normal outcome: the manifest comes back with
+    ``status == "failed"`` and the caller decides what to do. Only argument
+    and prerequisite problems raise ``HarnessError``.
+    """
+    label, models, sample_size, parent_id, parent, parent_pipeline = validate_args(
+        label, sample_size=sample_size, resume_from=resume_from, resume_after=resume_after, models=models
+    )
+    if parent is not None and sample_size is None:
+        sample_size = parent.get("sample_size")
 
     run_id = run_id or new_run_id()
     run_dir = paths.run_dir(run_id)
