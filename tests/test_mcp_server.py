@@ -87,6 +87,8 @@ def test_tools_and_read_only_calls(tmp_root, server_env):
         out["summarize"] = r.structured_content
         r = await _call(s, "check_targets", {"run_id": "20260102"})
         out["check"] = r.structured_content
+        r = await _call(s, "get_run", {"run_id": "20260102"})
+        out["get_run_scored"] = r.structured_content
         r = await _call(s, "check_targets", {"run_id": "20260102", "metric": "trip_mode_share.overall"})
         out["check_one"] = r.structured_content
         r = await _call(s, "check_targets", {"run_id": "20260102", "metric": "nope"})
@@ -124,11 +126,14 @@ def test_tools_and_read_only_calls(tmp_root, server_env):
     assert out["get_run_failed"]["error"]["failed_step"] == "trip_mode_choice"
     assert len(out["get_run_failed"]["error"]["log_tail"]) == 20
     assert "failed in step trip_mode_choice" in out["get_run_failed"]["explanation"]
+    assert "slowest_steps" in out["get_run_failed"]["run"] and "step_timings" not in out["get_run_failed"]["run"]
     assert "by_purpose" not in out["summarize"]["trip_mode_share"] and "trips_by_purpose" not in out["summarize"]["counts"]
     assert out["check"]["passed"] is False and out["check"]["failed"][0]["metric"].endswith("mode_share.overall") or out["check"]["n_failed"] == 4
     assert out["check_one"]["detail"] == "all" and len(out["check_one"]["failed"]) == 1
     assert out["check_one"]["failed"][0]["categories"]["WALK"] == {"delta": pytest.approx(0.1), "share": 0.7, "target": 0.6}
     assert out["check_bad_metric"][0] is True and "no metric" in out["check_bad_metric"][1]
+    assert out["get_run_scored"]["scorecard"]["detail"] == "summary"
+    assert all("categories" not in r for r in out["get_run_scored"]["scorecard"]["failed"])
     assert out["compare"]["n_drifted"] == 4 and out["compare"]["drifted"][0]["deltas"]["WALK"] == pytest.approx(0.1)
     assert out["error"]["exception_type"] == "NameError" and len(out["error"]["log_tail"]) == 5
     assert out["no_error"]["error"] is None

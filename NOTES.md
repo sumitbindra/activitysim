@@ -458,3 +458,71 @@ then tell me the trip mode shares and how they compare to targets."
      `get_run` already carry the scorecard, and that `check_targets` with
      `metric=` or `detail="all"` replaces opening `scorecard.json` or the
      targets file.
+
+### Smoke test, second run (after the fixes)
+
+Same prompt, same framing, a fresh agent, the call log emptied first.
+
+- Outcome: correct, and this time with the MCP tools alone. The call log
+  shows five calls, all successful: `run_model(label=..., sample_size=500,
+  wait=true)` (run `20260914-184658-f83646`, 89.2 s), `list_runs`,
+  `check_targets(run_id, metric="trip_mode_share")`, `compare_runs` against
+  the previous smoke run (27 of 27 unchanged: ActivitySim is deterministic
+  for a given sample), and `summarize_run(detail="overall")`. No
+  `scorecard.json` or targets file was opened. The report gave every
+  overall trip mode with share, target and delta (WALK −1.4 pp, n=2279,
+  PASS) and the by-purpose table with n and worst delta, and explained the
+  19-of-27 verdict as sampling noise at n ≤ 139. Every number matches
+  `asim check 20260914-184658-f83646`.
+- Remaining friction from its trace:
+  1. The `run_model` result was about 21 KB of JSON (the shell tool showed
+     the agent a truncated preview, so it re-read the saved result twice):
+     19 failed metrics with their categories, plus 34 step timings. Fixed:
+     `run_model` / `get_run` now attach a category-free scorecard summary
+     (`detail="summary"`, one line per metric) and only the eight slowest
+     steps with a total; the view is 6 KB. `check_targets` keeps the
+     per-category detail.
+  2. It worried that a client timeout during `wait=true` might orphan the
+     run. It could have: the run was a child of the server process. Fixed:
+     `run_model` now always launches `asim run --run-id <id>` in its own
+     session (`start_new_session=True`) and, with `wait=true`, polls the
+     manifest every 2 s (up to an hour) before returning the run view. A
+     run therefore survives a client timeout or a server exit, and
+     `list_runs` / `get_run` show it. `CLAUDE.md` says so. Verified through
+     the shim with a resume run (15 s, scorecard PASS, 5.9 KB result).
+  3. It noticed `NOTES.md` change under it and spent two commands checking
+     why: that was me committing the first-run notes during its session,
+     not a harness problem.
+  4. It judged, reasonably, that "confirm at full size" did not require a
+     new full run because the targets are the full-size baseline of the
+     identical configs and that run is in the ledger as PASS 0 of 27.
+
+### Acceptance
+
+- Both runs completed the task; the second used only the MCP tools and its
+  report matches `asim check` output. 52 unit tests and the 2 slow
+  integration tests pass.
+
+## State at hand-off
+
+- Branch `claude/eager-cerf-vf3yt8`, all phases committed locally. Pushing
+  is refused with HTTP 403: "Claude doesn't have GitHub access to
+  ActivitySim/activitysim-prototype-mtc for your organization". An org
+  admin can install the Claude GitHub App
+  (https://github.com/apps/claude/installations/select_target) or the user
+  can reconnect GitHub under claude.ai settings; then
+  `git push -u origin claude/eager-cerf-vf3yt8` from this checkout.
+- Ledger (`runs/`, not committed): the full baseline
+  `20260914-181919-339aa0` (targets source), 500-household smoke runs, a
+  mode-choice-only resume, one kept failure example
+  (`bad_preprocessor_expression`), and the two agent smoke-test runs.
+- Fresh clone: `uv sync --locked && source .venv/bin/activate && asim init`
+  (recreates `example/data`), then `asim run --label "baseline full"` and
+  `asim targets bootstrap <run_id>` only if `targets/prototype_mtc.yaml`
+  should be re-derived (it is committed, bootstrapped from the baseline
+  above; deterministic, so a new baseline scores PASS against it).
+- Next items, in order of value: a tolerance that scales with `n` (the
+  by-purpose cells at 500 households can never pass at 0.02); an
+  `asim tool`-style shim is not needed once a real Claude Code session
+  loads `.mcp.json`, but keep it for CI; the changeset/approval layer the
+  plan leaves out plugs into `--override-file` and `override_files`.

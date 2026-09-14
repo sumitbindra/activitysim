@@ -186,10 +186,11 @@ def compact(card: dict, detail: str = "failed", metric: str | None = None, max_m
 
     detail="failed" (default): failed metrics carry per-category share/target/delta (deltas below
     0.0005 dropped), passing metrics are one line each. detail="all": every metric carries all
-    categories. metric="<dotted name or prefix>" selects metrics and always gives all categories.
+    categories. detail="summary": one line per metric, no categories (what get_run attaches).
+    metric="<dotted name or prefix>" selects metrics and always gives all categories.
     """
-    if detail not in ("failed", "all"):
-        raise ValueError("detail must be 'failed' or 'all'")
+    if detail not in ("failed", "all", "summary"):
+        raise ValueError("detail must be 'failed', 'all' or 'summary'")
     items = sorted(card["metrics"].items(), key=lambda kv: -(kv[1].get("max_abs_delta") or 0))
     if metric:
         items = [(n, r) for n, r in items if n == metric or n.startswith(metric.rstrip(".") + ".")]
@@ -203,17 +204,16 @@ def compact(card: dict, detail: str = "failed", metric: str | None = None, max_m
                "worst_category": r.get("worst_category"), "n": r.get("n")}
         if metric or detail == "all":
             row["categories"] = _categories(r)
-        elif not r.get("passed"):
+        elif detail == "failed" and not r.get("passed"):
             row["categories"] = _categories(r, min_abs=0.0005)
         metrics.append(row)
     return {
         "run_id": card.get("run_id"), "passed": card.get("passed"), "n_metrics": card.get("n_metrics"),
         "n_failed": card.get("n_failed"), "targets_file": card.get("targets_file"),
         "source_run": card.get("source_run"), "checks_passed": card.get("checks_passed"),
-        "detail": "all" if (metric or detail == "all") else "failed",
-        "note": "delta = run share minus target share; categories with |delta| < 0.0005 are omitted for failed "
-                "metrics in the default view, and passing metrics carry none; use detail='all' or metric=<name> "
-                "for every category with share, target and delta",
+        "detail": "all" if (metric or detail == "all") else detail,
+        "note": "delta = run share minus target share; check_targets(run_id, metric=<name or prefix>) or "
+                "detail='all' gives share, target and delta for every category of a metric",
         "failed": [m for m in metrics if not m["passed"]],
         "passed_metrics": [m for m in metrics if m["passed"]],
     }

@@ -64,8 +64,10 @@ read-only; all variation goes through per-run override config directories.
 - A 500-household run (about 90 s) and a resume (about 15 s) are fine with
   `run_model(..., wait=true)`. Start anything longer, such as a full run,
   with `wait=false` and poll `get_run(run_id)` until `run.status` is
-  `succeeded` or `failed`. `run_model` and `get_run` already attach the
-  scorecard, so a separate `check_targets` call is only needed for detail.
+  `succeeded` or `failed`. Runs always execute detached from the server:
+  if a `wait=true` call times out, the run still finishes and `list_runs`
+  / `get_run` show it. `run_model` and `get_run` attach a one-line-per-
+  metric scorecard; `check_targets` gives the per-category detail.
 - When only downstream steps changed, pass `resume_from=<run_id>` and
   `resume_after=<last step to keep>`: for mode choice work,
   `resume_after="trip_scheduling"` reruns only `trip_mode_choice` and the

@@ -153,6 +153,9 @@ def test_scorecard_keeps_shares_and_targets_and_compact_detail(tmp_root):
     assert set(one["failed"][0]["categories"]) == {"WALK", "BIKE", "DRIVEALONEFREE"}
     prefix = targets.compact(card, metric="tour_frequency")
     assert {r["metric"] for r in prefix["passed_metrics"]} == {"tour_frequency.mandatory", "tour_frequency.non_mandatory"}
+    summary_view = targets.compact(card, detail="summary")
+    assert summary_view["detail"] == "summary"
+    assert all("categories" not in r for r in summary_view["failed"] + summary_view["passed_metrics"])
     with pytest.raises(KeyError, match="no metric"):
         targets.compact(card, metric="nope")
     with pytest.raises(ValueError):

@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
@@ -23,6 +24,9 @@ from .jsonio import read_json_if_exists
 
 LOG_TAIL_MAX = 500
 CONFIG_MAX_CHARS = 60_000
+SLOWEST_STEPS = 8
+POLL_SECONDS = 2.0
+MAX_WAIT_SECONDS = 3600.0
 INSTRUCTIONS = (
     "asim-harness runs ActivitySim's prototype_mtc example reproducibly. Every run gets a run_id and a "
     "directory runs/<run_id>/ with manifest.json, summary.json (metrics), scorecard.json (deltas vs targets) "
@@ -48,7 +52,9 @@ def _run_view(run_id: str) -> dict[str, Any]:
     manifest = mf.read_manifest(run_dir)
     view = mf.summary_of(manifest)
     view["run_dir"] = str(run_dir)
-    view["step_timings"] = manifest.get("step_timings") or {}
+    timings = manifest.get("step_timings") or {}
+    view["total_step_seconds"] = round(sum(timings.values()), 1)
+    view["slowest_steps"] = dict(sorted(timings.items(), key=lambda kv: -kv[1])[:SLOWEST_STEPS])
     view["files"] = sorted(p.name for p in run_dir.iterdir() if p.is_file())
     scorecard = read_json_if_exists(run_dir / targets.SCORECARD_NAME)
     error = read_json_if_exists(run_dir / errors.ERROR_NAME)
@@ -56,7 +62,7 @@ def _run_view(run_id: str) -> dict[str, Any]:
         error = errors.error_for_run(run_id)
     return {
         "run": view,
-        "scorecard": targets.compact(scorecard) if scorecard else None,
+        "scorecard": targets.compact(scorecard, detail="summary") if scorecard else None,
         "error": errors.compact(error, log_tail_lines=20) if error else None,
         "explanation": runner.failure_explanation(run_dir, manifest) if manifest.get("status") == "failed" else None,
         "summary_available": (run_dir / summarize.SUMMARY_NAME).exists(),
@@ -87,20 +93,38 @@ def run_model(
 
     sample_size sets households_sample_size (omit for the full example). resume_from + resume_after
     reuse a previous run's pipeline and rerun only the steps after resume_after. models is a
-    comma-separated reduced step list. With wait=true the call blocks (a full run takes ~2 min, a
-    500-household run ~1.5 min) and returns the manifest summary plus scorecard or error. With
-    wait=false it returns the run_id immediately; poll get_run(run_id) until status is not "running".
+    comma-separated reduced step list. The run always executes detached from this server. With
+    wait=true the call blocks until it finishes (a full run takes ~2 min, a 500-household run ~1.5 min)
+    and returns the manifest summary plus scorecard or error; if the client times out first, the run
+    still completes and list_runs / get_run show it. With wait=false it returns the run_id at once;
+    poll get_run(run_id) until run.status is not "running".
     """
     try:
         runner.validate_args(label, sample_size=sample_size, resume_from=resume_from,
                              resume_after=resume_after, models=models)
     except runner.HarnessError as e:
         raise ToolError(str(e)) from e
-    if wait:
-        manifest = runner.run(label, sample_size=sample_size, resume_from=resume_from,
-                              resume_after=resume_after, models=models)
-        return _run_view(manifest["run_id"])
+    run_id = _launch_detached(label, sample_size, resume_from, resume_after, models)
+    if not wait:
+        return {
+            "run_id": run_id,
+            "status": "running",
+            "label": label,
+            "poll": f"get_run('{run_id}') until run.status is 'succeeded' or 'failed'",
+            "launcher_log": str(paths.runs_dir() / ".launch" / f"{run_id}.log"),
+        }
+    deadline = time.monotonic() + MAX_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        manifest = read_json_if_exists(paths.run_dir(run_id) / mf.MANIFEST_NAME)
+        if manifest is not None and manifest.get("status") != "running":
+            return _run_view(run_id)
+        time.sleep(POLL_SECONDS)
+    return {"run_id": run_id, "status": "running", "label": label,
+            "note": f"still running after {MAX_WAIT_SECONDS:.0f} s; poll get_run('{run_id}')"}
 
+
+def _launch_detached(label: str, sample_size, resume_from, resume_after, models) -> str:
+    """Start `asim run` in its own session so the run outlives this server and any client timeout."""
     run_id = runner.new_run_id()
     cmd = [sys.executable, "-m", "asim_harness.cli", "run", "--label", label, "--run-id", run_id]
     if sample_size is not None:
@@ -113,18 +137,9 @@ def run_model(
     launch_dir.mkdir(parents=True, exist_ok=True)
     log = open(launch_dir / f"{run_id}.log", "wb")
     env = os.environ.copy()
-    for key in ("ASIM_HARNESS_ROOT", "ASIM_EXAMPLE_DIR", "ASIM_RUNS_DIR"):
-        if key in os.environ:
-            env[key] = os.environ[key]
     subprocess.Popen(cmd, cwd=paths.root(), env=env, stdout=log, stderr=subprocess.STDOUT,
                      stdin=subprocess.DEVNULL, start_new_session=True)
-    return {
-        "run_id": run_id,
-        "status": "running",
-        "label": label,
-        "poll": f"get_run('{run_id}') until run.status is 'succeeded' or 'failed'",
-        "launcher_log": str(launch_dir / f"{run_id}.log"),
-    }
+    return run_id
 
 
 @server.tool()
