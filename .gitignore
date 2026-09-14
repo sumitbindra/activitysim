@@ -5,3 +5,9 @@
 **/__pycache__
 activitysim.log
 *.tar.zst
+
+# asim-harness
+/runs/
+/example/data/
+/example/output/
+/.venv/

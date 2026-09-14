@@ -1,10 +1,11 @@
 [project]
-name = "activitysim-prototype-mtc"
-version = "1.4"
-description = "User environment for Prototype MTC Model"
+name = "asim-harness"
+version = "0.1.0"
+description = "Reproducible, agent-operable harness for running ActivitySim's prototype_mtc example"
 readme = "README.md"
 requires-python = ">=3.10,<3.12"
 dependencies = [
+    # ActivitySim and the pins the prototype_mtc example environment needs
     "activitysim==1.4",
     "multimethod<2.0",
     "numba>=0.57",
@@ -17,10 +18,30 @@ dependencies = [
     "setuptools>=80.9.0,<81",
     "sharrow>=2.14.0",
     "tables>=3.9",
+    # harness
+    "click>=8.1",
+    "pyyaml>=6.0",
+    "mcp>=1.2",
 ]
+
+[project.scripts]
+asim = "asim_harness.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/asim_harness"]
 
 [dependency-groups]
 dev = [
     "pytest>=8.4.1",
     "zstandard>=0.23.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: integration tests that run the example model (deselect with '-m \"not slow\"')",
 ]
