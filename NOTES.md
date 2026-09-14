@@ -143,3 +143,72 @@ Command, run from inside `example/`:
 - trips: `trip_mode`, `purpose`, `primary_purpose`, `tour_id`, `destination`
 - Baseline sanity: no null destinations, every trip's `tour_id` is in tours.
   Mode shares in this 25-zone extract are walk-heavy (WALK is 67% of trips).
+
+## Phase 1 — run wrapper with manifests and a ledger
+
+### What was built
+
+- `src/asim_harness/`: `paths.py` (all locations, overridable with
+  `ASIM_HARNESS_ROOT`, `ASIM_EXAMPLE_DIR`, `ASIM_RUNS_DIR`), `jsonio.py`
+  (atomic JSON writes), `example.py` (read-only access to `example/`, plus
+  `asim init`), `manifest.py` (manifest fields, config hash, data
+  fingerprint, timing parse, git sha), `ledger.py` (`runs/index.jsonl`,
+  file-locked writes, `reindex`, unique-prefix run id resolution),
+  `runner.py` (override dir, subprocess, capture, finalize hooks), `cli.py`.
+- `asim run` layout is exactly the plan's: `runs/<id>/overrides/configs/
+  settings.yaml` (`inherit_settings: True` + overridden keys, plus any
+  `--override-file` copies), `output/`, `manifest.json`, `stdout.log`,
+  `stderr.log`. Command:
+  `<venv python> -m activitysim run -c <overrides> -c example/configs -o <output> -d example/data`,
+  cwd = the run directory, `PYTHONUNBUFFERED=1`. The subprocess uses the
+  same interpreter as the harness (`python -m activitysim`), so there is no
+  PATH dependency. The manifest records a filtered environment (only
+  `ASIM_*`, `ACTIVITYSIM*`, `OMP_*`, `MKL_*`, `NUMBA_*`, `OPENBLAS_*`,
+  `PYTHON*` variables) to avoid capturing secrets.
+- A failed model run is a normal outcome (`status: failed`, nonzero
+  `exit_code`), not an exception; the CLI exits 1 with an explanation.
+- `asim init` recreates missing pieces of `example/` from the installed
+  package (data is gitignored, so fresh clones need it).
+
+### Verified
+
+- `asim run --label "baseline full"`: exit 0, 123.4 s, 34 steps. Row counts
+  and sha256 checksums of the sorted `final_households/persons/tours/trips`
+  tables are identical to the Phase 0 run.
+- **Smoke sample size: 500 households** (`--sample-size 500`): 90.7 s wall
+  clock while a full run was executing concurrently (ActivitySim reported
+  87.8 s for the models). That is under the 3-minute bar with room to
+  spare. The cost at small samples is dominated by per-run fixed work:
+  `trip_destination` 26 s, `mandatory_tour_scheduling` 10 s,
+  `trip_scheduling` 9 s. Nothing misbehaves at 500 households: the log has
+  147 warnings, all pandas `FutureWarning`s from ActivitySim itself (also
+  present in the full run), and every step ran.
+- Resume: `asim run --resume-from <baseline> --resume-after trip_scheduling`
+  copied the parent's `pipeline.parquetpipeline/`, ran only the six tail
+  steps (`trip_mode_choice` ... `summarize`) in 14.9 s, and its
+  `final_trips.csv` is byte-for-byte identical to the parent's (ActivitySim
+  restores the per-step random state from the checkpoint).
+- `git status` shows nothing changed under `example/`.
+- 29 unit tests (`pytest`), all in temp directories.
+
+### Drift from the plan and why
+
+- ActivitySim writes `activitysim.log`, `timing_log.csv` and `mem.csv` into
+  `output/log/` only if that folder already exists (the packaged example
+  ships it; a fresh run directory does not). The first harness runs had the
+  logs in `output/` and no step timings. The runner now pre-creates
+  `output/log/` and `output/trace/`, and `paths.find_log_file` /
+  `find_timing_log` look in both places.
+- The pipeline is copied, not symlinked: ActivitySim appends checkpoints to
+  the store it resumes from, so a symlink would write into the parent run.
+- `--resume-from` requires `--resume-after`: resuming after the parent's
+  last checkpoint (`_`) of a completed run would run nothing. The step name
+  is validated against the parent's `checkpoints.parquet` up front, so a
+  typo fails in milliseconds instead of after loading the pipeline.
+- Ledger writes take a file lock (`runs/index.jsonl.lock`) because two
+  runs finishing at the same time (Phase 4 `wait=False`) would otherwise
+  race on the rewrite.
+- `sample_size: null` in a manifest means "the example's default", which
+  is `households_sample_size: 100000`, i.e. all 5000 households.
+- The two pre-fix runs from this phase were deleted before the commit; the
+  ledger was rebuilt with `asim reindex`.
