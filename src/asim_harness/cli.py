@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 
-from . import __version__, compare, example, ledger, paths, runner, summarize, targets
+from . import __version__, compare, errors, example, ledger, paths, runner, summarize, targets
 from . import manifest as mf
 from .jsonio import dumps, read_json_if_exists
 
@@ -204,6 +204,21 @@ def targets_show():
     except targets.TargetsError as e:
         raise click.ClickException(str(e)) from e
     click.echo(Path(doc["_path"]).read_text())
+
+
+@main.command()
+@click.argument("run_id")
+@click.option("--json", "as_json", is_flag=True, help="Print error.json (without the log tail).")
+@click.option("--tail", "tail_lines", default=15, show_default=True, help="Log lines to show.")
+@click.option("--force", is_flag=True, help="Re-extract from the logs even if error.json exists.")
+def error(run_id, as_json, tail_lines, force):
+    """What failed in a run: step, exception, expression context, traceback tail."""
+    run_id = _resolve(run_id)
+    record = errors.error_for_run(run_id, force=force)
+    if record is None:
+        click.echo(f"run {run_id} did not fail; no error record")
+        return
+    click.echo(dumps(errors.compact(record, tail_lines)) if as_json else errors.text(record, tail_lines))
 
 
 @main.command()

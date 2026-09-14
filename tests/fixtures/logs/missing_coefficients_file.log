@@ -1,0 +1,166 @@
+14/09/2026 18:25:19 - INFO - activitysim - Read logging configuration from: /harness/example/configs/logging.yaml
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - SETTING configs_dir: (PosixPath('/harness/runs/20260914-182516-9dea94/overrides/configs'), PosixPath('/harness/example/configs'))
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - SETTING settings_file_name: settings.yaml
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - SETTING data_dir: (PosixPath('/harness/example/data'),)
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - SETTING output_dir: /harness/runs/20260914-182516-9dea94/output
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - SETTING households_sample_size: 100000
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - SETTING chunk_size: 0
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - SETTING chunk_method: hybrid_uss
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - SETTING chunk_training_mode: disabled
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - SETTING multiprocess: False
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - SETTING num_processes: None
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - SETTING resume_after: trip_scheduling
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - SETTING trace_hh_id: None
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - SETTING memory_profile: False
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - SETTING instrument: False
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - SETTING sharrow: False
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - ENV MKL_NUM_THREADS: 1
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - ENV OMP_NUM_THREADS: 1
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - ENV OPENBLAS_NUM_THREADS: 1
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - ENV NUMBA_NUM_THREADS: 1
+14/09/2026 18:25:19 - INFO - activitysim.cli.run - run single process simulation
+14/09/2026 18:25:19 - INFO - activitysim.core.workflow.checkpoint - load_checkpoint trip_scheduling from /harness/runs/20260914-182516-9dea94/output/pipeline.parquetpipeline
+14/09/2026 18:25:19 - INFO - activitysim.core.workflow.checkpoint - load_checkpoint trip_scheduling timestamp 2026-09-14 18:21:12.329751
+14/09/2026 18:25:19 - INFO - activitysim.core.workflow.checkpoint - load_checkpoint table land_use (25, 29)
+14/09/2026 18:25:19 - INFO - activitysim.core.workflow.checkpoint - load_checkpoint table accessibility (25, 10)
+... [trimmed by tests/fixtures build] ...
+14/09/2026 18:25:19 - INFO - activitysim.core.workflow.runner - resume_after trip_scheduling
+14/09/2026 18:25:19 - INFO - activitysim.abm.models.initialize - preload_injectables
+14/09/2026 18:25:19 - INFO - activitysim.core.tracing - Time to execute preload_injectables : 0.008 seconds (0.0 minutes)
+14/09/2026 18:25:19 - INFO - activitysim.core.workflow.runner - #run_model running step trip_mode_choice
+14/09/2026 18:25:19 - INFO - activitysim.core.los - Network_LOS using skim_dict_factory: NumpyArraySkimFactory
+14/09/2026 18:25:19 - INFO - activitysim.core.skim_dict_factory - allocate_skim_buffer shared False taz shape (826, 25, 25) total size: 2_065_000 (2.1 MB)
+14/09/2026 18:25:19 - INFO - activitysim.core.skim_dict_factory - _read_skims_from_omx /harness/example/data/skims.omx
+14/09/2026 18:25:20 - INFO - activitysim.core.skim_dict_factory - _read_skims_from_omx loaded 826 skims from /harness/example/data/skims.omx
+14/09/2026 18:25:20 - INFO - activitysim.core.skim_dict_factory - writing skim cache taz (826, 25, 25) to /harness/runs/20260914-182516-9dea94/output/cache/cached_taz.mmap
+14/09/2026 18:25:20 - INFO - activitysim.core.skim_dict_factory - load_skims_to_buffer taz shape (826, 25, 25)
+14/09/2026 18:25:20 - INFO - activitysim.core.skim_dict_factory - get_skim_data taz SkimData shape (826, 25, 25)
+14/09/2026 18:25:20 - INFO - activitysim.core.skim_dictionary - SkimDict init taz
+14/09/2026 18:25:20 - INFO - activitysim.core.skim_dictionary - SkimDict.build_3d_skim_block_offset_table registered 167 3d keys
+14/09/2026 18:25:20 - INFO - activitysim.abm.models.trip_mode_choice - Running trip_mode_choice with 23583 trips
+14/09/2026 18:25:20 - INFO - activitysim.core.tracing - primary_purpose top 10 value counts:
+primary_purpose
+work        8626
+shopping    3391
+othdiscr    2584
+othmaint    1745
+atwork      1743
+school      1576
+eatout      1413
+escort       888
+univ         857
+social       760
+Name: count, dtype: int64
+14/09/2026 18:25:20 - INFO - activitysim.abm.models.trip_mode_choice - trip_mode_choice tour_type 'work' (8626 trips)
+14/09/2026 18:25:20 - ERROR - root - ===== ERROR IN trip_mode_choice =====
+14/09/2026 18:25:20 - ERROR - root - file_path configs_dir: file 'trip_mode_choice_coefficients_DOES_NOT_EXIST.csv' not in ['/harness/runs/20260914-182516-9dea94/overrides/configs', '/harness/example/configs']
+Traceback (most recent call last):
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/workflow/steps.py", line 46, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/abm/models/trip_mode_choice.py", line 231, in trip_mode_choice
+    coefficients = state.filesystem.get_segment_coefficients(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/configuration/filesystem.py", line 874, in get_segment_coefficients
+    return simulate.get_segment_coefficients(self, model_settings, segment_name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/simulate.py", line 419, in get_segment_coefficients
+    coefficients_df = filesystem.read_model_coefficients(model_settings)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/configuration/filesystem.py", line 865, in read_model_coefficients
+    return simulate.read_model_coefficients(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/simulate.py", line 177, in read_model_coefficients
+    file_path = filesystem.get_config_file_path(file_name)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/configuration/filesystem.py", line 580, in get_config_file_path
+    return self._cascading_input_file_path(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/configuration/filesystem.py", line 492, in _cascading_input_file_path
+    raise FileNotFoundError(
+FileNotFoundError: file_path configs_dir: file 'trip_mode_choice_coefficients_DOES_NOT_EXIST.csv' not in ['/harness/runs/20260914-182516-9dea94/overrides/configs', '/harness/example/configs']
+14/09/2026 18:25:20 - ERROR - root - ===== / =====
+14/09/2026 18:25:20 - NOTIFY - activitysim.core.workflow.runner -  time to execute run.trip_mode_choice UNTIL ERROR : 0.785 seconds
+14/09/2026 18:25:20 - INFO - activitysim.core.tracing - Time to execute all models until this error : 0.99 seconds (0.0 minutes)
+14/09/2026 18:25:20 - ERROR - activitysim.cli.run - activitysim run encountered an unrecoverable error
+Traceback (most recent call last):
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/cli/run.py", line 396, in run
+    state.run(
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/workflow/runner.py", line 170, in __call__
+    self.by_name(model)
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/workflow/runner.py", line 347, in by_name
+    self._obj._context = run_named_step(
+                         ^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/workflow/steps.py", line 83, in run_named_step
+    step_func(context, **kwargs)
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/workflow/steps.py", line 367, in run_step
+    outcome = error_logging(wrapped_func)(state, *args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/workflow/steps.py", line 46, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/abm/models/trip_mode_choice.py", line 231, in trip_mode_choice
+    coefficients = state.filesystem.get_segment_coefficients(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/configuration/filesystem.py", line 874, in get_segment_coefficients
+    return simulate.get_segment_coefficients(self, model_settings, segment_name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/simulate.py", line 419, in get_segment_coefficients
+    coefficients_df = filesystem.read_model_coefficients(model_settings)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/configuration/filesystem.py", line 865, in read_model_coefficients
+    return simulate.read_model_coefficients(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/simulate.py", line 177, in read_model_coefficients
+    file_path = filesystem.get_config_file_path(file_name)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/configuration/filesystem.py", line 580, in get_config_file_path
+    return self._cascading_input_file_path(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/configuration/filesystem.py", line 492, in _cascading_input_file_path
+    raise FileNotFoundError(
+FileNotFoundError: file_path configs_dir: file 'trip_mode_choice_coefficients_DOES_NOT_EXIST.csv' not in ['/harness/runs/20260914-182516-9dea94/overrides/configs', '/harness/example/configs']
+14/09/2026 18:25:20 - ERROR - root - file_path configs_dir: file 'trip_mode_choice_coefficients_DOES_NOT_EXIST.csv' not in ['/harness/runs/20260914-182516-9dea94/overrides/configs', '/harness/example/configs']
+Traceback (most recent call last):
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/cli/main.py", line 70, in main
+    sys.exit(asim.execute())
+             ^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/cli/cli.py", line 39, in execute
+    return args.afunc(args)
+           ^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/cli/run.py", line 396, in run
+    state.run(
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/workflow/runner.py", line 170, in __call__
+    self.by_name(model)
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/workflow/runner.py", line 347, in by_name
+    self._obj._context = run_named_step(
+                         ^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/workflow/steps.py", line 83, in run_named_step
+    step_func(context, **kwargs)
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/workflow/steps.py", line 367, in run_step
+    outcome = error_logging(wrapped_func)(state, *args, **kwargs)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/workflow/steps.py", line 46, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/abm/models/trip_mode_choice.py", line 231, in trip_mode_choice
+    coefficients = state.filesystem.get_segment_coefficients(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/configuration/filesystem.py", line 874, in get_segment_coefficients
+    return simulate.get_segment_coefficients(self, model_settings, segment_name)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/simulate.py", line 419, in get_segment_coefficients
+    coefficients_df = filesystem.read_model_coefficients(model_settings)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/configuration/filesystem.py", line 865, in read_model_coefficients
+    return simulate.read_model_coefficients(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/simulate.py", line 177, in read_model_coefficients
+    file_path = filesystem.get_config_file_path(file_name)
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/configuration/filesystem.py", line 580, in get_config_file_path
+    return self._cascading_input_file_path(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/harness/.venv/lib/python3.11/site-packages/activitysim/core/configuration/filesystem.py", line 492, in _cascading_input_file_path
+    raise FileNotFoundError(
+FileNotFoundError: file_path configs_dir: file 'trip_mode_choice_coefficients_DOES_NOT_EXIST.csv' not in ['/harness/runs/20260914-182516-9dea94/overrides/configs', '/harness/example/configs']

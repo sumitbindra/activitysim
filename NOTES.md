@@ -270,3 +270,73 @@ Command, run from inside `example/`:
 - `scorecard.json` (15 KB) keeps per-category deltas for every metric;
   the compact views used by the CLI text and the MCP tools drop passing
   metrics to one line and deltas below 0.0005.
+
+## Phase 3 — structured failures
+
+### What was built
+
+- `errors.py` reads the run's `activitysim.log` (found via
+  `paths.find_log_file`, so either `output/log/` or `output/`), plus
+  `stdout.log` and `stderr.log`, and writes `runs/<id>/error.json` with
+  `failed_step`, `exception_type`, `message`, `traceback_tail` (last 15
+  frames, site-packages paths shortened, Python 3.11 caret lines dropped),
+  `traceback_source` (log / stdout / stderr), `expression_context`,
+  `exit_code`, `log_path`, `log_tail` (100 lines), `stderr_tail`, and
+  `override_files` (which shadowing files this run carried, because a
+  failure usually follows a config edit).
+- Written automatically for failed runs by a finalize hook; `asim error
+  <run_id>` prints it readably (`--json`, `--tail N`, `--force` to
+  re-extract); `asim show` mentions it; the ledger row carries
+  `failed_step`; `asim run` prints one paragraph on stderr and exits 1.
+- Three manufactured failures, kept as fixtures under
+  `tests/fixtures/failures/` and applied with `--override-file` on a
+  resume after `trip_scheduling` (5 s each instead of 2 min):
+  `missing_coefficients_file/trip_mode_choice.yaml` (COEFFICIENTS points
+  at a file that does not exist), `malformed_coefficients/
+  trip_mode_choice_coefficients.csv` (value `oops`), and
+  `bad_preprocessor_expression/trip_mode_choice_annotate_trips_preprocessor.csv`
+  (an expression using an undefined name). Trimmed real logs from the
+  first and third are committed under `tests/fixtures/logs/` for the unit
+  tests.
+
+### What ActivitySim 1.4 actually does on failure (verified)
+
+- The CLI catches the exception, prints the traceback to **stdout**, and
+  exits **99**; `stderr` only has the `pkg_resources` deprecation warning.
+- The log brackets the failure with `===== ERROR IN <step> =====`, the
+  message, a traceback, `===== / =====`, then logs
+  `activitysim run encountered an unrecoverable error` with the traceback
+  again. `failed_step` comes from that marker, falling back to the last
+  `#run_model running step` line.
+- Expression failures are logged as `<trace_label> - <ExcType> (<msg>)
+  evaluating: <expression>` (utilities, interaction, `assign_variables`),
+  `Variable evaluation failed ...`, or `assign_variables expression:
+  <target> = <expr>`; spec-file problems as `Error reading spec file:
+  <path>`, `read_model_spec error reading <path>`, `Coefficient File
+  Invalid: <path>`; a missing config file as `FileNotFoundError: ... file
+  '<name>' not in [<config dirs>]`. All of these feed `expression_context`.
+- A malformed coefficient value does not get an expression context: the
+  error is a pandas `ValueError: could not convert string to float:
+  'oops'` raised while reading the file, with no file name in the message.
+  The `override_files` list in `error.json` is what points at the culprit.
+
+### Verified
+
+- `missing_coefficients_file`: `failed_step` = `trip_mode_choice`,
+  `FileNotFoundError`, message names the missing file, `missing_file`
+  extracted; `asim run` exit 1 with the paragraph above; `error.json`
+  written by the hook; ledger shows `failed_step`.
+- `bad_preprocessor_expression`: `NameError: name 'no_such_column_xyz' is
+  not defined`, `expression_context.expression` = `no_such_column_xyz + 1`,
+  `trace_label` = `assign_variables`.
+- 50 unit tests pass (7 new for `errors.py`, against the committed logs,
+  including the stdout fallback and the no-log case).
+- The extra failure runs were deleted; one failed run
+  (`bad_preprocessor_expression`) is kept in the ledger as a live example.
+
+### Drift
+
+- My first attempt at the expression fixture produced a malformed CSV
+  instead (the example file has no trailing newline, so an appended row
+  merged with the last line). Harmless, but a reminder that override CSVs
+  need a newline check; the fixture build now writes one explicitly.
