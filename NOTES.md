@@ -397,3 +397,64 @@ Command, run from inside `example/`:
   check: mode choice only", resume_from=<baseline>,
   resume_after="trip_scheduling", wait=true)` returned after 15 s with
   `status: succeeded` and a passing scorecard (4.7 KB).
+
+## Phase 5 — playbook and agent smoke test
+
+### What was built
+
+- `CLAUDE.md` with exactly the plan's five sections: what the repo is (three
+  sentences), the 34-step model system map with the three mode choice steps
+  marked (`tour_mode_choice_simulate`, `atwork_subtour_mode_choice`,
+  `trip_mode_choice`), how to run, the four rules, and where things are.
+- Drift: this session cannot open an interactive Claude Code window, and
+  the branch could not be pushed (see below), so a new remote session could
+  not be started either. The smoke test was run instead with a fresh
+  general-purpose subagent given the exact prompt from the plan plus one
+  framing paragraph: "the MCP tools are available through
+  `.venv/bin/asim tool <name> '<json>'`". `asim tool` is a new stdio client
+  shim (`mcp_client.py`) that talks to the real `asim mcp` server, returns
+  exactly what an MCP client gets, and appends every call to
+  `runs/.tool-calls.log`, which gave an objective record of the agent's
+  tool use next to its own self-reported trace.
+
+### Smoke test, first run (before fixes)
+
+Prompt, verbatim: "Run a smoke test at the sample size noted in NOTES.md,
+then tell me the trip mode shares and how they compare to targets."
+
+- Outcome: correct. The agent read `CLAUDE.md` and `NOTES.md`, found the
+  500-household smoke size, ran `run_model(label=..., sample_size=500,
+  wait=true)` (91.1 s), then `summarize_run` and `check_targets`, and
+  reported the overall trip mode shares with signed deltas per mode (WALK
+  −0.014, n=2279, PASS at tolerance 0.02), the by-purpose cells that fail
+  from sampling noise (n between 29 and 139), and the 19-of-27 overall
+  verdict with the right interpretation. Every number matched
+  `asim check` on the same run.
+- Points to fix, from the agent's trace and the call log:
+  1. It read `targets/prototype_mtc.yaml` and grepped
+     `runs/<id>/scorecard.json` from disk because the compact scorecard
+     returned by `run_model`, `get_run` and `check_targets` dropped
+     per-category deltas for *passing* metrics, and the one metric the
+     user asked about had passed. So the task was completed with two raw
+     file reads, not with the MCP tools alone.
+  2. `asim tool --list` showed tool names and descriptions but no
+     parameter schemas, so it guessed `run_model`'s argument names from the
+     playbook examples (correctly). A real MCP client shows schemas; the
+     shim did not.
+  3. It hesitated over `wait=true` versus `wait=false`: the playbook said
+     "longer than a couple of minutes" and a 500-household run is about 90 s.
+  4. It called `check_targets` after `run_model` had already attached the
+     same scorecard (harmless, one redundant call).
+- Fixes made:
+  1. `scorecard.json` now stores per-category `actual` and `target` next to
+     `deltas`; `check_targets(run_id, detail="failed"|"all", metric=<name
+     or prefix>)` returns `{category: {share, target, delta}}` for every
+     selected metric, passing ones included; the default view still keeps
+     passing metrics to one line. Existing runs were re-scored.
+  2. `asim tool --list` prints each tool's parameters with types and
+     defaults from the input schema.
+  3. `CLAUDE.md` now says a 500-household run or a resume is fine with
+     `wait=true`, full runs should use `wait=false`, that `run_model` and
+     `get_run` already carry the scorecard, and that `check_targets` with
+     `metric=` or `detail="all"` replaces opening `scorecard.json` or the
+     targets file.
