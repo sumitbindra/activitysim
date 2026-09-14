@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 
-from . import __version__, example, ledger, paths, runner
+from . import __version__, compare, example, ledger, paths, runner, summarize, targets
 from . import manifest as mf
 from .jsonio import dumps, read_json_if_exists
 
@@ -132,6 +132,78 @@ def show(run_id, full):
         click.echo(f"failed in step {error.get('failed_step')}: {error.get('exception_type')}: "
                    f"{(error.get('message') or '').splitlines()[0] if error.get('message') else ''} "
                    f"(see `asim error {run_id}`)", err=True)
+
+
+@main.command("summarize")
+@click.argument("run_id")
+@click.option("--json", "as_json", is_flag=True, help="Print the full summary as JSON.")
+@click.option("--force", is_flag=True, help="Recompute from the output tables even if summary.json exists.")
+def summarize_cmd(run_id, as_json, force):
+    """Metrics of a run (counts, shares, sanity checks); writes runs/<id>/summary.json."""
+    try:
+        summary = summarize.summarize_run(_resolve(run_id), force=force)
+    except summarize.SummaryError as e:
+        raise click.ClickException(str(e)) from e
+    click.echo(dumps(summary) if as_json else summarize.compact_text(summary))
+
+
+@main.command()
+@click.argument("run_id")
+@click.option("--targets", "targets_path", type=click.Path(exists=True, dir_okay=False, path_type=Path), default=None,
+              help="Targets file (default: targets/<model>.yaml).")
+@click.option("--json", "as_json", is_flag=True, help="Print the scorecard as JSON.")
+@click.option("--strict", is_flag=True, help="Exit 2 when the scorecard fails.")
+def check(run_id, targets_path, as_json, strict):
+    """Score a run's summary.json against the targets; writes runs/<id>/scorecard.json."""
+    try:
+        card = targets.check_run(_resolve(run_id), targets_path)
+    except (targets.TargetsError, summarize.SummaryError) as e:
+        raise click.ClickException(str(e)) from e
+    click.echo(dumps(card) if as_json else targets.text(card))
+    if strict and not card["passed"]:
+        sys.exit(2)
+
+
+@main.command("compare")
+@click.argument("run_a")
+@click.argument("run_b")
+@click.option("--threshold", default=compare.UNCHANGED_TOLERANCE, show_default=True,
+              help="Max abs share delta still reported as unchanged.")
+@click.option("--json", "as_json", is_flag=True)
+def compare_cmd(run_a, run_b, threshold, as_json):
+    """Per-metric deltas (b - a) between two runs' summaries."""
+    try:
+        result = compare.compare_runs(_resolve(run_a), _resolve(run_b), threshold)
+    except summarize.SummaryError as e:
+        raise click.ClickException(str(e)) from e
+    click.echo(dumps(result) if as_json else compare.text(result))
+
+
+@main.group("targets")
+def targets_group():
+    """Manage targets/<model>.yaml."""
+
+
+@targets_group.command("bootstrap")
+@click.argument("run_id")
+@click.option("--force", is_flag=True, help="Overwrite an existing targets file.")
+def targets_bootstrap(run_id, force):
+    """Write the run's share metrics as targets with default tolerances."""
+    try:
+        doc = targets.bootstrap(_resolve(run_id), force=force)
+    except (targets.TargetsError, summarize.SummaryError) as e:
+        raise click.ClickException(str(e)) from e
+    click.echo(f"wrote {doc['_path']}: {len(doc['metrics'])} metrics from run {doc['source_run']}")
+
+
+@targets_group.command("show")
+def targets_show():
+    """Print the targets file."""
+    try:
+        doc = targets.load_targets()
+    except targets.TargetsError as e:
+        raise click.ClickException(str(e)) from e
+    click.echo(Path(doc["_path"]).read_text())
 
 
 @main.command()

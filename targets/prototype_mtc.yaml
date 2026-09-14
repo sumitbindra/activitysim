@@ -1,0 +1,370 @@
+# Bootstrapped from a harness run; there is no observed data for the example.
+# tolerance_abs is the maximum absolute share difference allowed per category.
+model: prototype_mtc
+source_run: 20260914-181919-339aa0
+generated_at: '2026-09-14T18:22:55+00:00'
+metrics:
+  auto_ownership_share:
+    tolerance_abs: 0.03
+    n: 5000
+    targets:
+      '0': 0.624
+      '1': 0.3596
+      '2': 0.0152
+      '3': 0.0004
+      '4': 0.0008
+  cdap_share:
+    tolerance_abs: 0.03
+    n: 8212
+    targets:
+      H: 0.165733
+      M: 0.523868
+      N: 0.310399
+  tour_mode_share.overall:
+    tolerance_abs: 0.02
+    n: 9806
+    targets:
+      BIKE: 0.032939
+      DRIVEALONEFREE: 0.03661
+      DRIVE_LOC: 0.00051
+      SHARED2FREE: 0.029982
+      SHARED3FREE: 0.028554
+      TAXI: 0.014379
+      TNC_SHARED: 0.005711
+      TNC_SINGLE: 0.082093
+      WALK: 0.473282
+      WALK_HVY: 0.012951
+      WALK_LOC: 0.137569
+      WALK_LRF: 0.145421
+  tour_mode_share.by_purpose.atwork:
+    tolerance_abs: 0.02
+    n: 703
+    targets:
+      BIKE: 0.014225
+      DRIVEALONEFREE: 0.009957
+      SHARED2FREE: 0.032717
+      SHARED3FREE: 0.029872
+      TAXI: 0.00569
+      TNC_SHARED: 0.00569
+      TNC_SINGLE: 0.049787
+      WALK: 0.829303
+      WALK_HVY: 0.004267
+      WALK_LOC: 0.01138
+      WALK_LRF: 0.007112
+  tour_mode_share.by_purpose.eatout:
+    tolerance_abs: 0.02
+    n: 659
+    targets:
+      BIKE: 0.009105
+      DRIVEALONEFREE: 0.021244
+      SHARED2FREE: 0.036419
+      SHARED3FREE: 0.031866
+      TAXI: 0.004552
+      TNC_SINGLE: 0.010622
+      WALK: 0.793627
+      WALK_HVY: 0.003035
+      WALK_LOC: 0.034901
+      WALK_LRF: 0.054628
+  tour_mode_share.by_purpose.escort:
+    tolerance_abs: 0.02
+    n: 386
+    targets:
+      BIKE: 0.005181
+      SHARED2FREE: 0.183938
+      SHARED3FREE: 0.199482
+      TAXI: 0.036269
+      TNC_SHARED: 0.041451
+      TNC_SINGLE: 0.176166
+      WALK: 0.349741
+      WALK_LOC: 0.007772
+  tour_mode_share.by_purpose.othdiscr:
+    tolerance_abs: 0.02
+    n: 1140
+    targets:
+      BIKE: 0.022807
+      DRIVEALONEFREE: 0.034211
+      SHARED2FREE: 0.028947
+      SHARED3FREE: 0.037719
+      TAXI: 0.005263
+      TNC_SHARED: 0.002632
+      TNC_SINGLE: 0.040351
+      WALK: 0.560526
+      WALK_HVY: 0.013158
+      WALK_LOC: 0.107018
+      WALK_LRF: 0.147368
+  tour_mode_share.by_purpose.othmaint:
+    tolerance_abs: 0.02
+    n: 757
+    targets:
+      BIKE: 0.116248
+      DRIVEALONEFREE: 0.05284
+      SHARED2FREE: 0.029062
+      SHARED3FREE: 0.027741
+      TAXI: 0.029062
+      TNC_SHARED: 0.010568
+      TNC_SINGLE: 0.067371
+      WALK: 0.359313
+      WALK_HVY: 0.022457
+      WALK_LOC: 0.1321
+      WALK_LRF: 0.153236
+  tour_mode_share.by_purpose.school:
+    tolerance_abs: 0.02
+    n: 690
+    targets:
+      BIKE: 0.002899
+      SHARED2FREE: 0.004348
+      SHARED3FREE: 0.02029
+      TAXI: 0.001449
+      TNC_SHARED: 0.001449
+      TNC_SINGLE: 0.002899
+      WALK: 0.431884
+      WALK_HVY: 0.004348
+      WALK_LOC: 0.271014
+      WALK_LRF: 0.25942
+  tour_mode_share.by_purpose.shopping:
+    tolerance_abs: 0.02
+    n: 1351
+    targets:
+      BIKE: 0.043671
+      DRIVEALONEFREE: 0.088823
+      SHARED2FREE: 0.041451
+      SHARED3FREE: 0.026647
+      TAXI: 0.045152
+      TNC_SHARED: 0.014064
+      TNC_SINGLE: 0.066617
+      WALK: 0.441155
+      WALK_HVY: 0.005181
+      WALK_LOC: 0.136195
+      WALK_LRF: 0.091044
+  tour_mode_share.by_purpose.social:
+    tolerance_abs: 0.02
+    n: 333
+    targets:
+      BIKE: 0.024024
+      DRIVEALONEFREE: 0.012012
+      SHARED2FREE: 0.051051
+      SHARED3FREE: 0.024024
+      TAXI: 0.012012
+      TNC_SHARED: 0.003003
+      TNC_SINGLE: 0.099099
+      WALK: 0.531532
+      WALK_HVY: 0.015015
+      WALK_LOC: 0.09009
+      WALK_LRF: 0.138138
+  tour_mode_share.by_purpose.univ:
+    tolerance_abs: 0.02
+    n: 289
+    targets:
+      BIKE: 0.00692
+      DRIVEALONEFREE: 0.038062
+      SHARED2FREE: 0.00346
+      TAXI: 0.020761
+      TNC_SHARED: 0.00692
+      TNC_SINGLE: 0.024221
+      WALK: 0.269896
+      WALK_LOC: 0.377163
+      WALK_LRF: 0.252595
+  tour_mode_share.by_purpose.work:
+    tolerance_abs: 0.02
+    n: 3498
+    targets:
+      BIKE: 0.034305
+      DRIVEALONEFREE: 0.035449
+      DRIVE_LOC: 0.001429
+      SHARED2FREE: 0.012579
+      SHARED3FREE: 0.011149
+      TAXI: 0.005718
+      TNC_SHARED: 0.000572
+      TNC_SINGLE: 0.133219
+      WALK: 0.383076
+      WALK_HVY: 0.021441
+      WALK_LOC: 0.166667
+      WALK_LRF: 0.194397
+  trip_mode_share.overall:
+    tolerance_abs: 0.02
+    n: 23583
+    targets:
+      BIKE: 0.027605
+      DRIVEALONEFREE: 0.010431
+      DRIVE_LOC: 0.000424
+      SHARED2FREE: 0.006657
+      SHARED3FREE: 0.003647
+      TAXI: 0.000975
+      TNC_SHARED: 0.001866
+      TNC_SINGLE: 0.011746
+      WALK: 0.671204
+      WALK_HVY: 0.003138
+      WALK_LOC: 0.176695
+      WALK_LRF: 0.085613
+  trip_mode_share.by_purpose.atwork:
+    tolerance_abs: 0.02
+    n: 703
+    targets:
+      BIKE: 0.014225
+      DRIVEALONEFREE: 0.001422
+      SHARED2FREE: 0.007112
+      SHARED3FREE: 0.007112
+      TNC_SINGLE: 0.014225
+      WALK: 0.896159
+      WALK_HVY: 0.004267
+      WALK_LOC: 0.044097
+      WALK_LRF: 0.01138
+  trip_mode_share.by_purpose.eatout:
+    tolerance_abs: 0.02
+    n: 1245
+    targets:
+      BIKE: 0.019277
+      DRIVEALONEFREE: 0.008835
+      SHARED2FREE: 0.004016
+      SHARED3FREE: 0.001606
+      TAXI: 0.000803
+      TNC_SHARED: 0.00241
+      TNC_SINGLE: 0.005622
+      WALK: 0.816064
+      WALK_HVY: 0.00241
+      WALK_LOC: 0.113253
+      WALK_LRF: 0.025703
+  trip_mode_share.by_purpose.escort:
+    tolerance_abs: 0.02
+    n: 1157
+    targets:
+      BIKE: 0.01815
+      DRIVEALONEFREE: 0.016422
+      SHARED2FREE: 0.019879
+      SHARED3FREE: 0.008643
+      TNC_SHARED: 0.001729
+      TNC_SINGLE: 0.014693
+      WALK: 0.666379
+      WALK_HVY: 0.000864
+      WALK_LOC: 0.222126
+      WALK_LRF: 0.031115
+  trip_mode_share.by_purpose.home:
+    tolerance_abs: 0.02
+    n: 9103
+    targets:
+      BIKE: 0.03043
+      DRIVEALONEFREE: 0.008678
+      DRIVE_LOC: 0.000549
+      SHARED2FREE: 0.005932
+      SHARED3FREE: 0.003186
+      TAXI: 0.000879
+      TNC_SHARED: 0.001538
+      TNC_SINGLE: 0.010766
+      WALK: 0.65429
+      WALK_HVY: 0.002856
+      WALK_LOC: 0.164671
+      WALK_LRF: 0.116225
+  trip_mode_share.by_purpose.othdiscr:
+    tolerance_abs: 0.02
+    n: 1399
+    targets:
+      BIKE: 0.019299
+      DRIVEALONEFREE: 0.007148
+      SHARED2FREE: 0.003574
+      SHARED3FREE: 0.006433
+      TAXI: 0.00143
+      TNC_SHARED: 0.000715
+      TNC_SINGLE: 0.006433
+      WALK: 0.687634
+      WALK_HVY: 0.005004
+      WALK_LOC: 0.167262
+      WALK_LRF: 0.095068
+  trip_mode_share.by_purpose.othmaint:
+    tolerance_abs: 0.02
+    n: 1469
+    targets:
+      BIKE: 0.058543
+      DRIVEALONEFREE: 0.011572
+      SHARED2FREE: 0.005446
+      SHARED3FREE: 0.003404
+      TAXI: 0.003404
+      TNC_SHARED: 0.002723
+      TNC_SINGLE: 0.015657
+      WALK: 0.644656
+      WALK_HVY: 0.004765
+      WALK_LOC: 0.189925
+      WALK_LRF: 0.059905
+  trip_mode_share.by_purpose.school:
+    tolerance_abs: 0.02
+    n: 690
+    targets:
+      BIKE: 0.002899
+      DRIVEALONEFREE: 0.001449
+      SHARED2FREE: 0.005797
+      SHARED3FREE: 0.002899
+      TNC_SHARED: 0.001449
+      WALK: 0.537681
+      WALK_HVY: 0.001449
+      WALK_LOC: 0.302899
+      WALK_LRF: 0.143478
+  trip_mode_share.by_purpose.shopping:
+    tolerance_abs: 0.02
+    n: 2377
+    targets:
+      BIKE: 0.027766
+      DRIVEALONEFREE: 0.013462
+      SHARED2FREE: 0.0122
+      SHARED3FREE: 0.004628
+      TAXI: 0.002524
+      TNC_SHARED: 0.002524
+      TNC_SINGLE: 0.014724
+      WALK: 0.639882
+      WALK_HVY: 0.001683
+      WALK_LOC: 0.233908
+      WALK_LRF: 0.046698
+  trip_mode_share.by_purpose.social:
+    tolerance_abs: 0.02
+    n: 552
+    targets:
+      BIKE: 0.016304
+      DRIVEALONEFREE: 0.005435
+      SHARED3FREE: 0.005435
+      TNC_SHARED: 0.001812
+      TNC_SINGLE: 0.01087
+      WALK: 0.682971
+      WALK_HVY: 0.001812
+      WALK_LOC: 0.202899
+      WALK_LRF: 0.072464
+  trip_mode_share.by_purpose.univ:
+    tolerance_abs: 0.02
+    n: 303
+    targets:
+      BIKE: 0.006601
+      DRIVEALONEFREE: 0.009901
+      SHARED2FREE: 0.006601
+      TNC_SHARED: 0.009901
+      TNC_SINGLE: 0.006601
+      WALK: 0.458746
+      WALK_LOC: 0.386139
+      WALK_LRF: 0.115512
+  trip_mode_share.by_purpose.work:
+    tolerance_abs: 0.02
+    n: 4585
+    targets:
+      BIKE: 0.027699
+      DRIVEALONEFREE: 0.015267
+      DRIVE_LOC: 0.001091
+      SHARED2FREE: 0.004798
+      SHARED3FREE: 0.002181
+      TAXI: 0.000218
+      TNC_SHARED: 0.001963
+      TNC_SINGLE: 0.015267
+      WALK: 0.684624
+      WALK_HVY: 0.00458
+      WALK_LOC: 0.159651
+      WALK_LRF: 0.082661
+  tour_frequency.mandatory:
+    tolerance_abs: 0.02
+    n: 8212
+    targets:
+      '0': 0.476132
+      '1': 0.502557
+      '2': 0.02131
+  tour_frequency.non_mandatory:
+    tolerance_abs: 0.02
+    n: 8212
+    targets:
+      '0': 0.600585
+      '1': 0.287628
+      '2': 0.079396
+      3+: 0.032392

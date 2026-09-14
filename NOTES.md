@@ -212,3 +212,61 @@ Command, run from inside `example/`:
   is `households_sample_size: 100000`, i.e. all 5000 households.
 - The two pre-fix runs from this phase were deleted before the commit; the
   ledger was rebuilt with `asim reindex`.
+
+## Phase 2 — summaries, targets, compare
+
+### What was built
+
+- `summarize.py`: file and column names live in `TABLE_FILES` / `COLS` at
+  the top. Metrics: `counts` (households, persons, tours, trips, plus
+  `tours_by_purpose` and `trips_by_purpose` so every share vector has an
+  `n`), `auto_ownership_share`, `cdap_share`, `tour_mode_share`
+  (`overall`, `by_purpose` keyed by the tour's `primary_purpose`),
+  `trip_mode_share` (`overall`, `by_purpose` keyed by the trip's own
+  `purpose` column, so `home` is a purpose), `tour_frequency` (tours per
+  person from the tours table, over all persons, binned 0/1/2/3+, for
+  `tour_category` mandatory and non_mandatory) and `checks`. Shares are
+  rounded to 6 decimals after the sum-to-one check. ~7.5 KB of JSON.
+  Written automatically as `runs/<id>/summary.json` by a finalize hook.
+- `targets.py`: `asim targets bootstrap <run_id>` writes every share
+  vector of the run as a target (27 metrics: the 5 top-level vectors plus
+  by-purpose tour and trip mode shares) with the plan's tolerances (0.02
+  mode shares, 0.03 auto ownership and CDAP; tour_frequency 0.02) and the
+  `n` behind each. Scoring reads only `summary.json` (a test monkeypatches
+  the table reader to prove it). `scorecard.json` per run, and a scorecard
+  is written automatically after a successful run when a targets file
+  exists. `asim check --strict` exits 2 on failure for scripts.
+- `compare.py`: deltas are `b - a` for every share vector present in
+  either run; verdicts `unchanged` (max |delta| <= 0.005), `drifted`,
+  `missing`.
+- `asim summarize|check|compare|targets bootstrap|targets show`.
+
+### Verified
+
+- Baseline scored against its own bootstrapped targets: PASS, 0 of 27.
+- The 500-household smoke run: FAIL, 19 of 27, all sampling noise:
+  `trip_mode_share.overall` passes (max |delta| 0.014 on WALK, n=2279),
+  `tour_mode_share.overall` just fails (0.021, n=961), auto ownership,
+  CDAP and both tour-frequency vectors pass; the by-purpose cells with
+  n around 30 (`univ`, `social`) miss by 0.11-0.14. `asim compare
+  baseline smoke` shows the same deltas (26 drifted, 1 unchanged).
+- The resumed mode-choice-only run scores PASS 0 of 27, as it must.
+- Round trip: `summary.json` is plain JSON; `check` never opens the tables.
+- 43 unit tests, including summarize against a committed 19-household
+  fixture (`tests/fixtures/output/`, 32 KB, cut from the smoke run).
+
+### Drift and observations
+
+- The plan lists only the overall vectors in its target-file example; I
+  also bootstrap the by-purpose mode shares because that is what a mode
+  choice calibration needs. The price is that a 500-household run always
+  fails those small cells. Every scorecard line carries `n`, and the
+  playbook (Phase 5) must tell the agent to report deltas together with
+  `n` and to confirm at full size. A tolerance that scales with `n` is a
+  reasonable later improvement, but out of scope now.
+- "Trip purpose" is the trip's `purpose` column (destination purpose,
+  including `home`), not the tour's `primary_purpose`; that column is also
+  in the trips table if a remap is wanted.
+- `scorecard.json` (15 KB) keeps per-category deltas for every metric;
+  the compact views used by the CLI text and the MCP tools drop passing
+  metrics to one line and deltas below 0.0005.
