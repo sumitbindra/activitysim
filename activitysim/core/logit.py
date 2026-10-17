@@ -795,7 +795,9 @@ def make_choices(
 
     rands = state.get_rn_generator().random_for_df(probs)
 
-    choices = pd.Series(choice_maker(probs.values, rands), index=probs.index)
+    # rands has one column; pass it flat, or numba's choice_maker makes a 1-element
+    # array at every step of its loop (same choices, about 30x slower)
+    choices = pd.Series(choice_maker(probs.values, rands.ravel()), index=probs.index)
     # mark bad choices with -99
     choices[bad_probs] = -99
 

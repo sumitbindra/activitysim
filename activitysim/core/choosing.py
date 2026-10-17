@@ -3,7 +3,7 @@ import pandas as pd
 from numba import njit
 
 
-@njit
+@njit(cache=True)
 def choice_maker(pr, rn, out=None):
     if out is None:
         out = np.empty(pr.shape[0], dtype=np.int32)
@@ -28,7 +28,7 @@ def choice_maker(pr, rn, out=None):
     return out
 
 
-@njit
+@njit(cache=True)
 def sample_choices_maker(
     prob_array,
     random_array,
@@ -89,7 +89,7 @@ def sample_choices_maker(
     return out_choices, out_choice_probs
 
 
-@njit
+@njit(cache=True)
 def _sample_choices_maker_preserve_ordering(
     prob_array,
     random_array,
