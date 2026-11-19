@@ -18,6 +18,7 @@ import numpy as np
 
 from .. import logit
 from ..component import Component, MissingInputError, Needs, StepContext
+from ..seams import Engine
 from ..spec.definition import ChoiceModelDefinition
 
 
@@ -100,26 +101,28 @@ def simple_choice_component(
         resolved["needs"] = view.resolve(columns, available)
         return resolved["needs"]
 
-    def compute(cols: Mapping[str, object], n: int):
-        """Term values, utilities and probabilities for ``n`` choosers."""
+    def compute(cols: Mapping[str, object], n: int, engine: Engine):
+        """Utilities and probabilities for ``n`` choosers, using ``engine``'s pieces."""
         with np.errstate(divide="ignore", invalid="ignore"):
-            values = logit.term_values(terms_fn(cols), n)
-        utils = logit.utilities(values, coef)
-        probs, bad = logit.probabilities(utils, shift=shift_utilities)
-        return values, utils, probs, bad
+            utils = engine.utilities(terms_fn(cols), coef, n)
+        probs, bad = engine.probabilities(utils, shift=shift_utilities)
+        return utils, probs, bad
 
     def run(ctx: StepContext):
         ids = ctx.ids(view.table)
         cols = view.gather(ctx, resolved["needs"])
-        values, utils, probs, bad = compute(cols, len(ids))
+        utils, probs, bad = compute(cols, len(ids), ctx.engine)
         if bad.any():
             raise ValueError(
                 f"{step}: {int(bad.sum())} choosers have no usable probabilities, "
                 f"e.g. IDs {ids[bad][:5].tolist()}"
             )
         rands = ctx.random.uniform(channel, ids)
-        choices = logit.choose(probs, rands)
-        _trace(ctx, ids, labels, formulas, values, coef, utils, probs, rands, choices)
+        choices = ctx.engine.choose(probs, rands)
+        rows = ctx.tracer.targets(view.table, ids)
+        if len(rows):
+            _trace(ctx, ids, rows, cols, terms_fn, labels, formulas, coef, utils, probs,
+                   rands, choices, definition.alternatives)
         return {view.table: {output_column: choices}}
 
     return Component(
@@ -139,16 +142,17 @@ def simple_choice_component(
     )
 
 
-def _trace(ctx, ids, labels, formulas, values, coef, utils, probs, rands, choices):
-    info = ctx.component.info
-    rows = ctx.tracer.targets(info["chooser_table"], ids)
-    if len(rows) == 0:
-        return
-    alts = info["definition"].alternatives
+def _trace(ctx, ids, rows, cols, terms_fn, labels, formulas, coef, utils, probs, rands,
+           choices, alts):
+    # re-evaluate the formulas for the traced rows only, so tracing works the
+    # same whichever implementation computed the utilities
+    subset = {c: (v[rows] if np.ndim(v) else v) for c, v in cols.items()}
+    with np.errstate(divide="ignore", invalid="ignore"):
+        values = logit.term_values(terms_fn(subset), len(rows), n_terms=len(labels))
     term_rows = []
-    for r in rows:
+    for j, r in enumerate(rows):
         for k, (label, formula) in enumerate(zip(labels, formulas)):
-            term_rows.append([ids[r], label, formula, values[k, r]] + list(values[k, r] * coef[k]))
+            term_rows.append([ids[r], label, formula, values[k, j]] + list(values[k, j] * coef[k]))
     ctx.tracer.write(ctx.step, "terms", ["id", "label", "formula", "value"] + alts, term_rows)
     choice_rows = []
     for r in rows:

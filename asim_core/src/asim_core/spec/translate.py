@@ -244,18 +244,19 @@ RUNTIME_NAMESPACE = {"np": np, "_clip": _clip, "_fillna": _fillna}
 
 def build_function(name: str, items: list[tuple[str, Translated]], doc: str = "") -> str:
     """
-    Python source for a function ``name(c)`` that returns one array (or scalar)
-    per formula, in order. ``items`` are (label, translated formula) pairs.
-    The source is plain NumPy code meant to be read by people.
+    Python source for a function ``name(c)`` that yields one array (or
+    scalar) per formula, in order, so callers can use each term and discard it
+    before the next is computed. ``items`` are (label, translated formula)
+    pairs. The source is plain NumPy code meant to be read by people.
     """
     lines = [f"def {name}(c):"]
     if doc:
         lines.append(f'    """{doc}"""')
-    lines.append("    out = []")
     for label, tr in items:
         lines.append(f"    # {label}: {tr.formula}")
-        lines.append(f"    out.append({tr.source})")
-    lines.append("    return out")
+        lines.append(f"    yield {tr.source}")
+    if not items:
+        lines.append("    yield from ()")
     return "\n".join(lines) + "\n"
 
 

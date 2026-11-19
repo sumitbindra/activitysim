@@ -71,16 +71,17 @@ def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler):
     state.checkpoint.close_store()
 
 
-def profile_asim_core(step, prev, configs, pipeline, scratch, profiler):
+def profile_asim_core(step, prev, configs, pipeline, scratch, profiler, seams):
     from run_milestone1 import build_components
 
     from asim_core.asim1 import Asim1State
     from asim_core.runner import Runner
+    from asim_core.seams import Engine
 
     comps = {c.name: c for c in build_components([Path(c) for c in configs])}
     st = Asim1State(pipeline)
     store = st.load_store(prev)
-    Runner([comps[step]], scratch).run([step], store, profiler)
+    Runner([comps[step]], scratch, engine=Engine(seams)).run([step], store, profiler)
 
 
 def main(argv=None) -> int:
@@ -93,6 +94,8 @@ def main(argv=None) -> int:
     p.add_argument("--asim1-out", default=str(REPO / "asim_core/work/asim1_legacy"))
     p.add_argument("--scratch", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--seams", default="{}",
+                   help='asim_core only: implementations to use, as JSON, e.g. \'{"random": "counter"}\'')
     args = p.parse_args(argv)
 
     sys.path.insert(0, str(HERE))
@@ -107,7 +110,9 @@ def main(argv=None) -> int:
     if args.engine == "asim1":
         profile_asim1(args.step, prev, example, configs, st.path, scratch, profiler)
     else:
-        profile_asim_core(args.step, prev, configs, st.path, scratch, profiler)
+        import json
+
+        profile_asim_core(args.step, prev, configs, st.path, scratch, profiler, json.loads(args.seams))
 
     rec = [r for r in profiler.records if r.step == args.step][-1]
     out = Path(args.out)

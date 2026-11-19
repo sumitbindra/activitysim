@@ -38,6 +38,13 @@ def test_choose_marks_bad_probabilities():
 
 
 def test_utilities_are_values_times_coefficients():
-    values = np.array([[1.0, 0.0], [2.0, 3.0]])  # 2 terms x 2 choosers
+    terms = [np.array([1.0, 0.0]), np.array([2.0, 3.0])]  # 2 terms, 2 choosers
     coef = np.array([[0.0, 1.0], [0.5, -1.0]])  # 2 terms x 2 alternatives
-    np.testing.assert_allclose(logit.utilities(values, coef), [[1.0, -1.0], [1.5, -3.0]])
+    np.testing.assert_allclose(logit.utilities(iter(terms), coef, 2), [[1.0, -1.0], [1.5, -3.0]])
+
+
+def test_wrong_number_of_terms_is_an_error():
+    import pytest
+
+    with pytest.raises(ValueError, match="expected 2 term values"):
+        logit.utilities(iter([np.ones(2)]), np.ones((2, 2)), 2)

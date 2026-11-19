@@ -28,7 +28,7 @@ from pathlib import Path
 
 import numpy as np
 
-from .random import StepRandom
+from .seams import Engine
 from .store import Store
 
 Needs = dict[str, list[str]]
@@ -90,21 +90,27 @@ class Tracer:
 
 
 class StepContext:
-    """What a component sees while it runs."""
+    """
+    What a component sees while it runs: its declared columns, the random
+    streams for this step, the tracer, and ``engine``, the implementations
+    chosen for each swappable piece (see ``seams.py``).
+    """
 
     def __init__(
         self,
         component: Component,
         store: Store,
         needs: Needs,
-        random: StepRandom,
+        engine: Engine,
         tracer: Tracer,
+        base_seed: int = 0,
     ):
         self.component = component
         self.step = component.name
         self._store = store
         self._needs = {t: set(cols) for t, cols in needs.items()}
-        self.random = random
+        self.engine = engine
+        self.random = engine.random(component.name, base_seed)
         self.tracer = tracer
 
     def _check(self, table: str, column: str | None = None) -> None:
@@ -131,4 +137,4 @@ class StepContext:
         """A declared column of ``table``, looked up for the given IDs (a join without a merged copy)."""
         self._check(table, column)
         t = self._store[table]
-        return t[column][t.positions(ids)]
+        return self.engine.lookup(t[column], t.positions(ids))

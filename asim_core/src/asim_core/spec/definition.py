@@ -115,9 +115,9 @@ class ChoiceModelDefinition(BaseModel):
 
     def utility_function(self, term_mask: np.ndarray | None = None):
         """
-        Compile the formulas into one NumPy function ``f(c) -> list of arrays``.
-        Returns (function, source code). Terms where ``term_mask`` is False are
-        listed as comments but not computed.
+        Compile the formulas into one NumPy function ``f(c)`` that yields one
+        array per term. Returns (function, source code). Terms where
+        ``term_mask`` is False are listed as comments but not computed.
         """
         func_name = f"{_identifier(self.name)}_terms"
         items = []

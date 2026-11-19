@@ -40,6 +40,7 @@ from asim_core.compare import compare_column, value_shares, write_comparisons  #
 from asim_core.components import auto_ownership  # noqa: E402
 from asim_core.profiler import Profiler  # noqa: E402
 from asim_core.runner import Runner  # noqa: E402
+from asim_core.seams import Engine  # noqa: E402
 from asim_core.spec.legacy import load_top_settings  # noqa: E402
 from asim_core.store import Store  # noqa: E402
 
@@ -101,7 +102,7 @@ def utility_check(comp, st: Asim1State, example: Path, configs_names, out: Path)
     view = comp.info["view"]
     cols = view.gather_from_store(store, comp.info["columns"])
     ids = store[view.table].index
-    _, utils, probs, _ = comp.info["compute"](cols, len(ids))
+    utils, probs, _ = comp.info["compute"](cols, len(ids), Engine())
     rows = []
     for name, ours, ref in (
         ("utilities", utils, ref_utils.loc[ids].to_numpy()),

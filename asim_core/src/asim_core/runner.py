@@ -29,7 +29,7 @@ from .asim1 import Asim1State
 from .compare import ColumnComparison, compare_column
 from .component import Component, ContractError, MissingInputError, StepContext, Tracer
 from .profiler import Profiler
-from .random import StepRandom
+from .seams import Engine
 from .store import Store, Table
 
 COMPUTED = "computed"
@@ -58,13 +58,22 @@ class Runner:
         trace_ids: dict[str, list] | None = None,
         base_seed: int = 0,
         save_outputs: bool = True,
+        engine: Engine | None = None,
+        step_engines: dict[str, Engine] | None = None,
     ):
+        """
+        ``engine`` picks the implementation of each swappable piece for all
+        steps (default: the reference implementations); ``step_engines``
+        overrides it for individual steps.
+        """
         self.components = {c.name: c for c in components}
         self.out_dir = Path(out_dir)
         self.replay = replay
         self.tracer = Tracer(self.out_dir / "trace", trace_ids)
         self.base_seed = base_seed
         self.save_outputs = save_outputs
+        self.engine = engine or Engine()
+        self.step_engines = dict(step_engines or {})
 
     # --- planning and startup checks ---------------------------------------------
 
@@ -141,7 +150,12 @@ class Runner:
 
         manifest = {
             "start": start_note,
-            "steps": [{"step": s, "mode": m} for s, m in plan],
+            "steps": [
+                {"step": s, "mode": m,
+                 **({"engine": self.step_engines.get(s, self.engine).changed or "reference"}
+                    if m == COMPUTED else {})}
+                for s, m in plan
+            ],
             "computed_columns": {t: sorted(c) for t, c in computed_cols.items()},
         }
         (self.out_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -150,7 +164,8 @@ class Runner:
 
     def _run_component(self, step, store: Store, needs, computed_cols) -> None:
         comp = self.components[step]
-        ctx = StepContext(comp, store, needs, StepRandom(step, self.base_seed), self.tracer)
+        engine = self.step_engines.get(step, self.engine)
+        ctx = StepContext(comp, store, needs, engine, self.tracer, self.base_seed)
         outputs = comp.run(ctx) or {}
         declared = {(t, c) for t, cols in comp.provides.items() for c in cols}
         produced = {(t, c) for t, cols in outputs.items() for c in cols}

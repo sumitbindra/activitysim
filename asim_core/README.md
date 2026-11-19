@@ -9,9 +9,17 @@ ownership, mode choice, park-and-ride, ...) is a **component** that plugs in.
 A region chooses its components; the runner checks before starting that
 every input each component needs is provided by an earlier step.
 
-Status: first milestone. One component (`auto_ownership`) is ported and
-matches 1.x exactly. Every other step can be **replayed** from a 1.x run, so
-the model runs end to end today. Results: [docs/milestone1.md](docs/milestone1.md).
+Inside a step, the pieces are swappable too (**seams**): turning formulas into
+utilities, probabilities, choosing, random numbers, lookups. Each has a plain
+NumPy reference implementation that matches 1.x exactly; alternatives are
+picked by a setting and tested with the experiment harness. Speed-ups come
+from those experiments. Sharrow is not used; 1.x with sharrow is only a
+baseline in the reports.
+
+Status: one component (`auto_ownership`) is ported and matches 1.x exactly.
+Every other step can be **replayed** from a 1.x run, so the model runs end
+to end today. Results: [docs/milestone1.md](docs/milestone1.md). Swappable
+pieces and the first experiments: [docs/experiments.md](docs/experiments.md).
 
 ## Rules
 
@@ -34,8 +42,10 @@ the model runs end to end today. Results: [docs/milestone1.md](docs/milestone1.m
 | `src/asim_core/asim1.py` | Reads the state 1.x saves after every step, so a run can start at any step. |
 | `src/asim_core/compare.py` | Compares results with 1.x, by row ID: exact, within tolerance, or different. |
 | `src/asim_core/profiler.py` | Per-step runtime and peak memory, standard library only. |
-| `src/asim_core/random.py` | Reproduces 1.x's random numbers exactly (per-row streams seeded from step name and row ID). |
-| `src/asim_core/logit.py` | Multinomial logit: utilities, probabilities, choices, with 1.x's arithmetic. |
+| `src/asim_core/seams.py` | The swappable pieces: registry, reference implementations, and `Engine`, which picks an implementation per piece. |
+| `src/asim_core/random.py` | Random numbers. Reference: 1.x's per-row streams, reproduced exactly. Alternative: `counter`. |
+| `src/asim_core/logit.py` | Reference implementations of utilities, probabilities and choices, with 1.x's arithmetic. |
+| `src/asim_core/alternatives.py` | Alternative implementations for experiments (e.g. `accumulate` utilities). |
 | `src/asim_core/spec/` | Model definitions (Pydantic), the loader for today's YAML/CSV files, and the formula translator. |
 | `src/asim_core/components/` | Components. `simple_choice.py` runs any simple choice model from its definition; `auto_ownership.py` is the first ported model. |
 | `harness/` | Scripts that run 1.x and compare (these import 1.x). |
@@ -75,6 +85,13 @@ python asim_core/harness/run_milestone1.py
 Results land in `asim_core/work/milestone1/` (`summary.md`, `comparisons.csv`,
 `utility_check.csv`, `profile_comparison.csv`, `asim1_profiles.csv`, traces,
 and the generated NumPy code for each model).
+
+Experiments with alternative pieces, listed in `harness/experiments.yaml`
+(see [docs/experiments.md](docs/experiments.md)):
+
+```bash
+python asim_core/harness/run_experiments.py
+```
 
 Tests:
 

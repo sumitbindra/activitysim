@@ -46,7 +46,7 @@ def evaluate(formula):
     tr = translate(formula, CONSTANTS)
     fn = compile_function(build_function("f", [("t", tr)]), "f")
     with np.errstate(divide="ignore", invalid="ignore"):
-        return fn({c: DF[c].to_numpy() for c in DF.columns})[0], tr
+        return next(fn({c: DF[c].to_numpy() for c in DF.columns})), tr
 
 
 @pytest.mark.parametrize("formula", FORMULAS)

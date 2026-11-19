@@ -1,15 +1,21 @@
 """
 Multinomial logit: utilities -> probabilities -> choices.
 
-The arithmetic follows ActivitySim 1.x step for step (activitysim/core/
-simulate.py ``eval_utilities`` and logit.py ``utils_to_probs`` /
-``make_choices``), because floating-point results depend on the order of
-operations and exact matching needs the same order.
+These are the **reference** implementations of the ``utilities``,
+``probabilities`` and ``choose`` seams (see ``seams.py``). Their arithmetic
+follows ActivitySim 1.x step for step (activitysim/core/simulate.py
+``eval_utilities`` and logit.py ``utils_to_probs`` / ``make_choices``),
+because floating-point results depend on the order of operations and exact
+matching needs the same order.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import numpy as np
+
+from .seams import register
 
 EXP_UTIL_MIN = 1e-300
 PROB_MIN = 0.0
@@ -18,19 +24,30 @@ BAD_PROB_THRESHOLD = 0.001
 BAD_CHOICE = -99
 
 
-def term_values(values: list, n: int) -> np.ndarray:
+def term_values(terms: Iterable, n: int, n_terms: int | None = None) -> np.ndarray:
     """Stack per-term values (arrays or scalars) into a (terms x choosers) float64 array."""
-    out = np.empty((len(values), n), dtype=np.float64)
-    for i, v in enumerate(values):
+    terms = list(terms) if n_terms is None else terms
+    k = len(terms) if n_terms is None else n_terms
+    out = np.empty((k, n), dtype=np.float64)
+    i = -1
+    for i, v in enumerate(terms):
         out[i] = v
+    if i + 1 != k:
+        raise ValueError(f"expected {k} term values, got {i + 1}")
     return out
 
 
-def utilities(values: np.ndarray, coefficients: np.ndarray) -> np.ndarray:
-    """(terms x choosers) values and (terms x alternatives) coefficients -> (choosers x alternatives)."""
+@register("utilities", "matmul", reference=True,
+          description="stack all term values (terms x choosers, 64-bit) and multiply by the "
+                      "coefficients in one matrix product, as ActivitySim 1.x does")
+def utilities(terms: Iterable, coefficients: np.ndarray, n: int) -> np.ndarray:
+    """(choosers x alternatives) utilities from term values and (terms x alternatives) coefficients."""
+    values = term_values(terms, n, n_terms=coefficients.shape[0])
     return np.dot(values.transpose(), coefficients)
 
 
+@register("probabilities", "asim1", reference=True,
+          description="exponentiate, zero out values below 1e-300, divide by row totals")
 def probabilities(utils: np.ndarray, shift: bool = False) -> tuple[np.ndarray, np.ndarray]:
     """
     Probabilities from utilities, and a mask of rows that cannot be used
@@ -54,12 +71,13 @@ def probabilities(utils: np.ndarray, shift: bool = False) -> tuple[np.ndarray, n
     return e, bad
 
 
+@register("choose", "sequential", reference=True,
+          description="subtract each alternative's probability from the draw in turn; "
+                      "first one to reach zero or below is chosen, as ActivitySim 1.x does")
 def choose(probs: np.ndarray, rands: np.ndarray) -> np.ndarray:
     """
-    Pick an alternative (column position) per row: subtract each alternative's
-    probability from the random draw in turn and take the first one that takes
-    it to zero or below. Rows whose probabilities do not sum to 1 (within
-    0.001) get -99, as in ActivitySim 1.x.
+    Pick an alternative (column position) per row. Rows whose probabilities
+    do not sum to 1 (within 0.001) get -99, as in ActivitySim 1.x.
     """
     n, n_alts = probs.shape
     z = np.asarray(rands, dtype=np.float64).reshape(n).copy()
@@ -75,3 +93,9 @@ def choose(probs: np.ndarray, rands: np.ndarray) -> np.ndarray:
     bad = np.abs(probs.sum(axis=1) - 1.0) > BAD_PROB_THRESHOLD
     out[bad] = BAD_CHOICE
     return out
+
+
+@register("lookup", "numpy", reference=True,
+          description="NumPy indexing: values[positions]")
+def lookup(values, positions: np.ndarray):
+    return values[positions]
