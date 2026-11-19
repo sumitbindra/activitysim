@@ -43,8 +43,10 @@ def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler):
     from activitysim.core.choosing import choice_maker
 
     rn = np.full((2, 1), 0.3)
-    choice_maker(np.full((2, 2), 0.5), rn)
-    choice_maker(np.asfortranarray(np.full((2, 2), 0.5)), rn)
+    for dtype in (np.float64, np.float32):  # sharrow produces 32-bit probabilities
+        probs = np.full((2, 2), 0.5, dtype=dtype)
+        choice_maker(probs, rn)
+        choice_maker(np.asfortranarray(probs), rn)
 
     original = Runner.by_name
 
@@ -59,6 +61,12 @@ def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler):
         data_dir=("data",),
         output_dir=scratch,
     )
+    state.checkpoint.restore(prev)
+    if state.settings.sharrow:
+        # With sharrow, the first model run in a process loads the whole skim
+        # dataset (even if the model uses no skims). In a full run that
+        # happens in an earlier step, so do it here before timing starts.
+        state.get("skim_dataset")
     state.run(models=[step], resume_after=prev)
     state.checkpoint.close_store()
 

@@ -12,15 +12,17 @@
   compute. It reads today's YAML and CSV files unchanged.
 - **The model runs end to end** with `auto_ownership` computed and the other
   33 steps replayed from a saved 1.x run. The results still match at the end.
-- **Every 1.x step is profiled** (runtime and peak memory), with the legacy
-  engine and with sharrow. On this example, trip destination alone is about
-  a third of the legacy engine's runtime.
+- **Every 1.x step is profiled** (runtime and peak memory) with both 1.x
+  engines:
+  - Legacy: 101 seconds, peak 875 MB.
+  - Sharrow: 83 seconds, peak 1,010 MB, after about 37 minutes of one-time
+    compiling.
+  - Trip destination is the slowest step under both engines.
+- **1.x's two engines give identical results on this example**, so "exact"
+  is the right bar for matching.
 - **What this does not show yet:** anything about beating sharrow on a
   real-size model. The example is tiny (25 zones, 5,000 households), and
   `auto_ownership` is about 0.1% of the runtime.
-
-_Sharrow results are pending: its one-time compile run was still in progress
-when this draft was written._
 
 ## How it was checked
 
@@ -52,6 +54,16 @@ after every step.
 
 Shares by number of cars (identical in both): 0 cars 62.40%, 1 car 35.96%,
 2 cars 1.52%, 3 cars 0.04%, 4 cars 0.08%.
+
+### How much 1.x differs from itself
+
+The final results of 1.x's legacy and sharrow runs were compared column by
+column: car ownership, daily activity pattern, work and school location,
+tour mode, destination and start time, and trip mode and destination.
+Every value is identical for every row (5,000 households, 8,212 persons,
+9,806 tours, 23,583 trips). On a larger model the two engines may differ
+slightly, and this comparison is the way to find out how much. That
+difference sets a fair tolerance for asim_core.
 
 ### What exact matching needed
 
@@ -86,67 +98,112 @@ No household was skipped in this run, so the difference didn't come up.
 
 ## Profiles
 
-### ActivitySim 1.x, full run, legacy engine
+### ActivitySim 1.x, full runs
 
-101 seconds end to end (94 seconds inside steps). Peak memory 875 MB; the
-process already held 396 MB before the first step. These are single runs.
+| | Legacy engine | Sharrow |
+|---|---|---|
+| Total run time | 101 s | 83 s |
+| Time inside steps | 94 s | 74 s |
+| Peak memory | 875 MB | 1,010 MB |
+| Memory held before the first step | 396 MB | 396 MB |
+| One-time compiling before the first run | none | about 37 minutes, peak 4.4 GB (see below) |
 
-The ten slowest steps:
+The ten slowest steps under the legacy engine:
 
-| Step | Seconds | Share of step time | Extra memory during step (MB) |
-|---|---|---|---|
-| trip_destination | 30.2 | 32% | 1.7 |
-| mandatory_tour_scheduling | 11.2 | 12% | 243.6 |
-| trip_scheduling | 7.5 | 8% | 0.3 |
-| non_mandatory_tour_destination | 5.7 | 6% | 1.9 |
-| tour_mode_choice_simulate | 5.3 | 6% | 0.0 |
-| trip_mode_choice | 5.1 | 5% | 0.0 |
-| cdap_simulate | 4.7 | 5% | 3.5 |
-| workplace_location | 4.3 | 5% | 104.2 |
-| school_location | 4.2 | 4% | 65.9 |
-| non_mandatory_tour_frequency | 2.8 | 3% | 1.6 |
+| Step | Legacy (s) | Sharrow (s) | Legacy extra memory (MB) | Sharrow extra memory (MB) |
+|---|---|---|---|---|
+| trip_destination | 30.2 | 19.1 | 1.7 | 137.6 |
+| mandatory_tour_scheduling | 11.2 | 7.0 | 243.6 | 185.2 |
+| trip_scheduling | 7.5 | 7.3 | 0.3 | 2.0 |
+| non_mandatory_tour_destination | 5.7 | 2.4 | 1.9 | 15.1 |
+| tour_mode_choice_simulate | 5.3 | 3.1 | 0.0 | 0.0 |
+| trip_mode_choice | 5.1 | 3.3 | 0.0 | 22.2 |
+| cdap_simulate | 4.7 | 4.0 | 3.5 | 30.1 |
+| workplace_location | 4.3 | 2.1 | 104.2 | 32.7 |
+| school_location | 4.2 | 4.4 | 65.9 | 60.1 |
+| non_mandatory_tour_frequency | 2.8 | 1.4 | 1.6 | 6.2 |
 
-`auto_ownership_simulate` took 0.12 seconds (0.1%). The full per-step
-table, with sharrow next to it, is in `work/milestone1/asim1_profiles.csv`
-after running the harness.
+Trip destination alone is 32% of the legacy engine's step time and 26% of
+sharrow's. Per step, sharrow ranges from 0.65 to 2.3 times the legacy
+engine's speed. Every step, for both engines, is in
+`work/milestone1/asim1_profiles.csv` after running the harness. These are
+single runs. Extra memory inside a full run is understated: see "How
+profiles were measured".
 
 ### `auto_ownership`, each engine in a fresh process (5 runs each)
 
-| Engine | Seconds (median) | Extra memory (MB) |
-|---|---|---|
-| asim_core | about 0.02 | about 6 |
-| 1.x legacy | about 0.18 | about 22 |
-| 1.x sharrow | _pending_ | _pending_ |
+| Engine | Seconds, median (range) | Extra memory, median (MB) | Seconds inside a full 1.x run |
+|---|---|---|---|
+| asim_core | 0.026 (0.018–0.030) | 6.2 | |
+| 1.x legacy | 0.209 (0.179–0.249) | 24.6 | 0.123 |
+| 1.x sharrow | 0.201 (0.184–0.239) | 25.4 | 0.113 |
+
+### Sharrow's one-time compile
+
+Before sharrow runs fast, it compiles every model's formulas to machine code
+with Numba. On this example, its warm-up run of 100 households:
+
+- **First attempt:** ran for about 27 minutes, all of it on the CPU, and was
+  stopped by this environment's 30-minute limit for background jobs while
+  still compiling `trip_destination`. The 43 compiled functions (60 MB)
+  were saved to the cache.
+- **Second attempt:** reused those and finished in 9.6 minutes. Compiling
+  `trip_mode_choice` alone took 337 seconds and 2.5 GB of extra memory, and
+  `trip_destination` 150 seconds and 1.3 GB. Peak memory was 4.4 GB, five
+  times the legacy engine's full run.
+
+The cache is keyed by a fingerprint of each model's formula text, the
+values of the constants they use, the data layout and the compile settings
+(sharrow `flows.py`). Editing a formula or constant recompiles that model's
+whole function. Coefficients are passed in as data, so recalibrating them
+doesn't. The cache folder is named after the sharrow and Numba versions
+(`~/.cache/ActivitySim/sharrow-2.16-numba-0.62.0`), so upgrading either one
+means compiling again.
+
+asim_core has no compile step: its generated code is plain NumPy and takes
+milliseconds to prepare. Whether NumPy alone is fast enough for the heavy
+steps, or a compiled engine is needed for some of them, is the main open
+question for the next milestone. If one is needed, it should compile small
+building blocks that don't depend on any model's formulas, so editing a
+formula never triggers a compile.
 
 ### How profiles were measured
 
-- The same profiler measures both engines: wall-clock time, CPU time, and
-  peak memory during the step. Peak memory comes from Linux's per-process
-  high-water mark, reset before each step. Only the standard library is used.
-- **Full-run profiles** time each step inside one complete 1.x run. These
-  are single runs.
+- **One profiler for both engines.** It records wall-clock time, CPU time,
+  and peak memory during the step. Peak memory comes from Linux's
+  per-process high-water mark, reset before each step. Only the standard
+  library is used.
+- **Full-run profiles** time each step inside one complete 1.x run.
 - **Step profiles** run one step in a fresh process, starting from 1.x's
   saved state, five times per engine. Loading the state is not timed; the
   step, including saving its results, is.
-- **Two traps found along the way, both handled:**
-  - Inside a long run, memory freed by earlier steps is reused, so a step's
-    extra memory looks smaller than it is. For example, `auto_ownership`
-    shows 0.2 MB inside the full run but about 22 MB in a fresh process.
-    Memory should be compared across engines only under the same conditions.
-  - In a fresh process, 1.x spends about a second compiling its choice
-    function with Numba on first use: the step took 1.14 seconds without a
-    warm-up and 0.17–0.19 seconds with one. In a full run that compile
-    happens in an earlier step, so the step profiles do it before timing
-    starts.
-- Even in a fresh process, the 1.x process holds much more memory before
-  any step runs (about 400 MB, versus about 170 MB for asim_core). Most of
-  that is the libraries 1.x loads.
+- **Four traps found along the way, all handled:**
+  - **Memory reuse inside a long run.** Memory freed by earlier steps is
+    reused, so a step's extra memory looks smaller than it is. For example,
+    `auto_ownership` shows 0.2 MB inside the full legacy run and about 25 MB
+    in a fresh process. Compare memory across engines only under the same
+    conditions.
+  - **1.x's choice-function compile.** In a fresh process, 1.x first spends
+    about a second compiling its choice function with Numba (the step took
+    1.14 seconds without a warm-up). In a full run this happens in an
+    earlier step, so the step profiles compile it before timing starts.
+  - **Sharrow compiles that function a second time** for its 32-bit
+    probabilities, another 0.4 seconds, so the warm-up covers both
+    versions.
+  - **Sharrow loads the whole skim dataset** the first time any sharrow
+    model runs in a process, even for models that use no skims. This took
+    about 6 seconds in a fresh process here, more than half of it writing a
+    skim cache to disk. In a full run it happens in an earlier step, so the
+    step profiles do it before timing starts.
+- **Memory held before any step runs.** The 1.x process holds 400–525 MB
+  before running a step; asim_core holds about 170 MB. Most of 1.x's figure
+  is the libraries it loads.
 
 ## What the `auto_ownership` speed-up does and does not mean
 
-asim_core's `auto_ownership` is faster than 1.x's on this example. Most of
-the difference comes from work around the calculation, not the calculation
-itself:
+asim_core's `auto_ownership` is about 8 times faster than either 1.x engine
+when run the same way. Most of the difference comes from work around the
+calculation, not the calculation itself:
 
 - 1.x builds merged copies of the households and persons tables. The persons
   copy is built even though auto ownership doesn't use it; there's a FIXME
@@ -162,10 +219,10 @@ that matter.
 ## What's next
 
 1. **Profile a full-size region on representative hardware.** On this
-   example, trip destination is about a third of the runtime and mandatory
-   tour scheduling has the largest memory jump. A real region will rank
-   steps differently, because location choice grows with the number of
-   zones. The harness runs unchanged on any 1.x example:
+   example, trip destination is the slowest step and mandatory tour
+   scheduling has the largest memory jump. A real region will rank steps
+   differently, because location choice grows with the number of zones.
+   The harness runs unchanged on any 1.x example:
    `run_asim1.py --example-dir <your model>`.
 2. **Support preprocessors and annotations in the translator.** Of the 17
    model files in the example, only `auto_ownership` loads today, and 15 of
@@ -190,9 +247,11 @@ that matter.
 3. **Port one skim-heavy location choice model** (for example
    `workplace_location`). It needs the skim store, sampling of alternatives
    and size terms. This is where the foundation has to show memory and speed
-   gains.
-4. **Then try alternative engines** (Numba, JAX) behind the same model
-   definitions, measured with the same harness.
+   gains against sharrow, and where the NumPy-or-compiled question gets
+   answered.
+4. **Track "time from editing a formula to results"** next to runtime and
+   memory for every engine, since compile time is a large part of what users
+   experience.
 
 ## Reproducing
 

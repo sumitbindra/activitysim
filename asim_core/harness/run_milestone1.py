@@ -234,8 +234,10 @@ def write_summary(out: Path, info: dict, step_cmp, util_rows, e2e_cmp, e2e_repor
     s.append(f"Steps: {len(e2e_report.plan)} ({', '.join(f'{v} {k}' for k, v in modes.items())}).")
     s += ["", md_table(pd.DataFrame([c.__dict__ for c in e2e_cmp]))]
     s += ["", "## 4. Profiles", "",
-          "Ported steps, each run in a fresh process starting from 1.x's saved state "
-          "(loading excluded; one-time Numba compiling of 1.x's choice function excluded). "
+          "Ported steps, each run in a fresh process starting from 1.x's saved state. "
+          "Not timed: loading the saved state, the one-time Numba compile of 1.x's choice "
+          "function, and (sharrow) loading the skim dataset, which in a full run all happen "
+          "in earlier steps. "
           "`wall_s_in_full_1x_run` is the same step inside the full 1.x run, for reference.", ""]
     s.append(md_table(prof_cmp))
     s += ["", "ActivitySim 1.x, every step:", "", md_table(full_prof)]
