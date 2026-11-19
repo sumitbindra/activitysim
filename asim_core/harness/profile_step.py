@@ -29,7 +29,20 @@ sys.path.insert(0, str(REPO / "asim_core" / "src"))
 from asim_core.profiler import Profiler  # noqa: E402
 
 
-def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler):
+def _with_read_skim_cache(configs, scratch: Path, value: bool):
+    """Configs with network_los.yaml's read_skim_cache overridden (an overlay folder placed first)."""
+    import yaml
+
+    src = next(Path(c) / "network_los.yaml" for c in configs if (Path(c) / "network_los.yaml").exists())
+    los = yaml.safe_load(src.read_text())
+    los["read_skim_cache"] = value
+    overlay = scratch.parent / f"{scratch.name}_overlay_configs"
+    overlay.mkdir(parents=True, exist_ok=True)
+    (overlay / "network_los.yaml").write_text(yaml.safe_dump(los, sort_keys=False))
+    return [overlay] + list(configs)
+
+
+def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler, read_skim_cache=None):
     from activitysim import abm  # noqa: F401
     from activitysim.core import workflow
     from activitysim.core.workflow.runner import Runner
@@ -37,6 +50,8 @@ def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler):
     if scratch.exists():
         shutil.rmtree(scratch)
     scratch.mkdir(parents=True)
+    if read_skim_cache is not None:
+        configs = _with_read_skim_cache(configs, scratch, read_skim_cache)
     # 1.x writes new checkpoints into the pipeline it resumes from: use a copy
     shutil.copytree(pipeline, scratch / "pipeline.parquetpipeline")
     # reuse the skim cache the earlier full run wrote (as a repeated run would);
@@ -87,7 +102,8 @@ def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler):
     return skims_ready_s
 
 
-def profile_asim_core(step, prev, example, configs, pipeline, scratch, profiler, seams):
+def profile_asim_core(step, prev, example, configs, pipeline, scratch, profiler, seams,
+                      read_skim_cache=None):
     from run_milestone1 import build_components, skim_store
 
     from asim_core.asim1 import Asim1State
@@ -99,7 +115,8 @@ def profile_asim_core(step, prev, example, configs, pipeline, scratch, profiler,
     st = Asim1State(pipeline)
     store = st.load_store(prev)
     t0 = time.perf_counter()
-    skims = skim_store(example, configs)  # memory-mapped: pages load as they're used
+    # as 1.x would: import from OMX every run, or reuse an unchanged cache (read_skim_cache)
+    skims = skim_store(example, configs, read_skim_cache=read_skim_cache)
     skims_ready_s = time.perf_counter() - t0
     Runner([comps[step]], scratch, engine=Engine(seams), skims=skims).run([step], store, profiler)
     return skims_ready_s
@@ -115,6 +132,8 @@ def main(argv=None) -> int:
     p.add_argument("--asim1-out", default=str(REPO / "asim_core/work/asim1_legacy"))
     p.add_argument("--scratch", required=True)
     p.add_argument("--out", required=True)
+    p.add_argument("--read-skim-cache", choices=["settings", "true", "false"], default="settings",
+                   help="override network_los.yaml's read_skim_cache for either engine")
     p.add_argument("--seams", default="{}",
                    help='asim_core only: implementations to use, as JSON, e.g. \'{"random": "counter"}\'')
     args = p.parse_args(argv)
@@ -128,13 +147,14 @@ def main(argv=None) -> int:
     prev = st.previous_step(args.step)
     profiler = Profiler()
     scratch = Path(args.scratch).resolve()
+    rsc = {"settings": None, "true": True, "false": False}[args.read_skim_cache]
     if args.engine == "asim1":
-        skims_ready_s = profile_asim1(args.step, prev, example, configs, st.path, scratch, profiler)
+        skims_ready_s = profile_asim1(args.step, prev, example, configs, st.path, scratch, profiler, rsc)
     else:
         import json
 
         skims_ready_s = profile_asim_core(args.step, prev, example, configs, st.path, scratch,
-                                          profiler, json.loads(args.seams))
+                                          profiler, json.loads(args.seams), rsc)
 
     rec = [r for r in profiler.records if r.step == args.step][-1]
     out = Path(args.out)

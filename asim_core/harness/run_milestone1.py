@@ -41,8 +41,8 @@ from asim_core.components import auto_ownership, compute_accessibility  # noqa: 
 from asim_core.profiler import Profiler  # noqa: E402
 from asim_core.runner import Runner  # noqa: E402
 from asim_core.seams import Engine  # noqa: E402
-from asim_core.skims import SkimStore, import_omx  # noqa: E402
-from asim_core.spec.legacy import find_config_file, load_top_settings, read_yaml  # noqa: E402
+from asim_core.skims import SkimStore, prepare_skims_from_settings  # noqa: E402
+from asim_core.spec.legacy import load_top_settings  # noqa: E402
 from asim_core.store import Store  # noqa: E402
 
 
@@ -50,17 +50,15 @@ def build_components(configs):
     return [compute_accessibility(configs), auto_ownership(configs)]
 
 
-def skim_store(example: Path, configs) -> SkimStore:
-    """The example's skims as an asim_core skim store, imported from OMX the first time."""
-    path = REPO / "asim_core" / "work" / "skims" / example.name
-    if not (path / "skims.npy").exists():
-        los = read_yaml(find_config_file(configs, "network_los.yaml"))
-        taz = los.get("taz_skims")
-        omx = taz.get("omx") if isinstance(taz, dict) else taz
-        if not isinstance(omx, str):
-            raise NotImplementedError(f"taz_skims {taz!r}: only a single OMX file is supported")
-        import_omx(example / "data" / omx, path)
-    return SkimStore(path)
+def skim_store(example: Path, configs, read_skim_cache: bool | None = None) -> SkimStore:
+    """
+    The example's skims, prepared as 1.x would from its network_los.yaml:
+    imported from OMX on every run unless read_skim_cache is on, in which case
+    an unchanged cache is reused. The cache lives in asim_core/work/cache.
+    """
+    return prepare_skims_from_settings(
+        configs, [example / "data"], REPO / "asim_core" / "work", read_skim_cache=read_skim_cache
+    )
 
 
 def few_values(values, limit: int = 50) -> bool:

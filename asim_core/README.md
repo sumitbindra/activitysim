@@ -46,7 +46,7 @@ pieces and the first experiments: [docs/experiments.md](docs/experiments.md).
 | `src/asim_core/compare.py` | Compares results with 1.x, by row ID: exact, within tolerance, or different. |
 | `src/asim_core/profiler.py` | Per-step runtime and peak memory, standard library only. |
 | `src/asim_core/seams.py` | The swappable pieces: registry, reference implementations, and `Engine`, which picks an implementation per piece. |
-| `src/asim_core/skims.py` | Skim store: OMX imported once into one memory-mapped NumPy file, shared by every process that opens it. |
+| `src/asim_core/skims.py` | Skims: OMX files imported into a memory-mapped cache shared by every process, following 1.x's `network_los.yaml` settings; reused only while the OMX files are unchanged. |
 | `src/asim_core/lookups.py` | Reference implementations of table and skim lookups. |
 | `src/asim_core/random.py` | Random numbers. Reference: 1.x's per-row streams, reproduced exactly. Alternative: `counter`. |
 | `src/asim_core/logit.py` | Reference implementations of utilities, probabilities and choices, with 1.x's arithmetic. |
@@ -149,6 +149,8 @@ Simple choice models need no code: build them with
 Nested logit, coefficient templates (purpose segments), preprocessors and
 annotation (assignment specs work, but joins to other tables like
 `persons.age` and `reindex()` don't yet), skims indexed by each row's time
-period (`odt_skims`), sampling of alternatives, multiprocessing, estimation,
-and peak-memory measurement outside Linux. The loader names any unsupported
+period (`odt_skims`), Parquet skim files, two- and three-zone systems (MAZ,
+TAP), writing trip tables to OMX, starting a run from asim_core's own saved
+state, a command-line `run` for agency model loops, sampling of alternatives,
+multiprocessing, estimation, and peak-memory measurement outside Linux. The loader names any unsupported
 setting it finds instead of running a partial model.
