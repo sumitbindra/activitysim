@@ -1,0 +1,129 @@
+# asim_core
+
+A minimal, component-based core for ActivitySim, built to be checked step by
+step against ActivitySim 1.x and to measure runtime and memory for every step.
+
+The core knows how to hold data, run steps, save results, compare against
+1.x and measure. It knows nothing about travel models: every model (auto
+ownership, mode choice, park-and-ride, ...) is a **component** that plugs in.
+A region chooses its components; the runner checks before starting that
+every input each component needs is provided by an earlier step.
+
+Status: first milestone. One component (`auto_ownership`) is ported and
+matches 1.x exactly. Every other step can be **replayed** from a 1.x run, so
+the model runs end to end today. Results: [docs/milestone1.md](docs/milestone1.md).
+
+## Rules
+
+* **Dependencies:** only widely used libraries maintained by large
+  communities: NumPy, pandas, PyArrow, Pydantic, PyYAML. Anything else needs
+  checking against this rule first. The package never imports ActivitySim
+  1.x; only the scripts in `harness/` do, to run 1.x for comparison.
+* **Every component declares what it reads and writes.** Reading or writing
+  anything else is an error.
+* **Every step is profiled** (runtime and peak memory) and can be compared
+  with 1.x.
+
+## Layout
+
+| Path | What it is |
+|---|---|
+| `src/asim_core/store.py` | Data store: each table is an ID index plus NumPy columns, held once. Joins are index lookups, not merged copies. |
+| `src/asim_core/component.py` | The component contract (`needs`, `provides`, `run`) and what a component sees while running. |
+| `src/asim_core/runner.py` | Runs steps in order: computed by a component, or replayed from 1.x. Startup check, saving, profiling. |
+| `src/asim_core/asim1.py` | Reads the state 1.x saves after every step, so a run can start at any step. |
+| `src/asim_core/compare.py` | Compares results with 1.x, by row ID: exact, within tolerance, or different. |
+| `src/asim_core/profiler.py` | Per-step runtime and peak memory, standard library only. |
+| `src/asim_core/random.py` | Reproduces 1.x's random numbers exactly (per-row streams seeded from step name and row ID). |
+| `src/asim_core/logit.py` | Multinomial logit: utilities, probabilities, choices, with 1.x's arithmetic. |
+| `src/asim_core/spec/` | Model definitions (Pydantic), the loader for today's YAML/CSV files, and the formula translator. |
+| `src/asim_core/components/` | Components. `simple_choice.py` runs any simple choice model from its definition; `auto_ownership.py` is the first ported model. |
+| `harness/` | Scripts that run 1.x and compare (these import 1.x). |
+| `tests/` | Unit tests, plus an exact-match test against a saved 1.x run. |
+
+## Running it
+
+From the repository root, with ActivitySim 1.x's environment installed
+(`uv sync`) and this package installed in it:
+
+```bash
+uv pip install -e asim_core
+```
+
+Run 1.x once with every step saved and profiled (legacy engine):
+
+```bash
+python asim_core/harness/run_asim1.py --out asim_core/work/asim1_legacy
+```
+
+Optionally, the same with sharrow. The first command compiles sharrow's code (slow, once); the second is the timed run:
+
+```bash
+python asim_core/harness/run_asim1.py --configs configs_sh_compile configs --out asim_core/work/asim1_sharrow_compile
+```
+
+```bash
+python asim_core/harness/run_asim1.py --configs configs_sh configs --out asim_core/work/asim1_sharrow
+```
+
+Then run the checks, the end-to-end run and the profiles:
+
+```bash
+python asim_core/harness/run_milestone1.py
+```
+
+Results land in `asim_core/work/milestone1/` (`summary.md`, `comparisons.csv`,
+`utility_check.csv`, `profile_comparison.csv`, `asim1_profiles.csv`, traces,
+and the generated NumPy code for each model).
+
+Tests:
+
+```bash
+python -m pytest asim_core/tests
+```
+
+## How a model is read
+
+Today's files are read unchanged. For `auto_ownership` the loader reads
+`auto_ownership.yaml`, `auto_ownership.csv` and
+`auto_ownership_coefficients.csv` into a checked `ChoiceModelDefinition`.
+Loading fails with a list of every problem found: unknown coefficients or
+alternatives, or formulas that use something unsupported.
+
+Formulas are parsed with Python's `ast` module, not executed, and turned
+into plain NumPy code you can read. For example,
+`@(df.num_workers==0)*df.density_index.clip(0, 10)` becomes
+`((c['num_workers'] == 0) * _clip(c['density_index'], 0, 10))`. The
+milestone script writes each model's generated code to
+`work/milestone1/step_check/<step>/generated/`.
+
+## Adding a component
+
+A component is a name, a function, and what it reads and writes:
+
+```python
+from asim_core.component import Component
+
+def free_parking_run(ctx):
+    workers = ctx.column("persons", "is_worker")
+    ...
+    return {"persons": {"free_parking_at_work": choices}}
+
+free_parking = Component(
+    name="free_parking",              # use the 1.x step name to match 1.x random numbers
+    run=free_parking_run,
+    needs={"persons": ["is_worker", "workplace_zone_id"]},
+    provides={"persons": ["free_parking_at_work"]},
+)
+```
+
+Simple choice models need no code: build them with
+`simple_choice_component(definition, step, view, output_column)`, as
+`components/auto_ownership.py` does.
+
+## Not supported yet
+
+Nested logit, coefficient templates (purpose segments), preprocessors and
+annotation, skims, sampling of alternatives, multiprocessing, estimation, and
+peak-memory measurement outside Linux. The loader names any unsupported
+setting it finds instead of running a partial model.

@@ -40,7 +40,7 @@ activitysim_checksums = "activitysim.cli.create:display_sha256_checksums"
 
 [tool.setuptools.packages.find]
 exclude = [
-    "other*", "test*",
+    "other*", "test*", "asim_core*",
     "activitysim/estimation/test*",
     "activitysim/abm/test*",
     "activitysim/cli/test*",

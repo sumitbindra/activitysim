@@ -1,0 +1,130 @@
+#!/usr/bin/env python
+"""
+Run ActivitySim 1.x with every step saved, profiling each step with
+asim_core's profiler so the numbers are directly comparable with asim_core runs.
+
+This is a harness script: unlike the asim_core package itself, it imports
+ActivitySim 1.x.
+
+Examples (from the repository root)::
+
+    # legacy engine (sharrow off), single process
+    python asim_core/harness/run_asim1.py --out asim_core/work/asim1_legacy
+
+    # sharrow: compile once (warm-up), then a timed run that uses the compiled code
+    python asim_core/harness/run_asim1.py --configs configs_sh_compile configs \\
+        --out asim_core/work/asim1_sharrow_compile
+    python asim_core/harness/run_asim1.py --configs configs_sh configs \\
+        --out asim_core/work/asim1_sharrow
+
+Outputs in ``--out``: ActivitySim's usual outputs, the saved state after every
+step (``pipeline.parquetpipeline``), ``asim_core_profile.csv`` (one row per
+step) and ``run_info.json``.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import platform
+import sys
+import time
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO / "asim_core" / "src"))
+
+from asim_core.profiler import Profiler  # noqa: E402
+
+
+def _write_overlay(out: Path, overrides: dict) -> Path:
+    """A settings overlay directory, placed first in the configs list."""
+    overlay = out / "_overlay_configs"
+    overlay.mkdir(parents=True, exist_ok=True)
+    lines = ["inherit_settings: True"]
+    lines += [f"{k}: {v}" for k, v in overrides.items()]
+    (overlay / "settings.yaml").write_text("\n".join(lines) + "\n")
+    return overlay
+
+
+def main(argv=None) -> int:
+    p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    p.add_argument(
+        "--example-dir",
+        default=str(REPO / "activitysim" / "examples" / "prototype_mtc"),
+        help="ActivitySim example folder (default: prototype_mtc)",
+    )
+    p.add_argument(
+        "--configs",
+        nargs="+",
+        default=["configs"],
+        help="config folders inside the example folder; the first takes precedence",
+    )
+    p.add_argument("--data", default="data", help="data folder inside the example")
+    p.add_argument("--out", required=True, help="output folder")
+    p.add_argument("--households", type=int, default=None, help="household sample size")
+    p.add_argument("--trace-hh-id", type=int, default=None, help="household to trace")
+    args = p.parse_args(argv)
+
+    import activitysim
+    from activitysim import abm  # noqa: F401  (registers the model steps)
+    from activitysim.cli.run import add_run_args, run
+    from activitysim.core.workflow.runner import Runner
+
+    profiler = Profiler()
+    original_by_name = Runner.by_name
+
+    def profiled_by_name(self, model_name, **kwargs):
+        with profiler.step(model_name, mode="asim1"):
+            return original_by_name(self, model_name, **kwargs)
+
+    Runner.by_name = profiled_by_name
+
+    example = Path(args.example_dir).resolve()
+    out = Path(args.out).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+
+    config_dirs = [example / c for c in args.configs]
+    if args.trace_hh_id is not None:
+        config_dirs.insert(0, _write_overlay(out, {"trace_hh_id": args.trace_hh_id}))
+
+    cli_args = []
+    for c in config_dirs:
+        cli_args += ["-c", str(c)]
+    cli_args += ["-d", str(example / args.data), "-o", str(out)]
+    if args.households is not None:
+        cli_args += ["--households_sample_size", str(args.households)]
+
+    cli = argparse.ArgumentParser()
+    add_run_args(cli)
+    ns = cli.parse_args(cli_args)
+
+    t0 = time.perf_counter()
+    rc = run(ns)
+    total = time.perf_counter() - t0
+
+    profile_path = profiler.write_csv(out / "asim_core_profile.csv")
+    info = {
+        "engine": "activitysim-1.x",
+        "activitysim_version": activitysim.__version__,
+        "example": str(example),
+        "configs": args.configs,
+        "households_sample_size": args.households,
+        "trace_hh_id": args.trace_hh_id,
+        "exit_code": rc,
+        "total_wall_s": round(total, 3),
+        "steps_wall_s": round(profiler.total_wall_s(), 3),
+        "max_peak_mb": profiler.max_peak_mb(),
+        "python": sys.version.split()[0],
+        "platform": platform.platform(),
+        "cpu_count": os.cpu_count(),
+    }
+    (out / "run_info.json").write_text(json.dumps(info, indent=2))
+    print(f"profile written to {profile_path}")
+    print(json.dumps(info, indent=2))
+    return rc
+
+
+if __name__ == "__main__":
+    sys.exit(main())
