@@ -26,6 +26,7 @@ nothing is significantly slower.
 | Seam | Job | Reference | Alternatives so far |
 |---|---|---|---|
 | `lookup` | values of a column at given rows (joins between tables) | `numpy` | |
+| `skim_lookup` | skim values for origin/destination zones | `numpy` | |
 | `utilities` | formula values and coefficients → utilities | `matmul`: one matrix product, as 1.x | `accumulate` |
 | `probabilities` | utilities → probabilities | `asim1` | |
 | `choose` | probabilities and random draws → choices | `sequential`, as 1.x | |

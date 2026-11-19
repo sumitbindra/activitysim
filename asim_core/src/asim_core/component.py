@@ -17,6 +17,9 @@ error at startup if something a later step needs is missing.
 
 Components can be written in anything that can be called from Python; the
 contract is only about data in and data out.
+
+Skims are declared like a table named ``skims``: ``needs={"skims": ["DIST",
+"SOVTOLL_TIME__AM"]}``.
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ from .store import Store
 
 Needs = dict[str, list[str]]
 Outputs = dict[str, dict[str, object]]
+SKIMS = "skims"  # the name skims are declared under in ``needs``
 
 
 class ContractError(Exception):
@@ -104,6 +108,7 @@ class StepContext:
         engine: Engine,
         tracer: Tracer,
         base_seed: int = 0,
+        skims=None,
     ):
         self.component = component
         self.step = component.name
@@ -112,6 +117,7 @@ class StepContext:
         self.engine = engine
         self.random = engine.random(component.name, base_seed)
         self.tracer = tracer
+        self._skims = skims
 
     def _check(self, table: str, column: str | None = None) -> None:
         if table not in self._needs:
@@ -138,3 +144,13 @@ class StepContext:
         self._check(table, column)
         t = self._store[table]
         return self.engine.lookup(t[column], t.positions(ids))
+
+    def skim_positions(self, zone_ids) -> np.ndarray:
+        """Matrix row/column positions for zone IDs (use with ``skim``)."""
+        self._check(SKIMS)
+        return self._skims.positions(zone_ids)
+
+    def skim(self, name: str, orig_positions, dest_positions) -> np.ndarray:
+        """Values of a declared skim for origin/destination positions."""
+        self._check(SKIMS, name)
+        return self.engine.skim_lookup(self._skims[name], orig_positions, dest_positions)

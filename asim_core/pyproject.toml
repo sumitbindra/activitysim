@@ -21,6 +21,8 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest"]
+# only for importing skims from OMX (HDF5) files, once per skim file
+omx = ["tables >= 3.9"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

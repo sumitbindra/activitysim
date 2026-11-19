@@ -27,7 +27,7 @@ import numpy as np
 
 from .asim1 import Asim1State
 from .compare import ColumnComparison, compare_column
-from .component import Component, ContractError, MissingInputError, StepContext, Tracer
+from .component import SKIMS, Component, ContractError, MissingInputError, StepContext, Tracer
 from .profiler import Profiler
 from .seams import Engine
 from .store import Store, Table
@@ -60,12 +60,15 @@ class Runner:
         save_outputs: bool = True,
         engine: Engine | None = None,
         step_engines: dict[str, Engine] | None = None,
+        skims=None,
     ):
         """
         ``engine`` picks the implementation of each swappable piece for all
         steps (default: the reference implementations); ``step_engines``
-        overrides it for individual steps.
+        overrides it for individual steps. ``skims`` is a ``SkimStore`` for
+        components that declare skims.
         """
+        self.skims = skims
         self.components = {c.name: c for c in components}
         self.out_dir = Path(out_dir)
         self.replay = replay
@@ -96,6 +99,8 @@ class Runner:
         Returns the resolved needs per computed step; raises listing all problems.
         """
         available = {t: set(cols) for t, cols in store.columns().items()}
+        if self.skims is not None:
+            available[SKIMS] = set(self.skims.names)
         computed_cols: dict[str, set[str]] = defaultdict(set)
         resolved = {}
         problems = []
@@ -109,7 +114,9 @@ class Runner:
                     needs = {}
                 for table, cols in needs.items():
                     missing = [c for c in cols if c not in available.get(table, set())]
-                    if table not in available:
+                    if table == SKIMS and self.skims is None:
+                        problems.append(f"{step}: needs skims, but the runner was given no skim store")
+                    elif table not in available:
                         problems.append(f"{step}: needs table '{table}', which does not exist yet")
                     elif missing:
                         problems.append(f"{step}: needs {table}.{missing}, not provided by any earlier step")
@@ -122,7 +129,7 @@ class Runner:
                 for table in self.replay.written_at(step):
                     available[table] = set(cols_after[table]) | computed_cols.get(table, set())
                 for table in list(available):
-                    if table not in cols_after and table not in computed_cols:
+                    if table not in cols_after and table not in computed_cols and table != SKIMS:
                         del available[table]
         if problems:
             raise StartupCheckError(
@@ -165,7 +172,7 @@ class Runner:
     def _run_component(self, step, store: Store, needs, computed_cols) -> None:
         comp = self.components[step]
         engine = self.step_engines.get(step, self.engine)
-        ctx = StepContext(comp, store, needs, engine, self.tracer, self.base_seed)
+        ctx = StepContext(comp, store, needs, engine, self.tracer, self.base_seed, skims=self.skims)
         outputs = comp.run(ctx) or {}
         declared = {(t, c) for t, cols in comp.provides.items() for c in cols}
         produced = {(t, c) for t, cols in outputs.items() for c in cols}

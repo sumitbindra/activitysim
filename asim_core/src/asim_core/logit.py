@@ -93,9 +93,3 @@ def choose(probs: np.ndarray, rands: np.ndarray) -> np.ndarray:
     bad = np.abs(probs.sum(axis=1) - 1.0) > BAD_PROB_THRESHOLD
     out[bad] = BAD_CHOICE
     return out
-
-
-@register("lookup", "numpy", reference=True,
-          description="NumPy indexing: values[positions]")
-def lookup(values, positions: np.ndarray):
-    return values[positions]

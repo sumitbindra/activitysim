@@ -42,20 +42,20 @@ from asim_core.profiler import Profiler  # noqa: E402
 from asim_core.runner import Runner  # noqa: E402
 from asim_core.seams import Engine, implementations  # noqa: E402
 from asim_core.spec.legacy import load_top_settings  # noqa: E402
-from run_milestone1 import build_components, md_table  # noqa: E402
+from run_milestone1 import build_components, few_values, md_table, skim_store  # noqa: E402
 
 
 # --- match ------------------------------------------------------------------------
 
 
-def match_check(comp, st: Asim1State, engine: Engine, base_seed: int, out: Path) -> dict:
+def match_check(comp, st: Asim1State, engine: Engine, base_seed: int, out: Path, skims=None) -> dict:
     prev = st.previous_step(comp.name)
     store = st.load_store(prev)
     before = None
     if "compute" in comp.info:
         view = comp.info["view"]
         before = (view.gather_from_store(store, comp.info["columns"]), len(store[view.table]))
-    Runner([comp], out, engine=engine, base_seed=base_seed).run([comp.name], store, Profiler())
+    Runner([comp], out, engine=engine, base_seed=base_seed, skims=skims).run([comp.name], store, Profiler())
 
     row = {"rows": 0, "rows_different": 0, "largest_share_diff_pp": 0.0,
            "sampling_error_2se_pp": 0.0, "shares_within_noise": True}
@@ -65,6 +65,9 @@ def match_check(comp, st: Asim1State, engine: Engine, base_seed: int, out: Path)
             c = compare_column(comp.name, store[table], col, ref[col])
             row["rows"] += c.rows
             row["rows_different"] += c.mismatched
+            row["max_output_diff"] = max(row.get("max_output_diff", 0.0), c.max_abs_diff or 0.0)
+            if not few_values(store[table][col]):
+                continue  # shares only make sense for columns with few distinct values
             shares = value_shares(store[table][col], ref[col])
             n = c.rows
             # two independent samples of the same households: sd of a share difference
@@ -219,6 +222,7 @@ def main(argv=None) -> int:
     st = Asim1State(args.asim1_out)
     base_seed = int(load_top_settings(configs).get("rng_base_seed") or 0)
     comp = {c.name: c for c in build_components(configs)}[step]
+    skims = skim_store(example, configs)
 
     rows = []
     for name, seams in (cfg.get("experiments") or {"reference": {}}).items():
@@ -227,7 +231,7 @@ def main(argv=None) -> int:
         row = {"experiment": name,
                "pieces_changed": ", ".join(f"{k}={v}" for k, v in engine.changed.items()) or "none",
                "agreement": engine.agreement}
-        row.update(match_check(comp, st, engine, base_seed, out / "match" / name))
+        row.update(match_check(comp, st, engine, base_seed, out / "match" / name, skims))
         runs = profile(step, name, "asim_core", args.configs, Path(args.asim1_out),
                        engine.changed, repeat, out)
         row.update(summarize_runs(runs))

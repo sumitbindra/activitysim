@@ -20,7 +20,12 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from .definition import ChoiceModelDefinition, Coefficient, Term
+from .definition import Assignment, AssignmentSpec, ChoiceModelDefinition, Coefficient, Term
+
+# values read as missing in assignment specs: pandas 1.5's defaults, without
+# 'None' (used in spec files as the object None), as in ActivitySim 1.x
+_ASSIGN_NA = ["", "#N/A", "#N/A N/A", "#NA", "-1.#IND", "-1.#QNAN", "-NaN", "-nan", "1.#IND",
+              "1.#QNAN", "<NA>", "N/A", "NA", "NULL", "NaN", "n/a", "nan", "null"]
 
 _SPEC_META_COLUMNS = {"Label", "Description", "Expression"}
 
@@ -139,4 +144,39 @@ def load_choice_model(
         terms=terms,
         coefficients=coefficients,
         source_files=[settings_path.name, spec_path.name, coef_path.name],
+    )
+
+
+def load_assignment_spec(
+    configs_dirs: Sequence[str | Path],
+    spec_file: str,
+    constants: dict | None = None,
+    skim_accessors: Sequence[str] = (),
+    name: str | None = None,
+) -> AssignmentSpec:
+    """
+    Read an assignment spec CSV (Description, Target, Expression), following
+    ActivitySim 1.x's ``read_assignment_spec``. ``constants`` should already
+    combine the global constants.yaml with the model's own CONSTANTS.
+    """
+    configs_dirs = [Path(d) for d in configs_dirs]
+    path = find_config_file(configs_dirs, spec_file)
+    df = pd.read_csv(path, comment="#", na_values=_ASSIGN_NA, keep_default_na=False)
+    assignments = []
+    for _, row in df.iterrows():
+        target, formula = row.get("Target"), row.get("Expression")
+        if pd.isna(target) or pd.isna(formula):
+            continue
+        description = row.get("Description", "")
+        assignments.append(Assignment(
+            target=str(target).strip(),
+            formula=str(formula).strip(),
+            description="" if pd.isna(description) else str(description).strip(),
+        ))
+    return AssignmentSpec(
+        name=name or Path(spec_file).stem,
+        assignments=assignments,
+        constants=constants or {},
+        skim_accessors=list(skim_accessors),
+        source_files=[path.name],
     )

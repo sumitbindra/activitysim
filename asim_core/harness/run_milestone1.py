@@ -37,16 +37,36 @@ import pandas as pd  # noqa: E402
 
 from asim_core.asim1 import Asim1State  # noqa: E402
 from asim_core.compare import compare_column, value_shares, write_comparisons  # noqa: E402
-from asim_core.components import auto_ownership  # noqa: E402
+from asim_core.components import auto_ownership, compute_accessibility  # noqa: E402
 from asim_core.profiler import Profiler  # noqa: E402
 from asim_core.runner import Runner  # noqa: E402
 from asim_core.seams import Engine  # noqa: E402
-from asim_core.spec.legacy import load_top_settings  # noqa: E402
+from asim_core.skims import SkimStore, import_omx  # noqa: E402
+from asim_core.spec.legacy import find_config_file, load_top_settings, read_yaml  # noqa: E402
 from asim_core.store import Store  # noqa: E402
 
 
 def build_components(configs):
-    return [auto_ownership(configs)]
+    return [compute_accessibility(configs), auto_ownership(configs)]
+
+
+def skim_store(example: Path, configs) -> SkimStore:
+    """The example's skims as an asim_core skim store, imported from OMX the first time."""
+    path = REPO / "asim_core" / "work" / "skims" / example.name
+    if not (path / "skims.npy").exists():
+        los = read_yaml(find_config_file(configs, "network_los.yaml"))
+        taz = los.get("taz_skims")
+        omx = taz.get("omx") if isinstance(taz, dict) else taz
+        if not isinstance(omx, str):
+            raise NotImplementedError(f"taz_skims {taz!r}: only a single OMX file is supported")
+        import_omx(example / "data" / omx, path)
+    return SkimStore(path)
+
+
+def few_values(values, limit: int = 50) -> bool:
+    """True for integer or categorical columns with few distinct values (shares make sense)."""
+    arr = np.asarray(values)
+    return arr.dtype.kind in "biuO" and len(np.unique(arr)) <= limit
 
 
 # settings needed to ask 1.x for its own utilities, per ported step
@@ -61,12 +81,13 @@ def _asim1_reference_settings(step):
 # --- 1. step check -------------------------------------------------------------
 
 
-def step_check(comp, st: Asim1State, out: Path, base_seed: int, trace_id):
+def step_check(comp, st: Asim1State, out: Path, base_seed: int, skims, trace_ids=None):
     prev = st.previous_step(comp.name)
     store = st.load_store(prev)
-    table = comp.info.get("chooser_table")
-    trace_ids = {table: [trace_id]} if table and trace_id is not None else None
-    Runner([comp], out, trace_ids=trace_ids, base_seed=base_seed).run(
+    table = comp.info.get("trace_table")
+    if trace_ids is None and table in store:  # default: trace the first row
+        trace_ids = {table: [store[table].index[0]]}
+    Runner([comp], out, trace_ids=trace_ids, base_seed=base_seed, skims=skims).run(
         [comp.name], store, Profiler(), start_note=f"1.x state after {prev}"
     )
     comparisons = []
@@ -75,7 +96,8 @@ def step_check(comp, st: Asim1State, out: Path, base_seed: int, trace_id):
         ref = st.read(t, comp.name)
         for col in cols:
             comparisons.append(compare_column(comp.name, store[t], col, ref[col]))
-            shares[f"{t}.{col}"] = value_shares(store[t][col], ref[col])
+            if few_values(store[t][col]):
+                shares[f"{t}.{col}"] = value_shares(store[t][col], ref[col])
     if "generated_source" in comp.info:
         gen = out / "generated"
         gen.mkdir(parents=True, exist_ok=True)
@@ -122,8 +144,8 @@ def utility_check(comp, st: Asim1State, example: Path, configs_names, out: Path)
 # --- 3. end to end -------------------------------------------------------------
 
 
-def end_to_end(components, st: Asim1State, out: Path, base_seed: int):
-    runner = Runner(components, out, replay=st, base_seed=base_seed)
+def end_to_end(components, st: Asim1State, out: Path, base_seed: int, skims):
+    runner = Runner(components, out, replay=st, base_seed=base_seed, skims=skims)
     store = Store()
     report = runner.run(
         st.steps, store, Profiler(),
@@ -178,6 +200,7 @@ def profile_tables(runs: pd.DataFrame, legacy: pd.DataFrame, sharrow: pd.DataFra
         "max_wall_s": g["wall_s"].max(),
         "median_extra_mb": g["step_extra_mb"].median(),
         "max_extra_mb": g["step_extra_mb"].max(),
+        "median_skims_ready_s": g["skims_ready_s"].median(),
         "runs": g["wall_s"].size(),
     }).reset_index()
     # the same steps inside a full 1.x run, for reference
@@ -236,9 +259,10 @@ def write_summary(out: Path, info: dict, step_cmp, util_rows, e2e_cmp, e2e_repor
     s += ["", md_table(pd.DataFrame([c.__dict__ for c in e2e_cmp]))]
     s += ["", "## 4. Profiles", "",
           "Ported steps, each run in a fresh process starting from 1.x's saved state. "
-          "Not timed: loading the saved state, the one-time Numba compile of 1.x's choice "
-          "function, and (sharrow) loading the skim dataset, which in a full run all happen "
-          "in earlier steps. "
+          "Not timed: loading the saved state, 1.x's one-time Numba compiles, and getting "
+          "skims ready, which in a full run happen once, in earlier steps or at the first step "
+          "that needs them. `median_skims_ready_s` is the time to get skims ready: 1.x loads "
+          "them from OMX; asim_core opens its memory-mapped store. "
           "`wall_s_in_full_1x_run` is the same step inside the full 1.x run, for reference.", ""]
     s.append(md_table(prof_cmp))
     s += ["", "ActivitySim 1.x, every step:", "", md_table(full_prof)]
@@ -269,19 +293,19 @@ def main(argv=None) -> int:
     base_seed = int(top.get("rng_base_seed") or 0)
     components = build_components(configs)
 
-    trace_id = args.trace_hh_id
-    if trace_id is None:  # default: the first household
-        trace_id = int(st.read("households", st.previous_step(components[0].name)).index[0])
+    skims = skim_store(example, configs)
+    trace_ids = {"households": [args.trace_hh_id]} if args.trace_hh_id is not None else None
 
     step_cmp, util_rows, shares = [], [], {}
     for comp in components:
-        cmp, sh = step_check(comp, st, out / "step_check" / comp.name, base_seed, trace_id)
+        ids = trace_ids if trace_ids and comp.info.get("trace_table") in trace_ids else None
+        cmp, sh = step_check(comp, st, out / "step_check" / comp.name, base_seed, skims, ids)
         step_cmp += cmp
         shares.update(sh)
         if not args.skip_utility_check:
             util_rows += utility_check(comp, st, example, args.configs, out / "utility_check")
 
-    e2e_report, e2e_cmp = end_to_end(components, st, out / "end_to_end", base_seed)
+    e2e_report, e2e_cmp = end_to_end(components, st, out / "end_to_end", base_seed, skims)
 
     legacy = load_asim1_profile(Path(args.asim1_out))
     sharrow = load_asim1_profile(Path(args.asim1_sharrow_out))
@@ -301,7 +325,7 @@ def main(argv=None) -> int:
     info = {
         "example": str(example.relative_to(REPO)) if example.is_relative_to(REPO) else str(example),
         "configs": args.configs,
-        "trace_hh_id": trace_id,
+        "trace_hh_id": args.trace_hh_id,
         "repeat": args.repeat,
         "python": sys.version.split()[0],
         "platform": platform.platform(),

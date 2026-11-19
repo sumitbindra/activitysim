@@ -16,16 +16,19 @@ picked by a setting and tested with the experiment harness. Speed-ups come
 from those experiments. Sharrow is not used; 1.x with sharrow is only a
 baseline in the reports.
 
-Status: one component (`auto_ownership`) is ported and matches 1.x exactly.
-Every other step can be **replayed** from a 1.x run, so the model runs end
-to end today. Results: [docs/milestone1.md](docs/milestone1.md). Swappable
+Status: two components are ported and match 1.x exactly: `compute_accessibility`
+(with skims) and `auto_ownership`. Every other step can be **replayed** from a
+1.x run, so the model runs end to end today. Results:
+[docs/milestone1.md](docs/milestone1.md),
+[docs/skims_and_accessibility.md](docs/skims_and_accessibility.md). Swappable
 pieces and the first experiments: [docs/experiments.md](docs/experiments.md).
 
 ## Rules
 
 * **Dependencies:** only widely used libraries maintained by large
-  communities: NumPy, pandas, PyArrow, Pydantic, PyYAML. Anything else needs
-  checking against this rule first. The package never imports ActivitySim
+  communities: NumPy, pandas, PyArrow, Pydantic, PyYAML. Importing skims from
+  OMX also needs PyTables, once per skim file; running models doesn't.
+  Anything else needs checking against this rule first. The package never imports ActivitySim
   1.x; only the scripts in `harness/` do, to run 1.x for comparison.
 * **Every component declares what it reads and writes.** Reading or writing
   anything else is an error.
@@ -43,11 +46,13 @@ pieces and the first experiments: [docs/experiments.md](docs/experiments.md).
 | `src/asim_core/compare.py` | Compares results with 1.x, by row ID: exact, within tolerance, or different. |
 | `src/asim_core/profiler.py` | Per-step runtime and peak memory, standard library only. |
 | `src/asim_core/seams.py` | The swappable pieces: registry, reference implementations, and `Engine`, which picks an implementation per piece. |
+| `src/asim_core/skims.py` | Skim store: OMX imported once into one memory-mapped NumPy file, shared by every process that opens it. |
+| `src/asim_core/lookups.py` | Reference implementations of table and skim lookups. |
 | `src/asim_core/random.py` | Random numbers. Reference: 1.x's per-row streams, reproduced exactly. Alternative: `counter`. |
 | `src/asim_core/logit.py` | Reference implementations of utilities, probabilities and choices, with 1.x's arithmetic. |
 | `src/asim_core/alternatives.py` | Alternative implementations for experiments (e.g. `accumulate` utilities). |
-| `src/asim_core/spec/` | Model definitions (Pydantic), the loader for today's YAML/CSV files, and the formula translator. |
-| `src/asim_core/components/` | Components. `simple_choice.py` runs any simple choice model from its definition; `auto_ownership.py` is the first ported model. |
+| `src/asim_core/spec/` | Model definitions (Pydantic): choice models and assignment specs; the loader for today's YAML/CSV files; the formula translator. |
+| `src/asim_core/components/` | Components. `simple_choice.py` runs any simple choice model from its definition; `auto_ownership.py` and `accessibility.py` are ported models. |
 | `harness/` | Scripts that run 1.x and compare (these import 1.x). |
 | `tests/` | Unit tests, plus an exact-match test against a saved 1.x run. |
 
@@ -76,7 +81,8 @@ python asim_core/harness/run_asim1.py --configs configs_sh_compile configs --out
 python asim_core/harness/run_asim1.py --configs configs_sh configs --out asim_core/work/asim1_sharrow
 ```
 
-Then run the checks, the end-to-end run and the profiles:
+Then run the checks, the end-to-end run and the profiles (skims are imported
+from the example's OMX file the first time):
 
 ```bash
 python asim_core/harness/run_milestone1.py
@@ -141,6 +147,8 @@ Simple choice models need no code: build them with
 ## Not supported yet
 
 Nested logit, coefficient templates (purpose segments), preprocessors and
-annotation, skims, sampling of alternatives, multiprocessing, estimation, and
-peak-memory measurement outside Linux. The loader names any unsupported
+annotation (assignment specs work, but joins to other tables like
+`persons.age` and `reindex()` don't yet), skims indexed by each row's time
+period (`odt_skims`), sampling of alternatives, multiprocessing, estimation,
+and peak-memory measurement outside Linux. The loader names any unsupported
 setting it finds instead of running a partial model.

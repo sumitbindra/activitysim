@@ -18,6 +18,23 @@ CONFIGS = [REPO / "activitysim/examples/prototype_mtc/configs"]
 
 
 @pytest.mark.skipif(not BASELINE.exists(), reason="no ActivitySim 1.x baseline run")
+def test_accessibility_matches_1x_exactly(tmp_path):
+    pytest.importorskip("tables")
+    from asim_core.components import compute_accessibility
+    from asim_core.skims import import_omx
+
+    skims = import_omx(REPO / "activitysim/examples/prototype_mtc/data/skims.omx", tmp_path / "skims")
+    st = Asim1State(BASELINE)
+    comp = compute_accessibility(CONFIGS, origins_per_batch=10)
+    store = st.load_store(st.previous_step(comp.name))
+    Runner([comp], tmp_path / "run", skims=skims).run([comp.name], store)
+    ref = st.read("accessibility", comp.name)
+    for col in comp.provides["accessibility"]:
+        result = compare_column(comp.name, store["accessibility"], col, ref[col])
+        assert result.status == "exact", result
+
+
+@pytest.mark.skipif(not BASELINE.exists(), reason="no ActivitySim 1.x baseline run")
 def test_auto_ownership_matches_1x_exactly(tmp_path):
     st = Asim1State(BASELINE)
     comp = auto_ownership(CONFIGS)

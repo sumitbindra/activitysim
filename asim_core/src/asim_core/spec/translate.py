@@ -18,6 +18,11 @@ expression over a mapping of column arrays ``c``. For example::
 Constants are written into the code as literal values. Anything outside the
 supported subset raises ``FormulaError`` naming the formula and the part that
 is not supported, so problems show up when a model loads, not mid-run.
+
+Assignment specs (preprocessors, annotations, accessibility) are always
+Python style, and can also use variables assigned by earlier rows (``v[name]``),
+skim lookups such as ``skim_od[('SOVTOLL_TIME', 'AM')]`` (``s(accessor,
+'SOVTOLL_TIME__AM')``) and bare functions such as ``exp`` (``np.exp``).
 """
 
 from __future__ import annotations
@@ -55,6 +60,8 @@ class Translated:
     source: str
     columns: set[str] = field(default_factory=set)
     constants: set[str] = field(default_factory=set)
+    skims: set[str] = field(default_factory=set)  # skim names, e.g. 'SOVTOLL_TIME__AM'
+    names: set[str] = field(default_factory=set)  # earlier assigned variables used
 
 
 def _literal(value) -> str:
@@ -66,12 +73,25 @@ def _literal(value) -> str:
 
 
 class _Translator:
-    def __init__(self, formula: str, constants: Mapping[str, object], python_mode: bool):
+    def __init__(
+        self,
+        formula: str,
+        constants: Mapping[str, object],
+        python_mode: bool,
+        assigned: set[str] = frozenset(),
+        functions: Mapping[str, str] | None = None,
+        skim_accessors: set[str] = frozenset(),
+    ):
         self.formula = formula
         self.constants = constants
         self.python_mode = python_mode
+        self.assigned = assigned
+        self.functions = functions or {}
+        self.skim_accessors = skim_accessors
         self.columns: set[str] = set()
         self.used_constants: set[str] = set()
+        self.skims: set[str] = set()
+        self.names: set[str] = set()
 
     def fail(self, node: ast.AST, why: str):
         part = ast.unparse(node) if isinstance(node, ast.AST) else str(node)
@@ -96,10 +116,14 @@ class _Translator:
         if isinstance(node, ast.Name):
             if not self.python_mode:
                 return self.column(node.id)  # pandas style: bare names are columns
+            if node.id in self.assigned:  # a variable assigned by an earlier row
+                self.names.add(node.id)
+                return f"v[{node.id!r}]"
             if node.id in self.constants:
                 self.used_constants.add(node.id)
                 return _literal(self.constants[node.id])
-            self.fail(node, f"unknown name '{node.id}' (not a constant; columns are written df.name)")
+            self.fail(node, f"unknown name '{node.id}' (not a constant or an earlier "
+                            f"variable; columns are written df.name)")
 
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name) and node.value.id == "df":
@@ -114,7 +138,9 @@ class _Translator:
                 and isinstance(node.slice.value, str)
             ):
                 return self.column(node.slice.value)
-            self.fail(node, "unsupported subscript (only df['column'] is allowed)")
+            if isinstance(node.value, ast.Name) and node.value.id in self.skim_accessors:
+                return self.skim(node)
+            self.fail(node, "unsupported subscript (only df['column'] and skim lookups are allowed)")
 
         if isinstance(node, ast.BinOp):
             op = _BINOPS.get(type(node.op))
@@ -159,8 +185,29 @@ class _Translator:
             left = right
         return parts[0] if len(parts) == 1 else "(" + " & ".join(parts) + ")"
 
+    def skim(self, node: ast.Subscript) -> str:
+        """skim_od['DIST'] or skim_od[('SOVTOLL_TIME', 'AM')] -> s('skim_od', 'SOVTOLL_TIME__AM')"""
+        key = node.slice
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            name = key.value
+        elif (
+            isinstance(key, ast.Tuple)
+            and len(key.elts) == 2
+            and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in key.elts)
+        ):
+            name = f"{key.elts[0].value}__{key.elts[1].value}"  # skim name and time period
+        else:
+            self.fail(node, "skim keys must be 'NAME' or ('NAME', 'PERIOD')")
+        self.skims.add(name)
+        return f"s({node.value.id!r}, {name!r})"
+
     def call(self, node: ast.Call) -> str:
         func = node.func
+        # bare functions made available by the model, e.g. exp(...) -> np.exp(...)
+        if isinstance(func, ast.Name) and func.id in self.functions:
+            if node.keywords:
+                self.fail(node, f"{func.id}() takes no keyword arguments")
+            return f"{self.functions[func.id]}({', '.join(self.visit(a) for a in node.args)})"
         # np.<function>(...)
         if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "np":
             if func.attr not in NP_FUNCTIONS:
@@ -207,19 +254,37 @@ class _Translator:
         self.fail(node, "unsupported function call")
 
 
-def translate(formula: str, constants: Mapping[str, object] | None = None) -> Translated:
-    """Translate one spec formula to a NumPy expression over column arrays ``c``."""
+def translate(
+    formula: str,
+    constants: Mapping[str, object] | None = None,
+    *,
+    python_mode: bool | None = None,
+    assigned: set[str] = frozenset(),
+    functions: Mapping[str, str] | None = None,
+    skim_accessors: set[str] = frozenset(),
+) -> Translated:
+    """
+    Translate one spec formula to a NumPy expression over column arrays ``c``.
+
+    ``python_mode`` defaults to "starts with @" (utility specs). Assignment
+    specs are always Python style; for those, ``assigned`` names earlier
+    variables (referenced as ``v[name]``), ``functions`` maps bare function
+    names to NumPy (e.g. ``{'exp': 'np.exp'}``) and ``skim_accessors`` names
+    the skim lookups available (referenced as ``s(accessor, skim_name)``).
+    """
     text = formula.strip()
-    python_mode = text.startswith("@")
-    if python_mode:
+    if python_mode is None:
+        python_mode = text.startswith("@")
+    if text.startswith("@"):
         text = text[1:]
     try:
         tree = ast.parse(text.strip(), mode="eval")
     except SyntaxError as err:
         raise FormulaError(f"formula {formula!r} is not valid syntax: {err.msg}") from None
-    t = _Translator(formula, constants or {}, python_mode)
+    t = _Translator(formula, constants or {}, python_mode, assigned, functions, skim_accessors)
     source = t.visit(tree)
-    return Translated(formula=formula, source=source, columns=t.columns, constants=t.used_constants)
+    return Translated(formula=formula, source=source, columns=t.columns,
+                      constants=t.used_constants, skims=t.skims, names=t.names)
 
 
 # --- helpers used by generated code -------------------------------------------
@@ -257,6 +322,28 @@ def build_function(name: str, items: list[tuple[str, Translated]], doc: str = ""
         lines.append(f"    yield {tr.source}")
     if not items:
         lines.append("    yield from ()")
+    return "\n".join(lines) + "\n"
+
+
+def build_assignment_function(name: str, items: list[tuple[str, str, Translated]], doc: str = "") -> str:
+    """
+    Python source for ``name(c, s)``, which evaluates assignments in order and
+    returns ``v``, a dict of every assigned variable (temporary ones, starting
+    with ``_``, included). ``items`` are (target, description, translated
+    formula). ``c`` maps column names to arrays; ``s(accessor, skim_name)``
+    returns skim values.
+    """
+    lines = [f"def {name}(c, s):"]
+    if doc:
+        lines.append(f'    """{doc}"""')
+    lines.append("    v = {}")
+    for target, description, tr in items:
+        lines.append(f"    # {description + ': ' if description else ''}{tr.formula}")
+        if target == "_":
+            lines.append(f"    {tr.source}")
+        else:
+            lines.append(f"    v[{target!r}] = {tr.source}")
+    lines.append("    return v")
     return "\n".join(lines) + "\n"
 
 

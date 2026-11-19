@@ -31,6 +31,8 @@ from dataclasses import dataclass
 SEAMS = {
     "lookup": "values of a column at given row positions (joins between tables): "
               "lookup(values, positions) -> values",
+    "skim_lookup": "skim values for origin/destination positions: "
+                   "skim_lookup(matrix, orig_positions, dest_positions) -> values",
     "utilities": "formula values and coefficients -> utilities: "
                  "utilities(terms, coefficients, n) -> (n x alternatives) array",
     "probabilities": "utilities -> probabilities: "
@@ -79,7 +81,7 @@ def register(seam: str, name: str, agreement: str = "exact", description: str = 
 
 def _load_builtin() -> None:
     # importing these modules registers the built-in implementations
-    from . import alternatives, logit, random  # noqa: F401
+    from . import alternatives, logit, lookups, random  # noqa: F401
 
 
 def implementations(seam: str | None = None) -> list[Implementation]:

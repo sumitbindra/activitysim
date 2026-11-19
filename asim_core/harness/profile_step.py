@@ -7,8 +7,10 @@ same way:
     python profile_step.py --engine asim1     --step auto_ownership_simulate --out row.csv
     python profile_step.py --engine asim_core --step auto_ownership_simulate --out row.csv
 
-Each call appends one row to ``--out``. Loading the saved state happens before
-timing starts; the step itself, including saving its results, is timed.
+Each call appends one row to ``--out``. Loading the saved state, getting skims
+ready and one-time Numba compiling happen before timing starts (the time to
+get skims ready is recorded separately, as ``skims_ready_s``); the step
+itself, including saving its results, is timed.
 Harness code: the asim1 engine imports ActivitySim 1.x.
 """
 
@@ -17,6 +19,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -36,10 +39,17 @@ def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler):
     scratch.mkdir(parents=True)
     # 1.x writes new checkpoints into the pipeline it resumes from: use a copy
     shutil.copytree(pipeline, scratch / "pipeline.parquetpipeline")
+    # reuse the skim cache the earlier full run wrote (as a repeated run would);
+    # whether 1.x reads it depends on its settings (e.g. read_skim_cache)
+    cache = Path(pipeline).parent / "cache"
+    if cache.exists():
+        shutil.copytree(cache, scratch / "cache")
 
-    # 1.x compiles its choice function with Numba on first use. In a full run
-    # that happens in an earlier step, so do it here before timing starts.
+    # 1.x compiles some functions with Numba on first use. In a full run that
+    # happens in an earlier step (or is the same in every step), so do it here
+    # before timing starts.
     import numpy as np
+    from activitysim.abm.models.accessibility import _accumulate_accessibility
     from activitysim.core.choosing import choice_maker
 
     rn = np.full((2, 1), 0.3)
@@ -47,6 +57,7 @@ def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler):
         probs = np.full((2, 2), 0.5, dtype=dtype)
         choice_maker(probs, rn)
         choice_maker(np.asfortranarray(probs), rn)
+        _accumulate_accessibility(np.zeros(4, dtype=dtype), 2, 2)
 
     original = Runner.by_name
 
@@ -62,26 +73,36 @@ def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler):
         output_dir=scratch,
     )
     state.checkpoint.restore(prev)
+    # Load skims before timing: in a full run this happens once, at the first
+    # step that needs them. Timed separately. With sharrow, the first model
+    # run in a process also loads the whole skim dataset, even for models
+    # that use no skims.
+    t0 = time.perf_counter()
+    state.get("network_los")
     if state.settings.sharrow:
-        # With sharrow, the first model run in a process loads the whole skim
-        # dataset (even if the model uses no skims). In a full run that
-        # happens in an earlier step, so do it here before timing starts.
         state.get("skim_dataset")
+    skims_ready_s = time.perf_counter() - t0
     state.run(models=[step], resume_after=prev)
     state.checkpoint.close_store()
+    return skims_ready_s
 
 
-def profile_asim_core(step, prev, configs, pipeline, scratch, profiler, seams):
-    from run_milestone1 import build_components
+def profile_asim_core(step, prev, example, configs, pipeline, scratch, profiler, seams):
+    from run_milestone1 import build_components, skim_store
 
     from asim_core.asim1 import Asim1State
     from asim_core.runner import Runner
     from asim_core.seams import Engine
 
-    comps = {c.name: c for c in build_components([Path(c) for c in configs])}
+    configs = [Path(c) for c in configs]
+    comps = {c.name: c for c in build_components(configs)}
     st = Asim1State(pipeline)
     store = st.load_store(prev)
-    Runner([comps[step]], scratch, engine=Engine(seams)).run([step], store, profiler)
+    t0 = time.perf_counter()
+    skims = skim_store(example, configs)  # memory-mapped: pages load as they're used
+    skims_ready_s = time.perf_counter() - t0
+    Runner([comps[step]], scratch, engine=Engine(seams), skims=skims).run([step], store, profiler)
+    return skims_ready_s
 
 
 def main(argv=None) -> int:
@@ -108,11 +129,12 @@ def main(argv=None) -> int:
     profiler = Profiler()
     scratch = Path(args.scratch).resolve()
     if args.engine == "asim1":
-        profile_asim1(args.step, prev, example, configs, st.path, scratch, profiler)
+        skims_ready_s = profile_asim1(args.step, prev, example, configs, st.path, scratch, profiler)
     else:
         import json
 
-        profile_asim_core(args.step, prev, configs, st.path, scratch, profiler, json.loads(args.seams))
+        skims_ready_s = profile_asim_core(args.step, prev, example, configs, st.path, scratch,
+                                          profiler, json.loads(args.seams))
 
     rec = [r for r in profiler.records if r.step == args.step][-1]
     out = Path(args.out)
@@ -120,10 +142,12 @@ def main(argv=None) -> int:
     new = not out.exists()
     with open(out, "a") as f:
         if new:
-            f.write("label,step,wall_s,cpu_s,rss_before_mb,peak_mb,step_extra_mb,rss_after_mb\n")
+            f.write("label,step,wall_s,cpu_s,rss_before_mb,peak_mb,step_extra_mb,rss_after_mb,"
+                    "skims_ready_s\n")
         f.write(
             f"{args.label or args.engine},{rec.step},{rec.wall_s:.6f},{rec.cpu_s:.6f},"
-            f"{rec.rss_before_mb},{rec.peak_mb},{rec.step_extra_mb},{rec.rss_after_mb}\n"
+            f"{rec.rss_before_mb},{rec.peak_mb},{rec.step_extra_mb},{rec.rss_after_mb},"
+            f"{skims_ready_s:.6f}\n"
         )
     return 0
 

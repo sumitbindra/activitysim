@@ -135,6 +135,7 @@ def simple_choice_component(
             "definition": definition,
             "generated_source": source,
             "chooser_table": view.table,
+            "trace_table": view.table,
             "view": view,
             "columns": columns,
             "compute": compute,  # for utility- and probability-level checks
