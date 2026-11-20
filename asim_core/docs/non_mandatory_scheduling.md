@@ -145,7 +145,28 @@ formulas through pandas Series arithmetic.
 
 ## Profiles
 
-(Fresh-process profiles being measured.)
+Each step run in a fresh process, starting from 1.x's saved state before
+it, the same way for every engine (`harness/profile_step.py`). Not timed:
+loading the saved state, getting skims ready, and 1.x's one-time Numba
+compiles (which in a full run happen in an earlier step). Wall time is the
+median; extra memory is the step's peak above where it started.
+
+**MTC, 4,521 tours, 5 runs each:**
+
+| | Wall time (median, min–max) | Extra memory | Same step in the full 1.x run |
+|---|---|---|---|
+| asim_core | 0.44 s (0.39–0.47) | 64 MB | |
+| 1.x, legacy | 1.90 s (1.82–1.92) | 139 MB | 1.59 s |
+| 1.x, sharrow | 2.28 s (2.22–2.37) | 144 MB | 2.43 s |
+
+(ARC, all households: being measured.)
+
+A note on measuring: the first fresh-process numbers for 1.x were 5.8 s,
+because 1.x compiles its timetable functions with Numba on first use (in a
+full run, that happens in an earlier step). The harness now compiles them
+before timing, for both array layouts (a timetable read from a saved run is
+column-major), and Numba's compile events confirm nothing is compiled
+inside the timed step.
 
 ## Not supported yet
 

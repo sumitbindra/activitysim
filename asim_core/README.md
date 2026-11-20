@@ -16,17 +16,18 @@ picked by a setting and tested with the experiment harness. Speed-ups come
 from those experiments. Sharrow is not used; 1.x with sharrow is only a
 baseline in the reports.
 
-Status: three components are ported and match 1.x exactly:
+Status: four components are ported and match 1.x exactly:
 `compute_accessibility` (with skims), `auto_ownership` (multinomial or nested
-logit) and `tour_mode_choice_simulate` (nested logit, purpose segments,
-preprocessor, time-of-day skims; every mode and every logsum identical). They
-were checked on three regions' example models: MTC, MWCOG (all 29,972
-households for the first two) and ARC (all 24,061 households). Every other
-step can be **replayed** from a 1.x run, so the model runs end to end today.
-Results: [docs/milestone1.md](docs/milestone1.md),
+logit), `non_mandatory_tour_scheduling` (timetables, rounds of tours, one
+utility per tour × departure-return option) and `tour_mode_choice_simulate`
+(nested logit, purpose segments, preprocessor, time-of-day skims). They were
+checked on three regions' example models: MTC, MWCOG and ARC (all 24,061
+households). Every other step can be **replayed** from a 1.x run, so the
+model runs end to end today. Results: [docs/milestone1.md](docs/milestone1.md),
 [docs/skims_and_accessibility.md](docs/skims_and_accessibility.md),
 [docs/mwcog.md](docs/mwcog.md), [docs/arc.md](docs/arc.md),
-[docs/tour_mode_choice.md](docs/tour_mode_choice.md).
+[docs/tour_mode_choice.md](docs/tour_mode_choice.md),
+[docs/non_mandatory_scheduling.md](docs/non_mandatory_scheduling.md).
 
 The harness can also test changes to 1.x itself
 ([docs/scheduling.md](docs/scheduling.md)): a run-time patch that computes
@@ -60,11 +61,12 @@ pieces and the first experiments: [docs/experiments.md](docs/experiments.md).
 | `src/asim_core/seams.py` | The swappable pieces: registry, reference implementations, and `Engine`, which picks an implementation per piece. |
 | `src/asim_core/skims.py` | Skims: OMX files imported into a memory-mapped cache shared by every process, following 1.x's `network_los.yaml` settings; reused only while the OMX files are unchanged. |
 | `src/asim_core/lookups.py` | Reference implementations of table and skim lookups. |
+| `src/asim_core/timetable.py` | Each person's day as time periods (1.x's `person_windows`): which departure-return options still fit, booking a tour, and the functions scheduling formulas call. |
 | `src/asim_core/random.py` | Random numbers. Reference: 1.x's per-row streams, reproduced exactly. Alternative: `counter`. |
 | `src/asim_core/logit.py` | Reference implementations of utilities, probabilities (multinomial and nested logit) and choices, with 1.x's arithmetic. |
 | `src/asim_core/alternatives.py` | Alternative implementations for experiments (e.g. `accumulate` utilities). |
 | `src/asim_core/spec/` | Model definitions (Pydantic): choice models and assignment specs; the loader for today's YAML/CSV files; the formula translator. |
-| `src/asim_core/components/` | Components. `simple_choice.py` runs any simple choice model from its definition; `auto_ownership.py`, `accessibility.py` and `tour_mode_choice.py` are ported models. |
+| `src/asim_core/components/` | Components. `simple_choice.py` runs any simple choice model from its definition; `auto_ownership.py`, `accessibility.py`, `tour_mode_choice.py` and `tour_scheduling.py` are ported models. |
 | `harness/` | Scripts that run 1.x and compare (these import 1.x). |
 | `tests/` | Unit tests, plus an exact-match test against a saved 1.x run. |
 
@@ -167,7 +169,8 @@ Simple choice models, multinomial or nested logit, need no code: build them with
 ## Not supported yet
 
 Annotation after a model, park-and-ride, sampling of alternatives (so no
-destination choice or scheduling yet), Parquet skim files, two- and
+destination choice yet), mode choice logsums inside scheduling (needed by
+mandatory tour scheduling), Parquet skim files, two- and
 three-zone systems (MAZ, TAP), writing trip tables to OMX, starting a run
 from asim_core's own saved state, a command-line `run` for agency model
 loops, multiprocessing, estimation, and peak-memory measurement outside
