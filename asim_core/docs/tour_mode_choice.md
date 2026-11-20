@@ -25,7 +25,9 @@ mandatory tour scheduling spends most of its time on (as logsums; see
   (`work/milestone1/step_check/tour_mode_choice_simulate/generated/`).
 - **Faster and smaller than 1.x.** On MTC, 0.30 s and 18 MB extra memory,
   against 4.6 s and 47 MB for 1.x (legacy) and 4.0 s and 55 MB with
-  sharrow. Details below.
+  sharrow. On all ARC households, 0.71 s and 98 MB against 6.4 s and
+  294 MB for 1.x. Most of 1.x's time is evaluating formulas one by one as
+  pandas operations, a third of it in time-of-day skim lookups.
 - **Nothing tour-mode-specific went into the core.** The step is a
   component (`components/tour_mode_choice.py`, about 300 lines). What it
   needed is general: coefficient templates, preprocessors, table lookups,
@@ -115,7 +117,34 @@ where it started.
 | 1.x, legacy | 4.64 s (4.40–4.75) | 47 MB | 5.31 s |
 | 1.x, sharrow | 3.96 s (3.77–4.23) | 55 MB | 3.09 s |
 
-(ARC, all households: being measured.)
+**ARC, all 24,061 households (68,934 tours), 3 runs each:**
+
+| | Wall time (median, min–max) | CPU time | Extra memory |
+|---|---|---|---|
+| asim_core | 0.71 s (0.71–0.72) | 2.7 s | 98 MB |
+| 1.x, legacy | 6.36 s (6.26–6.45) | 9.8 s | 294 MB |
+
+(There's no sharrow run of ARC. CPU time is above wall time for both
+because NumPy's matrix product uses several cores.)
+
+**Where the time goes,** measured with Python's profiler on MTC (shares
+of the step's time under the profiler, which slows Python-heavy code more):
+
+| Part | 1.x, legacy | asim_core |
+|---|---|---|
+| Formulas (about 300 per segment) | ~60%, of which time-of-day skim lookups ~35% of the step (2,853 lookups) | ~40%, mostly skim lookups |
+| Preprocessor (about 75 rows per segment) | ~20% | ~25% |
+| Nested logit probabilities | ~9% | ~4% |
+| Random draws | ~2% | ~25%, half of it keeping track of each stream's position (an easy fix) |
+| Reading the spec and coefficient files (per segment) | ~2% | once, at load |
+
+1.x evaluates each formula as separate pandas operations, building many
+temporary Series; its time-of-day lookups map each row's period label to
+a skim with a per-row dictionary lookup. asim_core evaluates the same
+formulas as one compiled NumPy function per segment and looks skims up
+period by period. The random draws are the same per-tour loop in both (they
+have to be, to match exactly); that loop is one of the swappable pieces
+(`random`), with a vectorized alternative for experiments.
 
 ## Not supported yet
 
