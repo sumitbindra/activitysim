@@ -15,7 +15,8 @@ They are hypotheses under test.
   same zones** (all six steps match 1.x bit for bit) and cuts sampling from
   1.94 s to 0.40 s (−79%) on full MTC: about 7% of the 8 ported steps.
   It is never slower in the benchmarks (about equal at 30 alternatives, 3.6
-  to 5 times faster at 1,454). A candidate for the default; your call.
+  to 5 times faster at 1,454). **Now the default**; the original stays
+  available as `inverse_cdf` (`Engine({"sample": "inverse_cdf"})`).
 - **JAX (`utilities: jax`, `interaction_utilities: jax`)**: every formula set
   of every ported step compiles, and **every choice is the same as 1.x's**
   (logsums differ by up to 7.2e-7, as expected from a compiler that rounds
@@ -152,7 +153,8 @@ scheduling (+60 MB), XLA's runtime.
 
 ## Possible next steps
 
-1. Make `binary_search` the default for sampling (identical results).
+1. ~~Make `binary_search` the default for sampling~~ (done: the default
+   since; the original stays selectable as `inverse_cdf`).
 2. Look up each distinct skim once per formula set in the NumPy path too
    (the −26% on skim lookups, identical results), as a new alternative.
 3. JAX at a larger sample (e.g. 100,000 households), whole run in one

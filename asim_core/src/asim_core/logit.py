@@ -266,9 +266,10 @@ def nested_probabilities(utils: np.ndarray, alternatives: list[str], nests
     return probs, bad, logsums
 
 
-@register("sample", "inverse_cdf", reference=True,
-          description="1.x's default sampling of alternatives: each random draw picks the first "
-                      "alternative whose cumulative probability exceeds it")
+@register("sample", "inverse_cdf", agreement="exact",
+          description="1.x's sampling of alternatives, as 1.x does it: each draw compared with every "
+                      "alternative's running sum (the default until the JAX experiment; kept as the "
+                      "baseline for comparing with 1.x)")
 def sample(probs: np.ndarray, rands: np.ndarray, max_cells: int = 20_000_000):
     """
     ``rands.shape[1]`` alternatives drawn (with replacement) for each row of
@@ -297,10 +298,10 @@ def sample(probs: np.ndarray, rands: np.ndarray, max_cells: int = 20_000_000):
     return picks, chosen
 
 
-@register("sample", "binary_search", agreement="exact",
-          description="the same picks as inverse_cdf, found by a binary search of each row's "
-                      "running sums (about log2(alternatives) comparisons per draw, not one per "
-                      "alternative)")
+@register("sample", "binary_search", reference=True,
+          description="1.x's sampling of alternatives, the same picks as inverse_cdf, found by a "
+                      "binary search of each row's running sums (about log2(alternatives) "
+                      "comparisons per draw, not one per alternative)")
 def sample_binary_search(probs: np.ndarray, rands: np.ndarray):
     """
     Each draw picks the first alternative whose running sum (64-bit, left to

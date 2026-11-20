@@ -61,3 +61,17 @@ def test_binary_search_picks_the_same_alternatives(n_alts):
     alt = sample_binary_search(probs, rands)
     np.testing.assert_array_equal(alt[0], ref[0])
     np.testing.assert_array_equal(alt[1], ref[1])
+
+
+def test_binary_search_is_the_default_and_the_original_stays_selectable():
+    from asim_core.seams import Engine, implementations
+
+    assert Engine().choices["sample"] == "binary_search"
+    names = {i.name: i for i in implementations("sample")}
+    assert names["inverse_cdf"].agreement == "exact" and not names["inverse_cdf"].reference
+    rng = np.random.default_rng(7)
+    probs, rands = random_probs(rng, 200, 60), rng.random((200, 30))
+    default = Engine().sample(probs, rands)
+    original = Engine({"sample": "inverse_cdf"}).sample(probs, rands)
+    np.testing.assert_array_equal(default[0], original[0])
+    np.testing.assert_array_equal(default[1], original[1])

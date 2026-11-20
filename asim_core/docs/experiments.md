@@ -32,7 +32,7 @@ nothing is significantly slower.
 | `interaction_utilities` | one utility per chooser-alternative row | `sequential`, as 1.x | `jax` (as above) |
 | `probabilities` | utilities → probabilities (multinomial logit) | `asim1` | |
 | `nested_probabilities` | utilities and a nest tree → probabilities (nested logit) | `asim1` | |
-| `sample` | probabilities and draws → sampled alternatives | `inverse_cdf`, as 1.x | `binary_search`: the same picks, about log2(alternatives) comparisons per draw |
+| `sample` | probabilities and draws → sampled alternatives | `binary_search`: 1.x's picks, about log2(alternatives) comparisons per draw (the default since the JAX experiment) | `inverse_cdf`: the same picks, compared as 1.x does, every alternative per draw (the default before) |
 | `choose` | probabilities and random draws → choices | `sequential`, as 1.x | |
 | `random` | per-row random draws for a step | `asim1`: 1.x's streams, exactly | `counter` |
 
