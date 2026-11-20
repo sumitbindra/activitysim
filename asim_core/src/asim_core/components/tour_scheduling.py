@@ -291,6 +291,7 @@ def tour_scheduling_component(
         chosen = np.full(n, -1, dtype=np.int64)
         traced = set(ctx.tracer.targets("tours", tour_ids).tolist())
         kept = info["utilities"] = {}
+        stats = info["stats"] = {"option_rows": 0, "logsum_rows": 0}
         per_batch = max(1, max_rows // n_alts)
         seg_values = None if segment_column is None else np.asarray(plain(cols[segment_column]))
 
@@ -301,7 +302,8 @@ def tour_scheduling_component(
                 logsum_plan = None
                 if model is not None:
                     logsum_plan = (model, resolved["bound_ls"][seg], seg,
-                                   _segment_times(tdd_segments, seg) if tdd_segments is not None else None)
+                                   _segment_times(tdd_segments, seg) if tdd_segments is not None else None,
+                                   stats)
                 for b in range(0, len(sel), per_batch):
                     batch = sel[b:b + per_batch]
                     chosen[batch] = _schedule_batch(
@@ -443,7 +445,7 @@ def _option_logsums(ctx, batch, tour_ids, cols, tour_ix, alt_ix, alts, logsum_pl
     copied to every row that shares them. Returns the option columns 1.x adds
     (out_period, in_period, duration) and mode_choice_logsum.
     """
-    model, bound, segment, seg_times = logsum_plan
+    model, bound, segment, seg_times, stats = logsum_plan
     periods = model.periods
     labels = np.asarray(periods.unique_labels, dtype=object)
     out_ix = periods.label_index(alts["start"])[alt_ix]
@@ -457,6 +459,8 @@ def _option_logsums(ctx, batch, tour_ids, cols, tour_ix, alt_ix, alts, logsum_pl
         values = {"out_period": out_ix, "in_period": in_ix, "duration": duration}[k].astype(np.int64)
         code = code * (int(values.max()) + 1) + values
     _, first, inverse = np.unique(code, return_index=True, return_inverse=True)  # sorted by tour
+    stats["option_rows"] += len(code)
+    stats["logsum_rows"] += len(first)
 
     u_tour = tour_ix[first]
     u_rows = batch[u_tour]

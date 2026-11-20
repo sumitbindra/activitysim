@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from .asim1 import Asim1State
 from .compare import ColumnComparison, compare_column
@@ -200,11 +201,20 @@ class Runner:
                 store[table].to_pandas(list(cols)).to_parquet(path)
 
     def _replay_step(self, step, store: Store, computed_cols) -> list[ColumnComparison]:
+        """
+        Copy the tables 1.x's ``step`` wrote. For columns asim_core computed
+        earlier: rows 1.x's step changed take 1.x's new values (e.g. joint
+        tour scheduling books joint tours into timetables asim_core filled);
+        rows it left alone keep asim_core's values, and are compared with
+        1.x's. Rows the step added take 1.x's values.
+        """
         comparisons = []
+        before_step = self.replay.previous_step(step)
         for table in self.replay.written_at(step):
             df = self.replay.read(table, step)
             new = Table.from_pandas(table, df)
             old = store.tables.get(table)
+            before = None
             for column, ids in sorted(computed_cols.get(table, {}).items()):
                 if old is None or column not in old:
                     continue
@@ -212,11 +222,23 @@ class Runner:
                 ids = ids[np.isin(ids, new.index)]
                 ours = old[column][old.positions(ids)]
                 if column in df.columns:
-                    comparisons.append(
-                        compare_column(step, Table(table, ids, old.index_name, {column: ours}),
-                                       column, df[column].loc[ids])
+                    if before is None and before_step is not None:
+                        try:
+                            before = self.replay.read(table, before_step)
+                        except KeyError:
+                            before = pd.DataFrame()
+                    changed = _changed_by_step(df[column], before, column, ids)
+                    keep = ~changed
+                    result = compare_column(
+                        step, Table(table, ids[keep], old.index_name, {column: _take(ours, keep)}),
+                        column, df[column].loc[ids[keep]],
                     )
+                    if changed.any():
+                        result.note = (f"{int(changed.sum())} rows changed by this 1.x step: "
+                                       f"1.x's values used for them")
+                    comparisons.append(result)
                     values = new[column]
+                    ids, ours = ids[keep], _take(ours, keep)
                 elif len(ids) == len(new):
                     values = ours
                 else:
@@ -233,6 +255,22 @@ class Runner:
             if table not in still_there and table not in computed_cols:
                 del store.tables[table]
         return comparisons
+
+
+def _take(values, mask):
+    return values[np.asarray(mask)]
+
+
+def _changed_by_step(after, before, column, ids) -> np.ndarray:
+    """Rows (``ids``) whose ``column`` 1.x's step changed (missing before counts as changed)."""
+    if before is None or column not in getattr(before, "columns", ()):
+        return np.zeros(len(ids), dtype=bool)
+    present = np.isin(ids, before.index)
+    a = after.loc[ids].astype(object).to_numpy()
+    b = np.full(len(ids), None, dtype=object)
+    b[present] = before[column].loc[ids[present]].astype(object).to_numpy()
+    same = (a == b) | (pd.isna(a) & pd.isna(b))
+    return ~(same & present)
 
 
 def _with_values(values, positions, ours):
