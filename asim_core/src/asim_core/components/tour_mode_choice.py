@@ -46,6 +46,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from ..component import SKIMS, Component, MissingInputError, Needs, StepContext
+from ..logit import FormulaValues
 from ..skims import time_periods_from_settings
 from ..spec.definition import (
     AssignmentSpec,
@@ -453,7 +454,7 @@ class TourModeChoiceModel:
             for name in bound.preprocessor.targets:
                 c[name] = _assign(c.get(name), pre_values[name])
         with np.errstate(all="ignore"):
-            utils = ctx.engine.utilities(seg["terms"](c, s, k), seg["coef"], n)
+            utils = ctx.engine.utilities(FormulaValues(seg["terms"], c, s, k), seg["coef"], n)
         if logsums_only:
             return ctx.engine.nested_logsums(utils, self.alternatives, seg["nests"])
         probs, bad, logsums = ctx.engine.nested_probabilities(utils, self.alternatives, seg["nests"])

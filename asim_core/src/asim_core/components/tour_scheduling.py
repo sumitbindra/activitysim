@@ -55,6 +55,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from ..component import SKIMS, Component, MissingInputError, Needs, StepContext
+from ..logit import FormulaValues
 from ..spec.definition import AssignmentSpec, InteractionModelDefinition, InteractionTerm, LanguageScope
 from ..spec.language import compile_formula
 from ..spec.model_file import (
@@ -644,7 +645,7 @@ def _schedule_batch(ctx, batch, tour_ids, cols, person_rows, previous, tt, alts,
             c[name] = values[rows]
 
     with np.errstate(all="ignore"):
-        utils = ctx.engine.interaction_utilities(terms_fn(c, n, tt), coefs, n)
+        utils = ctx.engine.interaction_utilities(FormulaValues(terms_fn, c, n, tt), coefs, n)
     if keep is not None:
         keep.append((tour_ids[rows], alt_ix.copy(), utils.copy(),
                      np.asarray(c["mode_choice_logsum"], dtype=np.float64).copy()))

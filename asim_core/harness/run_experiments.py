@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -60,7 +61,9 @@ def match_check(comp, st: Asim1State, engine: Engine, base_seed: int, out: Path,
     Runner([comp], out, engine=engine, base_seed=base_seed, skims=skims).run([comp.name], store, Profiler())
 
     row = {"rows": 0, "rows_different": 0, "largest_share_diff_pp": 0.0,
-           "sampling_error_2se_pp": 0.0, "shares_within_noise": True}
+           "sampling_error_2se_pp": 0.0, "shares_within_noise": True,
+           # choices (integer, text, categories) apart from decimal values (logsums, ...)
+           "choice_rows_different": 0, "max_value_diff": 0.0}
     for table, cols in comp.provides.items():
         ref = st.read(table, comp.name)
         for col in cols:
@@ -68,6 +71,10 @@ def match_check(comp, st: Asim1State, engine: Engine, base_seed: int, out: Path,
             row["rows"] += c.rows
             row["rows_different"] += c.mismatched
             row["max_output_diff"] = max(row.get("max_output_diff", 0.0), c.max_abs_diff or 0.0)
+            if np.asarray(store[table][col]).dtype.kind == "f" and np.asarray(ref[col]).dtype.kind == "f":
+                row["max_value_diff"] = max(row["max_value_diff"], c.max_abs_diff or 0.0)
+            else:
+                row["choice_rows_different"] += c.mismatched
             if not few_values(store[table][col]):
                 continue  # shares only make sense for columns with few distinct values
             shares = value_shares(store[table][col], ref[col])
@@ -91,6 +98,11 @@ def match_check(comp, st: Asim1State, engine: Engine, base_seed: int, out: Path,
 
     if row["rows_different"] == 0:
         row["result_vs_1x"] = "same as 1.x"
+    elif engine.agreement == "approximate" and row["choice_rows_different"] == 0:
+        row["result_vs_1x"] = f"choices same as 1.x; values within {row['max_value_diff']:.1e}"
+    elif engine.agreement == "approximate":
+        row["result_vs_1x"] = (f"{row['choice_rows_different']:,} choices differ; values within "
+                               f"{row['max_value_diff']:.1e}")
     elif engine.agreement == "statistical":
         row["result_vs_1x"] = ("same distribution (rows differ by design)"
                                if row["shares_within_noise"] else "distribution differs: check")
@@ -103,7 +115,8 @@ def match_check(comp, st: Asim1State, engine: Engine, base_seed: int, out: Path,
 
 
 def profile(step, label, engine_kind, configs, run_dir, seams, repeat, out: Path,
-            example: Path, read_skim_cache: str = "settings", page_cache: str = "as_is") -> pd.DataFrame:
+            example: Path, read_skim_cache: str = "settings", page_cache: str = "as_is",
+            env: dict | None = None) -> pd.DataFrame:
     rows_csv = out / "runs" / f"{label}.csv"
     rows_csv.parent.mkdir(parents=True, exist_ok=True)
     if rows_csv.exists():
@@ -119,7 +132,7 @@ def profile(step, label, engine_kind, configs, run_dir, seams, repeat, out: Path
             "--read-skim-cache", read_skim_cache if engine_kind == "asim_core" else "settings",
             "--page-cache", page_cache if engine_kind == "asim_core" else "as_is",
         ]
-        subprocess.run(cmd, check=True, capture_output=True)
+        subprocess.run(cmd, check=True, capture_output=True, env={**os.environ, **(env or {})})
     return pd.read_csv(rows_csv)
 
 
@@ -130,6 +143,8 @@ def summarize_runs(runs: pd.DataFrame) -> dict:
         "max_s": float(runs["wall_s"].max()),
         "median_extra_mb": float(runs["step_extra_mb"].median()),
         "median_peak_mb": float(runs["peak_mb"].median()),
+        "median_jax_compile_s": (float(runs["jax_compile_s"].median())
+                                 if "jax_compile_s" in runs and runs["jax_compile_s"].notna().any() else np.nan),
         "median_own_extra_mb": (float(runs["own_extra_mb"].median())
                                 if "own_extra_mb" in runs else np.nan),
         "median_file_peak_mb": (float(runs["file_peak_mb"].median())
@@ -187,7 +202,7 @@ def write_report(out: Path, step: str, exp: pd.DataFrame, bench: pd.DataFrame) -
     cols = ["experiment", "pieces_changed", "page_cache", "skims_resident", "result_vs_1x",
             "rows_different", "rows", "largest_share_diff_pp", "sampling_error_2se_pp",
             "max_utility_diff", "median_s", "min_s", "max_s", "median_extra_mb",
-            "median_own_extra_mb", "median_file_peak_mb", "runs"]
+            "median_own_extra_mb", "median_file_peak_mb", "median_jax_compile_s", "runs"]
     table = exp[cols].copy()
     table["max_utility_diff"] = table["max_utility_diff"].map(
         lambda v: "" if pd.isna(v) else f"{v:.1e}")
@@ -257,7 +272,16 @@ def main(argv=None) -> int:
     rsc = {"settings": None, "true": True, "false": False}[args.read_skim_cache]
     skims = skim_store(example, configs, read_skim_cache=rsc)
 
-    experiments = {n: Engine(s or {}) for n, s in (cfg.get("experiments") or {"reference": {}}).items()}
+    # an experiment is its seams ({seam: implementation}), or {seams: ..., env: ...} when its
+    # runs need environment variables (e.g. ASIM_JAX_CACHE_DIR)
+    experiments, envs = {}, {}
+    for n, spec in (cfg.get("experiments") or {"reference": {}}).items():
+        spec = spec or {}
+        if set(spec) and set(spec) <= {"seams", "env"}:
+            experiments[n], envs[n] = Engine(spec.get("seams") or {}), {k: str(v) for k, v in
+                                                                      (spec.get("env") or {}).items()}
+        else:
+            experiments[n], envs[n] = Engine(spec), {}
     # profiles first: the match checks map skim pages into this process, and pages a
     # process has mapped can't be dropped from the page cache for a cold run
     timed = {}
@@ -267,7 +291,7 @@ def main(argv=None) -> int:
             label = name if len(args.page_cache) == 1 else f"{name}_{state}"
             timed[name, state] = summarize_runs(profile(
                 step, label, "asim_core", args.configs, Path(args.asim1_out), engine.changed,
-                repeat, out, example, args.read_skim_cache, state))
+                repeat, out, example, args.read_skim_cache, state, envs[name]))
 
     rows = []
     for name, engine in experiments.items():

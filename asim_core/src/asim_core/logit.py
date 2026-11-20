@@ -25,6 +25,24 @@ BAD_PROB_THRESHOLD = 0.001
 BAD_CHOICE = -99
 
 
+class FormulaValues:
+    """
+    A model's formula values (terms) for some rows, computed when iterated, by
+    the generated NumPy function ``fn(*args)``. The function and its inputs
+    are kept, so an implementation of ``utilities`` can compute them another
+    way (e.g. compiled with JAX); the reference implementations just iterate.
+    """
+
+    __slots__ = ("fn", "args")
+
+    def __init__(self, fn, *args):
+        self.fn = fn
+        self.args = args
+
+    def __iter__(self):
+        return iter(self.fn(*self.args))
+
+
 def term_values(terms: Iterable, n: int, n_terms: int | None = None) -> np.ndarray:
     """Stack per-term values (arrays or scalars) into a (terms x choosers) float64 array."""
     terms = list(terms) if n_terms is None else terms
@@ -268,6 +286,52 @@ def sample(probs: np.ndarray, rands: np.ndarray, max_cells: int = 20_000_000):
         rows = slice(start, start + step)
         # the first running sum above the draw = how many running sums are at or below it
         picks[rows] = (cum[rows, None, :] <= rands[rows, :, None]).sum(axis=2)
+    over = picks >= n_alts  # draw above the total (rounding): 1.x takes the last usable alternative
+    if over.any():
+        for r in np.unique(np.nonzero(over)[0]):
+            a = n_alts - 1
+            while probs[r, a] < 1e-30 and a > 0:
+                a -= 1
+            picks[r][over[r]] = a
+    chosen = probs[np.arange(n)[:, None], picks].astype(np.float32)
+    return picks, chosen
+
+
+@register("sample", "binary_search", agreement="exact",
+          description="the same picks as inverse_cdf, found by a binary search of each row's "
+                      "running sums (about log2(alternatives) comparisons per draw, not one per "
+                      "alternative)")
+def sample_binary_search(probs: np.ndarray, rands: np.ndarray):
+    """
+    Each draw picks the first alternative whose running sum (64-bit, left to
+    right, as ``inverse_cdf``) is greater than the draw, i.e. the number of
+    running sums at or below it. Running sums never decrease (probabilities
+    are not negative), so that number is found by halving the range: about
+    11 comparisons for 1,475 zones instead of 1,475. The comparisons are the
+    same ones (``running sum <= draw``), so the picks are identical. Rows with
+    missing probabilities (whose running sums are missing from some point)
+    are counted as ``inverse_cdf`` does.
+    """
+    n, n_alts = probs.shape
+    cum = np.cumsum(probs, axis=1)
+    flat = cum.reshape(-1)
+    row_start = (np.arange(n, dtype=np.int64) * n_alts)[:, None]
+    # count of running sums at or below each draw, found bit by bit from the largest
+    # power of two: the same comparisons as inverse_cdf, about log2(n_alts) of them
+    count = np.zeros(rands.shape, dtype=np.int64)
+    step = 1 << (n_alts.bit_length() - 1)
+    while step:
+        cand = count + step
+        ok = cand <= n_alts
+        idx = row_start + np.minimum(cand, n_alts) - 1
+        ok &= flat.take(idx) <= rands
+        count = np.where(ok, cand, count)
+        step >>= 1
+    picks = count
+    unsorted = np.isnan(cum).any(axis=1)  # missing probabilities: count as inverse_cdf does
+    if unsorted.any():
+        bad = np.flatnonzero(unsorted)
+        picks[bad] = (cum[bad, None, :] <= rands[bad, :, None]).sum(axis=2)
     over = picks >= n_alts  # draw above the total (rounding): 1.x takes the last usable alternative
     if over.any():
         for r in np.unique(np.nonzero(over)[0]):

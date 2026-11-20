@@ -45,6 +45,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from ..component import SKIMS, Component, MissingInputError, Needs, StepContext
+from ..logit import FormulaValues
 from ..spec.definition import InteractionModelDefinition, InteractionTerm, LanguageScope
 from ..spec.model_file import (
     ModelFile,
@@ -518,7 +519,7 @@ def _sample(ctx, sel, tour_ids, cols, orig_pos, alt_zones, alt_size, terms, samp
         s = _ZoneSkims(ctx, orig_pos[rows], np.tile(dest_pos_alts, n_b))
         n = n_b * n_alts
         with np.errstate(all="ignore"):
-            utils = ctx.engine.interaction_utilities(terms_fn(c, n, None, s), coefs, n)
+            utils = ctx.engine.interaction_utilities(FormulaValues(terms_fn, c, n, None, s), coefs, n)
         probs, bad = ctx.engine.probabilities(utils.reshape(n_b, n_alts), shift=shift)
         if bad.any():
             raise ValueError(f"{step}: choosers with no usable sampling probabilities: "
@@ -620,7 +621,7 @@ def _choose(ctx, sel, tour_ids, cols, orig_pos, sample, zone_size, terms, shift,
                 c[name] = values[tours_r]
         s = _ZoneSkims(ctx, orig_pos[tours_r], sample_dest_pos[rows])
         with np.errstate(all="ignore"):
-            utils = ctx.engine.interaction_utilities(terms_fn(c, n, None, s), coefs, n)
+            utils = ctx.engine.interaction_utilities(FormulaValues(terms_fn, c, n, None, s), coefs, n)
         local = np.array([position_of[t] for t in tours_r]) - b
         counts = np.bincount(local, minlength=len(batch_tours))
         offsets = np.concatenate([[0], np.cumsum(counts)[:-1]])

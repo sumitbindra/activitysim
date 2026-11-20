@@ -18,6 +18,7 @@ import numpy as np
 
 from .. import logit
 from ..component import Component, MissingInputError, Needs, StepContext
+from ..logit import FormulaValues
 from ..seams import Engine
 from ..spec.definition import ChoiceModelDefinition
 
@@ -158,7 +159,7 @@ def simple_choice_component(
     def compute(cols: Mapping[str, object], n: int, engine: Engine):
         """Utilities and probabilities for ``n`` choosers, using ``engine``'s pieces."""
         with np.errstate(divide="ignore", invalid="ignore"):
-            utils = engine.utilities(terms_fn(cols), coef, n)
+            utils = engine.utilities(FormulaValues(terms_fn, cols), coef, n)
         if nests is None:
             probs, bad = engine.probabilities(utils, shift=shift_utilities)
         else:  # 1.x uses no overflow protection for nested logit

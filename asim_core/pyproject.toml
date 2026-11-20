@@ -23,6 +23,8 @@ dependencies = [
 test = ["pytest"]
 # only for importing skims from OMX (HDF5) files, once per skim file
 omx = ["tables >= 3.9"]
+# only for the JAX experiment (jax_backend.py): alternatives, not the default
+jax = ["jax[cpu] >= 0.4.30"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

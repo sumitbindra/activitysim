@@ -28,9 +28,11 @@ nothing is significantly slower.
 | `lookup` | values of a column at given rows (joins between tables) | `numpy` | |
 | `skim_access` | how a step holds the skims it reads | `memory_map` | `prefault`, `in_memory` ([skim_experiments.md](skim_experiments.md)) |
 | `skim_lookup` | skim values for origin/destination zones | `flat_take`: a one-dimensional gather, positions shared by a step's skims (the default since the skim experiment) | `index_2d` (two-dimensional indexing, the default before) |
-| `utilities` | formula values and coefficients → utilities | `matmul`: one matrix product, as 1.x | `accumulate` |
+| `utilities` | formula values and coefficients → utilities | `matmul`: one matrix product, as 1.x | `accumulate`; `jax`: formulas and sum compiled with JAX ([jax_experiment.md](jax_experiment.md)) |
+| `interaction_utilities` | one utility per chooser-alternative row | `sequential`, as 1.x | `jax` (as above) |
 | `probabilities` | utilities → probabilities (multinomial logit) | `asim1` | |
 | `nested_probabilities` | utilities and a nest tree → probabilities (nested logit) | `asim1` | |
+| `sample` | probabilities and draws → sampled alternatives | `inverse_cdf`, as 1.x | `binary_search`: the same picks, about log2(alternatives) comparisons per draw |
 | `choose` | probabilities and random draws → choices | `sequential`, as 1.x | |
 | `random` | per-row random draws for a step | `asim1`: 1.x's streams, exactly | `counter` |
 

@@ -189,6 +189,13 @@ def profile_asim_core(step, prev, example, configs, pipeline, scratch, profiler,
     return skims_ready_s, resident
 
 
+def _jax_compile_s():
+    mod = sys.modules.get("asim_core.jax_backend")
+    if mod is None or getattr(mod, "jax", None) is None or not mod.STATS.get("calls"):
+        return ""
+    return f"{mod.STATS.get('compile_s', 0.0):.3f}"
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--engine", choices=["asim1", "asim_core"], required=True)
@@ -240,7 +247,9 @@ def main(argv=None) -> int:
            "anon_before_mb": rec.anon_before_mb, "anon_peak_mb": rec.anon_peak_mb,
            "own_extra_mb": (None if rec.anon_peak_mb is None
                             else max(rec.anon_peak_mb - rec.anon_before_mb, 0.0)),
-           "file_peak_mb": rec.file_peak_mb}
+           "file_peak_mb": rec.file_peak_mb,
+           # time JAX spent compiling during the step (part of wall_s), if it was used
+           "jax_compile_s": _jax_compile_s()}
     # append in the file's own columns (files written before a column was added keep their shape)
     columns = (out.read_text().splitlines()[0].split(",") if out.exists() and out.stat().st_size
                else list(row))

@@ -39,6 +39,11 @@ ORDER = ["skim_lookup", "formulas", "utilities", "interaction_utilities", "proba
          "logsum_keys", "skim_access"]
 
 
+def _jax_stats() -> dict:
+    mod = sys.modules.get("asim_core.jax_backend")
+    return dict(mod.STATS) if mod is not None and getattr(mod, "jax", None) is not None else {}
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--example-dir", required=True)
@@ -67,9 +72,15 @@ def main(argv=None) -> int:
         engines = {c.name: TimedEngine(Engine(choices), times[c.name]) for c in components}
         prof = Profiler()
         t0 = time.perf_counter()
+        jax_before = _jax_stats()
         Runner(components, out / f"run{run}", replay=st, base_seed=base_seed, skims=skims,
                step_engines=engines).run(st.steps, Store(), prof)
-        print(f"run {run}: {time.perf_counter() - t0:.1f} s", flush=True)
+        jax_after = _jax_stats()
+        note = ""
+        if jax_after:
+            note = (f"; JAX compiles {int(jax_after.get('compiles', 0) - jax_before.get('compiles', 0))}, "
+                    f"{jax_after.get('compile_s', 0) - jax_before.get('compile_s', 0):.1f} s (inside utilities)")
+        print(f"run {run}: {time.perf_counter() - t0:.1f} s{note}", flush=True)
         for rec in prof.records:
             if rec.step not in times:
                 continue

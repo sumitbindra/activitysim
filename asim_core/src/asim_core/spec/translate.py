@@ -940,4 +940,7 @@ def build_assignment_function(name: str, items: list[tuple[str, str, Translated 
 def compile_function(source: str, name: str, filename: str = "<asim_core-generated>"):
     namespace = dict(RUNTIME_NAMESPACE)
     exec(compile(source, filename, "exec"), namespace)
-    return namespace[name]
+    fn = namespace[name]
+    # kept so the source can be compiled another way (e.g. jax_backend.py)
+    fn._asim_source, fn._asim_name = source, name
+    return fn

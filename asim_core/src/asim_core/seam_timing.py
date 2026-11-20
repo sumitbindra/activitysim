@@ -64,13 +64,19 @@ class _TimedTerms:
     """An iterator of formula values, timing the work of producing each."""
 
     def __init__(self, terms, times: SeamTimes):
-        self._it = iter(terms)
+        self._it = None
+        self._terms = terms
         self._times = times
+        # what produced the values, for implementations that compute them another way
+        self.fn = getattr(terms, "fn", None)
+        self.args = getattr(terms, "args", None)
 
     def __iter__(self):
         return self
 
     def __next__(self):
+        if self._it is None:
+            self._it = iter(self._terms)
         self._times._enter()
         try:
             return next(self._it)

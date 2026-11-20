@@ -37,3 +37,27 @@ def test_dedupe_counts_and_orders_by_zone():
     assert out["zone"].tolist() == [10, 11, 12, 13]
     assert out["pick_count"].tolist() == [1, 1, 2, 4]
     assert out["prob"].tolist() == pytest.approx([0.1, 0.2, 0.5, 0.9])
+
+
+@pytest.mark.parametrize("n_alts", [1, 2, 7, 40, 1475])
+def test_binary_search_picks_the_same_alternatives(n_alts):
+    """The alternative must agree with the reference exactly, edges included."""
+    from asim_core.logit import sample_binary_search
+
+    rng = np.random.default_rng(n_alts)
+    probs = random_probs(rng, 300, n_alts, zeros=0.5)
+    probs[1, :] = 0.0
+    probs[1, -1] = 1.0  # all mass on the last alternative
+    probs[2, n_alts // 2:] = 0.0  # zeros at the end: draws near 1 fall past the total
+    probs[2] /= probs[2].sum()
+    rands = rng.random((300, 30))
+    cum = np.cumsum(probs, axis=1)
+    m = min(30, n_alts)
+    rands[3, :m] = cum[3, :m]  # draws exactly equal to running sums
+    rands[4, :3] = [0.0, 0.999999999999, 1.0]
+    if n_alts > 2:
+        probs[5, 1] = np.nan  # missing probabilities from here on
+    ref = sample(probs, rands)
+    alt = sample_binary_search(probs, rands)
+    np.testing.assert_array_equal(alt[0], ref[0])
+    np.testing.assert_array_equal(alt[1], ref[1])

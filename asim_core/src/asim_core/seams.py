@@ -95,6 +95,8 @@ def register(seam: str, name: str, agreement: str = "exact", description: str = 
 def _load_builtin() -> None:
     # importing these modules registers the built-in implementations
     from . import alternatives, logit, logsums, lookups, random, skim_access  # noqa: F401
+    # optional (registers its alternatives only if JAX is installed)
+    from . import jax_backend  # noqa: F401
 
 
 def implementations(seam: str | None = None) -> list[Implementation]:
