@@ -76,9 +76,12 @@ class Asim1State:
             out[table] = {n for n in schema.names if n not in index_cols}
         return out
 
-    def load_store(self, after_step: str, tables: list[str] | None = None) -> Store:
-        """All tables (or the listed ones) as they were after ``after_step``."""
+    def load_store(self, after_step: str | None, tables: list[str] | None = None) -> Store:
+        """All tables (or the listed ones) as they were after ``after_step``
+        (none before the first step: ``after_step`` None)."""
         store = Store()
+        if after_step is None:
+            return store
         for table in tables or list(self.tables_at(after_step)):
             store.add(Table.from_pandas(table, self.read(table, after_step)))
         return store

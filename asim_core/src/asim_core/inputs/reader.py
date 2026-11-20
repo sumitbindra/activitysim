@@ -190,6 +190,44 @@ def read_table(spec: InputTable, data_dirs: Sequence[str | Path], like_asim1: bo
     return table, path
 
 
+def table_columns(spec: InputTable, data_dirs: Sequence[str | Path], recode: bool = True) -> list[str]:
+    """
+    The columns ``to_pandas`` gives this table (the ID is the index, not a
+    column), worked out from the file's header and the settings, without
+    reading the data. With ``recode``, zero-based recodes add
+    ``_original_<column>``.
+    """
+    path = find_data_file(spec.filename or f"{spec.tablename}.csv", data_dirs)
+    name = path.name.lower()
+    if name.endswith((".parquet", ".pq")):
+        names = pq.read_schema(path).names
+    elif name.endswith((".h5", ".hdf5")):
+        names = list(pd.read_hdf(path, spec.h5_tablename or spec.tablename, stop=0).columns)
+    else:
+        for encoding in ("utf8", "cp1252"):
+            try:
+                names = pd.read_csv(path, comment="#", nrows=0, encoding=encoding).columns.tolist()
+                break
+            except UnicodeDecodeError:
+                if encoding == "cp1252":
+                    raise
+    wanted = _wanted_raw_columns(spec, names)
+    if wanted is not None:
+        names = [n for n in names if n in set(wanted)]
+    if spec.drop_columns:
+        names = [n for n in names if n not in set(spec.drop_columns)]
+    if spec.rename_columns:
+        names = [spec.rename_columns.get(n, n) for n in names]
+    id_col = spec.id_column
+    if spec.keep_columns:
+        names = ([id_col] if id_col else []) + [c for c in spec.keep_columns if c != id_col]
+    if recode:
+        for col, how in (spec.recode_columns or {}).items():
+            if how == "zero-based":
+                names.append(f"_original_{col}")
+    return [n for n in names if n != id_col]
+
+
 def read_tables(configs_dirs: Sequence[str | Path], data_dirs: Sequence[str | Path], like_asim1: bool = False
                 ) -> tuple[dict[str, pa.Table], dict[str, Path], list[InputTable]]:
     specs = input_tables_from_settings(configs_dirs)

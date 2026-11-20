@@ -101,6 +101,7 @@ def bind(annotations: Sequence[Annotation], available: Mapping[str, set[str]],
             check_roles(a.spec.name, b.translated, {ROLE[a.table]: cols})
         else:
             b = a.spec.bind(cols, tables)
+        b.draws_per_call  # raises now, not mid-run, if the spec mixes how it draws
         read = sorted(b.columns_used() - {INDEX})
         needs.setdefault(a.table, set()).update(c for c in read if c not in made.get(a.table, set())
                                                 and c != a.index_name)
@@ -137,8 +138,16 @@ def run(ctx: StepContext, bound: Sequence[BoundAnnotation], made: dict[str, dict
         c[INDEX] = ids
         if a.index_name:
             c.setdefault(a.index_name, ids)
+        draws = None
+        if ba.bound.n_random:
+            # rng.lognormal_for_df on the table's own stream (its index names the channel)
+            if ba.bound.draws_per_call:  # one draw per row per call, as 1.x's broadcast=False
+                draws = np.column_stack([np.asarray(ctx.random.normal(a.table, ids, 1)).reshape(len(ids))
+                                         for _ in range(ba.bound.n_random)])
+            else:
+                draws = np.asarray(ctx.random.normal(a.table, ids, ba.bound.n_random)).reshape(len(ids), -1)
         with np.errstate(all="ignore"):  # 1.x logs numpy warnings and carries on
-            v = ba.bound.function(c, ZoneSkims(ctx), len(ids), TableLookup(ctx, made), None, {})
+            v = ba.bound.function(c, ZoneSkims(ctx), len(ids), TableLookup(ctx, made), draws, {})
         for target in ba.bound.targets:
             old = own.get(target)
             if old is None and target in ba.replaced:

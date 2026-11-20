@@ -514,6 +514,55 @@ class InteractionModelDefinition(BaseModel):
 RANDOM_MARKER = "rng.lognormal_for_df(df,"  # as 1.x's assign_variables looks for it
 
 
+def counting_lambda(formula: str) -> str | None:
+    """
+    The key column if the formula is 1.x's counting lambda, e.g.
+    ``lambda query, persons, households: persons.query(query).groupby('household_id')
+    .size().reindex(households.index).fillna(0).astype(np.int8)``: for each row
+    of the second table, how many rows of the first meet a query. Else None.
+    """
+    import ast as _ast
+
+    text = formula.strip().lstrip("@").strip()
+    if not text.startswith("lambda"):
+        return None
+    try:
+        node = _ast.parse(text, mode="eval").body
+    except SyntaxError:
+        return None
+    if not isinstance(node, _ast.Lambda) or len(node.args.args) != 3:
+        return None
+    q, table, other = (a.arg for a in node.args.args)
+
+    def call(n, attr, nargs):
+        ok = (isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute) and n.func.attr == attr
+              and len(n.args) == nargs and not n.keywords)
+        return n.func.value if ok else None
+
+    n = call(node.body, "astype", 1)
+    if n is None or _ast.unparse(node.body.args[0]) not in ("np.int8", "'int8'"):
+        return None
+    fill = n
+    n = call(fill, "fillna", 1)
+    if n is None or _ast.unparse(fill.args[0]) != "0":
+        return None
+    reindex = n
+    n = call(reindex, "reindex", 1)
+    if n is None or _ast.unparse(reindex.args[0]) != f"{other}.index":
+        return None
+    n = call(n, "size", 0)
+    grouped = n
+    n = call(grouped, "groupby", 1)
+    if n is None or not isinstance(grouped.args[0], _ast.Constant) or not isinstance(grouped.args[0].value, str):
+        return None
+    key = grouped.args[0].value
+    queried = n
+    n = call(queried, "query", 1)
+    if n is None or _ast.unparse(queried.args[0]) != q or not (isinstance(n, _ast.Name) and n.id == table):
+        return None
+    return key
+
+
 @dataclass
 class BoundAssignments:
     """
@@ -533,6 +582,16 @@ class BoundAssignments:
     @property
     def translated(self) -> list[Translated]:
         return [tr for _, _, tr in self.items if isinstance(tr, Translated)]
+
+    @property
+    def draws_per_call(self) -> bool:
+        """True if the random draws are made one call at a time (rng.lognormal_for_df with
+        broadcast=False: each call takes the next draw of each row's stream), False if all
+        of them at once (broadcast=True)."""
+        modes = {t.random_broadcast for t in self.translated if t.random_draws}
+        if len(modes) > 1:
+            raise ValueError(f"'{self.spec_name}' mixes lognormal draws with and without broadcast")
+        return modes == {False}
 
     def columns_used(self) -> set[str]:
         return set().union(set(), *(t.columns for t in self.translated))
@@ -634,11 +693,18 @@ class AssignmentSpec(BaseModel):
         assigned: set[str] = set()
         items: list[tuple[str, str, object]] = []
         n_random = 0
+        count_functions: dict[str, str] = {}
+        kw["count_functions"] = count_functions  # filled as counting lambdas are found
         for i, a in enumerate(self.assignments):
             random_index = None
             if RANDOM_MARKER in a.formula:
                 random_index = n_random
                 n_random += 1
+            key = counting_lambda(a.formula)
+            if key is not None:  # e.g. _PERSON_COUNT: rows of a table per key, used by later rows
+                count_functions[a.target] = key
+                items.append((a.target, a.description, f"counts rows of a table per '{key}'"))
+                continue
             if a.target.startswith("_") and a.target.isupper():
                 try:
                     value, _ = fold_constant(a.formula, constants, assigned=assigned, **kw)

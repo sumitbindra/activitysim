@@ -44,6 +44,8 @@ Other names the generated code can use, supplied by the component:
 from __future__ import annotations
 
 import ast
+import io
+import tokenize
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -100,6 +102,8 @@ class Translated:
     coefficients: set[str] = field(default_factory=set)  # used as k['name']
     tables: set[tuple[str, str]] = field(default_factory=set)  # (table, column) looked up by ID
     random_draws: bool = False
+    # rng.lognormal_for_df's broadcast: True (all of a spec's draws at once), False (one per call)
+    random_broadcast: bool | None = None
     # asim_core's language: (table role, column) for each column read, e.g. ('person', 'age')
     qualified: set[tuple[str, str]] = field(default_factory=set)
 
@@ -114,6 +118,22 @@ def _literal(value) -> str:
     if isinstance(value, dict):
         return "{" + ", ".join(f"{_literal(k)}: {_literal(v)}" for k, v in value.items()) + "}"
     raise FormulaError(f"constant value {value!r} is not a number, string, list or dict")
+
+
+def parse_pandas_query(text: str) -> ast.AST:
+    """
+    A pandas query or eval string as Python syntax, the way pandas reads it:
+    ``&`` and ``|`` take the precedence of ``and`` and ``or`` (pandas swaps
+    the tokens before parsing), so ``'age>=6 & age<=15'`` is
+    ``(age>=6) & (age<=15)``, not Python's ``age >= (6 & age) <= 15``.
+    """
+    tokens = []
+    for tok in tokenize.generate_tokens(io.StringIO(text.strip()).readline):
+        if tok.type == tokenize.OP and tok.string in ("&", "|"):
+            tokens.append((tokenize.NAME, "and" if tok.string == "&" else "or"))
+        else:
+            tokens.append((tok.type, tok.string))
+    return ast.parse(tokenize.untokenize(tokens), mode="eval").body
 
 
 class _Translator:
@@ -133,8 +153,12 @@ class _Translator:
         pandas_locals: bool = False,
         df_names: set[str] = frozenset({"df"}),
         objects: Mapping[str, set[str]] | None = None,
+        count_functions: Mapping[str, str] | None = None,
     ):
         self.formula = formula
+        # name -> key column: lambdas counting another table's rows per key (person_count)
+        self.count_functions = dict(count_functions or {})
+        self.random_broadcast: bool | None = None
         self.constants = constants
         self.python_mode = python_mode
         self.assigned = assigned
@@ -425,6 +449,14 @@ class _Translator:
             return self.reindex(node)
         if isinstance(func, ast.Name) and func.id == "reindex_i":
             return self.reindex_i(node)
+        # 1.x's other_than(groups, flags): someone else in the group has the flag
+        if isinstance(func, ast.Name) and func.id == "other_than" and func.id not in self.functions:
+            if len(node.args) != 2 or node.keywords:
+                self.fail(node, "other_than() takes the groups and the flags")
+            return f"_other_than({self.visit(node.args[0])}, {self.visit(node.args[1])})"
+        # a counting lambda defined by an earlier row: _PERSON_COUNT('16 <= age', persons, households)
+        if isinstance(func, ast.Name) and func.id in self.count_functions:
+            return self.count_call(node, self.count_functions[func.id])
         # methods of objects the model provides, e.g. tt.previous_tour_ends(...)
         if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
                 and func.value.id in self.objects):
@@ -450,6 +482,15 @@ class _Translator:
             return f"{self.functions[func.id]}({', '.join(self.visit(a) for a in node.args)})"
         # np.<function>(...)
         if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "np":
+            # np.zeros(len(df)): a column of zeros for the table's rows
+            if (func.attr == "zeros" and len(node.args) == 1 and not node.keywords
+                    and isinstance(node.args[0], ast.Call) and isinstance(node.args[0].func, ast.Name)
+                    and node.args[0].func.id == "len" and len(node.args[0].args) == 1
+                    and isinstance(node.args[0].args[0], ast.Name)
+                    and node.args[0].args[0].id in self.df_names):
+                if self.random_index is None and not self.python_mode:
+                    self.fail(node, "np.zeros(len(df)) is only available in assignment specs")
+                return "np.zeros(n)"
             if func.attr not in NP_FUNCTIONS:
                 self.fail(node, f"np.{func.attr} is not in the supported list {sorted(NP_FUNCTIONS)}")
             args = [self.visit(a) for a in node.args]
@@ -510,6 +551,16 @@ class _Translator:
                 if len(node.args) != 1 or kw:
                     self.fail(node, "fillna() takes one value")
                 return f"_fillna({target}, {self.visit(node.args[0])})"
+            if method == "where":
+                # pandas Series.where(cond, other): the value where cond, else other
+                args = list(node.args)
+                if "cond" in kw:
+                    args.insert(0, kw.pop("cond"))
+                if "other" in kw:
+                    args.append(kw.pop("other"))
+                if len(args) != 2 or kw:
+                    self.fail(node, "where() takes a condition and another value")
+                return f"_where({target}, {self.visit(args[0])}, {self.visit(args[1])})"
             if method == "apply":
                 # Series.apply(np.<ufunc>) applies the ufunc to the whole column
                 f = node.args[0] if len(node.args) == 1 and not kw else None
@@ -540,6 +591,64 @@ class _Translator:
                 self.fail(node, f"astype() supports {sorted(ASTYPE_NAMES)} and {sorted(ASTYPE_STRINGS)}")
             self.fail(node, f"method .{method}() is not supported")
         self.fail(node, "unsupported function call")
+
+    def count_call(self, node: ast.Call, key: str) -> str:
+        """
+        _PERSON_COUNT('16 <= age', persons, households): for each of the df's rows
+        (households), how many rows of the table (persons) with the df's ID in
+        ``key`` meet the query, as 8-bit integers. The query is a pandas query
+        on the table's columns.
+        """
+        if len(node.args) != 3 or node.keywords or not isinstance(node.args[0], ast.Constant) \
+                or not isinstance(node.args[0].value, str):
+            self.fail(node, "the counting function takes a query in quotes, the table and the df")
+        table_node, df_node = node.args[1], node.args[2]
+        if not (isinstance(table_node, ast.Name) and table_node.id in self.table_columns):
+            self.fail(node, "the second argument must be a table the model lists")
+        if not (isinstance(df_node, ast.Name) and df_node.id in self.df_names):
+            self.fail(node, "the third argument must be the table being annotated")
+        table = table_node.id
+        if self.table_columns[table] is None:
+            raise NeedsColumns(f"formula {self.formula!r}: needs the columns of table '{table}'")
+        try:
+            query = parse_pandas_query(node.args[0].value)
+        except (SyntaxError, tokenize.TokenError):
+            self.fail(node, f"query {node.args[0].value!r} is not valid syntax")
+        mask = self.query(query, table)
+        if key not in self.table_columns[table]:
+            self.fail(node, f"table '{table}' has no column '{key}'")
+        self.tables.add((table, key))
+        return f"t.count_where({table!r}, {key!r}, {self.column(INDEX)}, {mask})"
+
+    def query(self, node: ast.AST, table: str) -> str:
+        """A pandas query string (bare names are the table's columns) as NumPy code."""
+        if isinstance(node, ast.Name):
+            if node.id not in self.table_columns[table]:
+                self.fail(node, f"table '{table}' has no column '{node.id}'")
+            self.tables.add((table, node.id))
+            return f"t.col({table!r}, {node.id!r})"
+        if isinstance(node, ast.Constant) and isinstance(node.value, (bool, int, float, str)):
+            return repr(node.value)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.Invert, ast.Not)):
+            return f"(~{self.query(node.operand, table)})"
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            return f"(-{self.query(node.operand, table)})"
+        if isinstance(node, ast.BoolOp):
+            op = " & " if isinstance(node.op, ast.And) else " | "
+            return "(" + op.join(self.query(v, table) for v in node.values) + ")"
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.BitAnd, ast.BitOr)):
+            op = " & " if isinstance(node.op, ast.BitAnd) else " | "
+            return f"({self.query(node.left, table)}{op}{self.query(node.right, table)})"
+        if isinstance(node, ast.Compare):
+            ops = {ast.Eq: "==", ast.NotEq: "!=", ast.Lt: "<", ast.LtE: "<=", ast.Gt: ">", ast.GtE: ">="}
+            parts, left = [], node.left
+            for op, right in zip(node.ops, node.comparators):
+                if type(op) not in ops:
+                    self.fail(node, "unsupported comparison in a query")
+                parts.append(f"({self.query(left, table)} {ops[type(op)]} {self.query(right, table)})")
+                left = right
+            return parts[0] if len(parts) == 1 else "(" + " & ".join(parts) + ")"
+        self.fail(node, "unsupported syntax in a query")
 
     def group_sum(self, node) -> tuple[str, str, str] | None:
         """T.column.groupby(T.key).sum() -> (T, column, key), else None."""
@@ -695,9 +804,11 @@ class _Translator:
         if not {"mu", "sigma"} <= set(kw) or set(kw) - {"mu", "sigma", "broadcast", "scale"}:
             self.fail(node, "lognormal_for_df() takes mu, sigma, broadcast and scale")
         broadcast = self.fold(kw["broadcast"]) if "broadcast" in kw else False
-        if broadcast is not True:
-            # 1.x draws all of a spec's lognormals in one call, which needs broadcast=True
-            self.fail(node, "lognormal_for_df() needs broadcast=True")
+        if not isinstance(broadcast, bool):
+            self.fail(node, "broadcast must be True or False")
+        # broadcast=True: 1.x draws all of a spec's lognormals in one call; False: one draw per
+        # row per call, from each row's stream (the caller draws accordingly)
+        self.random_broadcast = broadcast
         scale = self.fold(kw["scale"]) if "scale" in kw else False
         if not isinstance(scale, bool):
             self.fail(node, "scale must be True or False")
@@ -722,6 +833,7 @@ def translate(
     pandas_locals: bool = False,
     df_names: set[str] = frozenset({"df"}),
     objects: Mapping[str, set[str]] | None = None,
+    count_functions: Mapping[str, str] | None = None,
 ) -> Translated:
     """
     Translate one spec formula to a NumPy expression over column arrays ``c``.
@@ -763,7 +875,7 @@ def translate(
         raise FormulaError(f"formula {formula!r} is not valid syntax: {err.msg}") from None
     t = _Translator(formula, constants or {}, python_mode, assigned, functions, skim_accessors,
                     coefficients, df_columns, tables, settings, random_index,
-                    pandas_locals, df_names, objects)
+                    pandas_locals, df_names, objects, count_functions)
     source = t.visit(tree)
     if not python_mode and _has_arithmetic(tree):
         names = sorted({n.id for n in ast.walk(tree) if isinstance(n, ast.Name)})
@@ -772,7 +884,7 @@ def translate(
     return Translated(formula=formula, source=source, columns=t.columns,
                       constants=t.used_constants, skims=t.skims, names=t.names,
                       skim_uses=t.skim_uses, coefficients=t.coefficients, tables=t.tables,
-                      random_draws=t.random_draws)
+                      random_draws=t.random_draws, random_broadcast=t.random_broadcast)
 
 
 _ARITHMETIC = (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)
@@ -807,6 +919,23 @@ def _clip(x, lower=None, upper=None):
     if lower is None and upper is None:
         return x
     return np.clip(x, lower, upper)
+
+
+def _other_than(groups, flags):
+    """
+    1.x's other_than: for each row, whether some *other* row of its group has
+    the flag (rows with the flag need two in the group, rows without need one).
+    """
+    groups = np.asarray(groups)
+    flags = np.asarray(flags, dtype=bool)
+    counts = pd.Series(groups[flags]).value_counts()
+    n = pd.Series(groups).map(counts).fillna(0).to_numpy()
+    return np.where(flags, n > 1, n > 0)
+
+
+def _where(x, cond, other):
+    """pandas Series.where: the value where the condition holds, else ``other``."""
+    return np.where(cond, x, other)
 
 
 def _fillna(x, value):
@@ -877,7 +1006,8 @@ def _full(x, n):
 
 RUNTIME_NAMESPACE = {"np": np, "_clip": _clip, "_fillna": _fillna, "_map": _map, "_cut": _cut,
                      "_astype": _astype, "_lognormal": _lognormal, "_full": _full,
-                     "_pandas_eval": _pandas_eval, "_as_int8": _as_int8, "_shift": _shift}
+                     "_pandas_eval": _pandas_eval, "_as_int8": _as_int8, "_shift": _shift,
+                     "_other_than": _other_than, "_where": _where}
 
 
 def build_function(name: str, items: list[tuple[str, Translated]], doc: str = "") -> str:

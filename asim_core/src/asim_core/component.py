@@ -134,6 +134,15 @@ class StepContext:
                 f"step '{self.step}' read '{table}.{column}' but did not declare it in needs"
             )
 
+    def create_table(self, table) -> None:
+        """
+        Add a table the step makes (e.g. reading its input), so the rest of the
+        step can read it. It replaces any table of that name; the step still
+        returns it (whole) among its outputs.
+        """
+        self._store.add(table)
+        self._needs[table.name] = set(table.column_names)
+
     def warn(self, message: str) -> None:
         """Report something worth a look that doesn't stop the step: collected in the
         run's report and its run_manifest.json, and logged."""

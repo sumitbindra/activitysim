@@ -66,6 +66,20 @@ class TableLookup:
         counts = pd.Series(np.asarray(self._column(table, column))).value_counts()
         return counts.reindex(np.asarray(keys), fill_value=0).to_numpy().astype(np.int64)
 
+    def col(self, table: str, column: str) -> np.ndarray:
+        """A whole column of another table, in its row order."""
+        return np.asarray(plain(self._column(table, column)))
+
+    def count_where(self, table: str, key: str, keys, mask):
+        """
+        For each key, how many rows of the table with that key in ``key`` have
+        ``mask``, as 8-bit integers (0 if none): 1.x's
+        ``T.query(q).groupby(key).size().reindex(keys).fillna(0).astype(np.int8)``.
+        """
+        by = np.asarray(plain(self._column(table, key)))[np.asarray(mask, dtype=bool)]
+        counts = pd.Series(by).value_counts()
+        return counts.reindex(np.asarray(keys)).fillna(0).to_numpy().astype(np.int8)
+
     def sum_by(self, table: str, column: str, key: str, keys):
         """
         For each key, the sum of ``table.column`` over the rows whose ``key``

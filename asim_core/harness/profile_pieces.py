@@ -62,7 +62,7 @@ def main(argv=None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     st = Asim1State(args.asim1_out)
     base_seed = int(load_top_settings(configs).get("rng_base_seed") or 0)
-    components = build_components(configs)
+    components = build_components(configs, args.asim1_out)
     skims = skim_store(example, configs, read_skim_cache=True)
     choices = json.loads(args.seams)
 

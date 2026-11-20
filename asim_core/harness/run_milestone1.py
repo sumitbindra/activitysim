@@ -49,6 +49,8 @@ from asim_core.inputs import check_inputs  # noqa: E402
 from asim_core.components import (  # noqa: E402
     auto_ownership,
     compute_accessibility,
+    initialize_households,
+    initialize_landuse,
     mandatory_tour_scheduling,
     non_mandatory_tour_destination,
     non_mandatory_tour_scheduling,
@@ -65,22 +67,40 @@ from asim_core.spec.legacy import load_top_settings  # noqa: E402
 from asim_core.store import Store  # noqa: E402
 
 
-PORTED = [compute_accessibility, school_location, workplace_location, auto_ownership,
-          mandatory_tour_scheduling, non_mandatory_tour_destination, non_mandatory_tour_scheduling,
-          tour_mode_choice]
+PORTED = [initialize_landuse, initialize_households, compute_accessibility, school_location,
+          workplace_location, auto_ownership, mandatory_tour_scheduling, non_mandatory_tour_destination,
+          non_mandatory_tour_scheduling, tour_mode_choice]
+# steps that read the input files: they also take the data folders (and the sample size 1.x ran with)
+READS_INPUTS = {initialize_landuse, initialize_households}
 NOT_BUILT: dict[str, str] = {}  # component -> why it could not be built for this example
 
 
-def build_components(configs):
+def asim1_sample_size(asim1_run) -> int | None:
+    """The households_sample_size a 1.x run was started with (None: settings.yaml's)."""
+    p = Path(asim1_run) / "run_info.json" if asim1_run else None
+    if p is None or not p.exists():
+        return None
+    return json.loads(p.read_text()).get("households_sample_size")
+
+
+def build_components(configs, asim1_run=None, data_dirs=None):
     """
     The ported components for this example's configs. A component whose
     configs use something asim_core doesn't support yet is left out (that
     step is then replayed from 1.x), and the reason recorded in NOT_BUILT.
+    Steps reading the inputs read ``data_dirs`` (default: the example's data
+    folder) with the households sample size of the 1.x run they are compared with.
     """
+    data_dirs = data_dirs or [Path(configs[-1]).parent / "data"]
     out = []
     for make in PORTED:
         try:
-            out.append(make(configs))
+            if make is initialize_households:
+                out.append(make(configs, data_dirs, households_sample_size=asim1_sample_size(asim1_run)))
+            elif make in READS_INPUTS:
+                out.append(make(configs, data_dirs))
+            else:
+                out.append(make(configs))
         except (NotImplementedError, FormulaError, ValueError) as err:
             NOT_BUILT[make.__name__] = str(err).splitlines()[0][:300]
             print(f"not ported for this example: {make.__name__}: {NOT_BUILT[make.__name__]}")
@@ -102,7 +122,8 @@ def skim_store(example: Path, configs, read_skim_cache: bool | None = None) -> S
 def few_values(values, limit: int = 50) -> bool:
     """True for integer or categorical columns with few distinct values (shares make sense)."""
     arr = np.asarray(values)
-    return arr.dtype.kind in "biuO" and len(np.unique(arr)) <= limit
+    # pandas counts distinct values with missing ones (text columns can have None)
+    return arr.dtype.kind in "biuO" and pd.Series(arr).nunique(dropna=False) <= limit
 
 
 # settings needed to ask 1.x for its own utilities, per ported step
@@ -407,7 +428,7 @@ def main(argv=None) -> int:
     st = Asim1State(args.asim1_out)
     top = load_top_settings(configs)
     base_seed = int(top.get("rng_base_seed") or 0)
-    components = build_components(configs)
+    components = build_components(configs, args.asim1_out)
 
     # the inputs are checked before anything runs; errors stop here
     ours = REPO / "asim_core/configs" / example.name

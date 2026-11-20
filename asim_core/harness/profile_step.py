@@ -173,7 +173,7 @@ def profile_asim_core(step, prev, example, configs, pipeline, scratch, profiler,
     from asim_core.seams import Engine
 
     configs = [Path(c) for c in configs]
-    comps = {c.name: c for c in build_components(configs)}
+    comps = {c.name: c for c in build_components(configs, pipeline)}
     st = Asim1State(pipeline)
     store = st.load_store(prev)
     t0 = time.perf_counter()

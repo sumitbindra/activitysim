@@ -268,7 +268,7 @@ def main(argv=None) -> int:
     out.mkdir(parents=True, exist_ok=True)
     st = Asim1State(args.match_run or args.asim1_out)
     base_seed = int(load_top_settings(configs).get("rng_base_seed") or 0)
-    comp = {c.name: c for c in build_components(configs)}[step]
+    comp = {c.name: c for c in build_components(configs, st.path)}[step]
     rsc = {"settings": None, "true": True, "false": False}[args.read_skim_cache]
     skims = skim_store(example, configs, read_skim_cache=rsc)
 

@@ -106,7 +106,15 @@ def test_undecidable_condition_is_rejected():
         translate("df.a if df.b > 0 else 1", {}, python_mode=True, df_columns={"a", "b"})
 
 
-def test_lognormal_needs_broadcast():
-    with pytest.raises(ValueError, match="broadcast=True"):
-        AssignmentSpec(name="r", assignments=[
-            Assignment(target="a", formula="rng.lognormal_for_df(df, mu=1, sigma=0)")]).bind(set())
+def test_lognormal_broadcast_modes():
+    def bound(*formulas):
+        return AssignmentSpec(name="r", assignments=[
+            Assignment(target=f"a{i}", formula=f) for i, f in enumerate(formulas)]).bind(set())
+
+    # 1.x's default (broadcast=False): one draw per row per call, from each row's stream
+    b = bound("rng.lognormal_for_df(df, mu=1, sigma=0)", "rng.lognormal_for_df(df, mu=2, sigma=1)")
+    assert b.n_random == 2 and b.draws_per_call
+    assert not bound("rng.lognormal_for_df(df, mu=1, sigma=0, broadcast=True)").draws_per_call
+    with pytest.raises(ValueError, match="mixes lognormal draws"):
+        bound("rng.lognormal_for_df(df, mu=1, sigma=0, broadcast=True)",
+              "rng.lognormal_for_df(df, mu=1, sigma=0)").draws_per_call
