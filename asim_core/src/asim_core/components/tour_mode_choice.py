@@ -442,6 +442,10 @@ class TourModeChoiceModel:
         seg = self.segments[segment]
         s = SkimLookup(ctx, self.periods, ctx.skim_positions(c[bound.orig]), ctx.skim_positions(c[bound.dest]),
                        {p: c[p] for p in ("out_period", "in_period") if p in c})
+        # the preprocessor and the formulas may share the skim values they read
+        pre_fn = bound.preprocessor.function if bound.preprocessor is not None else None
+        s = ctx.engine.skim_reuse(s, [getattr(pre_fn, "_asim_source", None),
+                                      getattr(seg["terms"], "_asim_source", None)])
         k = seg["values"]
         pre_values: dict = {}
         if bound.preprocessor is not None:

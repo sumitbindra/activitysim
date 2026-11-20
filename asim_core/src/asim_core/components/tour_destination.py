@@ -517,6 +517,7 @@ def _sample(ctx, sel, tour_ids, cols, orig_pos, alt_zones, alt_size, terms, samp
             if name not in c:
                 c[name] = values[rows]
         s = _ZoneSkims(ctx, orig_pos[rows], np.tile(dest_pos_alts, n_b))
+        s = ctx.engine.skim_reuse(s, [getattr(terms_fn, "_asim_source", None)])
         n = n_b * n_alts
         with np.errstate(all="ignore"):
             utils = ctx.engine.interaction_utilities(FormulaValues(terms_fn, c, n, None, s), coefs, n)
@@ -620,6 +621,7 @@ def _choose(ctx, sel, tour_ids, cols, orig_pos, sample, zone_size, terms, shift,
             if name not in c:
                 c[name] = values[tours_r]
         s = _ZoneSkims(ctx, orig_pos[tours_r], sample_dest_pos[rows])
+        s = ctx.engine.skim_reuse(s, [getattr(terms_fn, "_asim_source", None)])
         with np.errstate(all="ignore"):
             utils = ctx.engine.interaction_utilities(FormulaValues(terms_fn, c, n, None, s), coefs, n)
         local = np.array([position_of[t] for t in tours_r]) - b

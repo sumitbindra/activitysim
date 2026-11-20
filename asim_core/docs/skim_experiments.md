@@ -242,6 +242,66 @@ Memory: unchanged (own memory 60 to 530 MB per step; mapped pages as
 before, slightly more with `prefault`, which maps every page of the declared
 skims).
 
+## Follow-up 2: each skim looked up once per batch
+
+The JAX experiment ([jax_experiment.md](jax_experiment.md)) cut skim lookup
+time by 26% for a reason that has nothing to do with JAX: it looks up each
+distinct skim once per formula set, while the formulas as written often
+name the same skim more than once:
+
+| Model (MTC) | Skim lookups written in the formulas | Distinct |
+|---|---|---|
+| tour mode choice (also every step's mode choice logsums) | 281 | 211 |
+| non-mandatory destination | 26 | 6 |
+| workplace location | 4 | 4 |
+
+The calculation of positions shared since Follow-up 1 saves working out
+*where* to read; this saves reading the *same values* again.
+
+**New piece `skim_reuse`**, an alternative (`skim_reuse.py`):
+
+- `as_written` (the reference, the default): every lookup as written.
+- `once`: each skim the formulas name more than once (counted in their
+  generated source, the preprocessor's included) is looked up once per
+  batch and shared, and let go after its last use, so memory doesn't grow.
+  Shared values are read-only: a formula that tried to change one would
+  fail rather than change another formula's input. Mode choice (with its
+  preprocessor) and destination choice use it.
+
+**Results: the same values,** necessarily (the same reads, fewer times):
+every compared column of the five steps below matches 1.x exactly on full
+MTC, as do tour mode choice, destination, scheduling and school location
+on MTC's example.
+
+**Time, full MTC.** In one process (`profile_pieces.py`, second run of the
+8 steps), three repeats each, alternating:
+
+| | `as_written` (default) | `once` |
+|---|---|---|
+| skim lookups | 8.34, 7.04, 7.05 s (median 7.05) | 4.92, 6.15, 5.51 s (median 5.51, −22%) |
+| all 8 steps | 23.18, 21.74, 22.30 s (median 22.30) | 17.91, 20.56, 19.93 s (median 19.93, −11%) |
+
+Every `once` run was faster than every `as_written` run. (This session's
+machine was slower than earlier ones; compare within the table.)
+
+Each step in a fresh process (median of 3, skims in the page cache):
+
+| Step | `as_written` | `once` | Own memory (both) |
+|---|---|---|---|
+| school_location | 2.10 (1.79 to 2.25) | 2.20 (2.01 to 2.23) | 446 / 454 MB |
+| workplace_location | 5.93 (5.16 to 6.22) | 5.20 (4.85 to 5.52) | 513 / 512 MB |
+| non_mandatory_tour_destination | 4.88 (4.75 to 4.89) | 4.84 (4.45 to 5.26) | 387 / 387 MB |
+| mandatory_tour_scheduling | 5.58 (4.53 to 5.77) | **4.12** (3.95 to 4.25) | 495 / 494 MB |
+| tour_mode_choice_simulate | 1.03 (0.83 to 1.47) | 0.89 (0.84 to 1.01) | 64 / 62 MB |
+
+The gain shows where mode choice logsums are computed for many rows
+(mandatory scheduling: −26%, every run faster); elsewhere it is within the
+runs' spread. Memory is unchanged.
+
+**Status:** an alternative. Exact, no memory cost, faster overall (−11% of
+the 8 steps in one process); per step in fresh processes, faster in
+mandatory scheduling and not measurably different elsewhere.
+
 ## Reproducing
 
 ```bash

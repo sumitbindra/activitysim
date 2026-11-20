@@ -27,6 +27,7 @@ nothing is significantly slower.
 |---|---|---|---|
 | `lookup` | values of a column at given rows (joins between tables) | `numpy` | |
 | `skim_access` | how a step holds the skims it reads | `memory_map` | `prefault`, `in_memory` ([skim_experiments.md](skim_experiments.md)) |
+| `skim_reuse` | whether a model's formulas share the skim values they read | `as_written`: every lookup as the formulas are written | `once`: each skim named more than once looked up once per batch, shared until its last use ([skim_experiments.md](skim_experiments.md)) |
 | `skim_lookup` | skim values for origin/destination zones | `flat_take`: a one-dimensional gather, positions shared by a step's skims (the default since the skim experiment) | `index_2d` (two-dimensional indexing, the default before) |
 | `utilities` | formula values and coefficients → utilities | `matmul`: one matrix product, as 1.x | `accumulate`; `jax`: formulas and sum compiled with JAX ([jax_experiment.md](jax_experiment.md)) |
 | `interaction_utilities` | one utility per chooser-alternative row | `sequential`, as 1.x | `jax` (as above) |

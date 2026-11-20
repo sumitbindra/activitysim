@@ -1,0 +1,6 @@
+# Each distinct skim looked up once per batch and shared by the formulas (docs/skim_experiments.md).
+step: tour_mode_choice_simulate
+repeat: 3
+experiments:
+  reference: {}
+  skim_reuse_once: {skim_reuse: once}

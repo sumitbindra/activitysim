@@ -33,6 +33,8 @@ SEAMS = {
               "lookup(values, positions) -> values",
     "skim_access": "how a step holds the skims it reads while it runs (memory-mapped, pages mapped "
                    "up front, or copied into memory): ",
+    "skim_reuse": "whether a model's formulas share the skim values they read (each distinct "
+                  "skim looked up once per batch): skim_reuse(s, formula_sources) -> s",
     "skim_lookup": "skim values for origin/destination positions: "
                    "skim_lookup(matrix, orig_positions, dest_positions, pairs=None) -> values "
                    "(pairs: the same positions as a ZonePairs, shared by the skims looked up for them)",
@@ -94,7 +96,7 @@ def register(seam: str, name: str, agreement: str = "exact", description: str = 
 
 def _load_builtin() -> None:
     # importing these modules registers the built-in implementations
-    from . import alternatives, logit, logsums, lookups, random, skim_access  # noqa: F401
+    from . import alternatives, logit, logsums, lookups, random, skim_access, skim_reuse  # noqa: F401
     # optional (registers its alternatives only if JAX is installed)
     from . import jax_backend  # noqa: F401
 
