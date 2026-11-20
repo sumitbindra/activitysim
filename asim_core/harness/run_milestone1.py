@@ -2,6 +2,13 @@
 """
 Milestone 1: check asim_core against ActivitySim 1.x and profile both.
 
+Quick correctness check after a change (a few minutes):
+
+    python asim_core/harness/run_milestone1.py --profiles none
+
+Profiles are cached by default: a (step, engine) is measured again only
+when something it depends on changed, so 1.x is measured once.
+
 Needs a 1.x run with every step saved (see run_asim1.py). Then:
 
 1. Step check: for each ported component, start from 1.x's saved state just
@@ -21,6 +28,7 @@ saved outputs, traces and the generated NumPy code.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -193,28 +201,80 @@ def load_asim1_profile(run_dir: Path) -> pd.DataFrame | None:
     return pd.read_csv(p) if p.exists() else None
 
 
-def profile_steps(steps, variants, repeat: int, out: Path, example: Path) -> pd.DataFrame:
+def _hash_files(paths) -> str:
+    h = hashlib.sha256()
+    for path in sorted(paths):
+        h.update(str(path).encode())
+        h.update(Path(path).read_bytes())
+    return h.hexdigest()[:16]
+
+
+def _code_fingerprints() -> dict[str, str]:
+    """What a profile depends on besides the step: the code of each engine and the harness."""
+    return {
+        "asim1": _hash_files((REPO / "activitysim").rglob("*.py")),
+        "asim_core": _hash_files((REPO / "asim_core" / "src").rglob("*.py")),
+        "harness": _hash_files([HERE / "profile_step.py"]),
+    }
+
+
+def _profile_key(step, label, engine, configs, run_dir, repeat, example, code) -> dict:
+    checkpoints = Path(run_dir) / "pipeline.parquetpipeline" / "checkpoints.parquet"
+    stat = checkpoints.stat() if checkpoints.exists() else None
+    config_files = [f for c in configs for f in (example / c).rglob("*") if f.is_file()]
+    return {
+        "step": step, "label": label, "engine": engine, "repeat": repeat,
+        "example": str(example), "configs": list(configs), "configs_hash": _hash_files(config_files),
+        "asim1_run": str(run_dir), "asim1_run_saved": [stat.st_size, stat.st_mtime_ns] if stat else None,
+        "engine_code": code[engine], "harness_code": code["harness"],
+        "machine": [platform.platform(), os.cpu_count()],
+    }
+
+
+def profile_steps(steps, variants, repeat: int, out: Path, example: Path,
+                  mode: str = "cached") -> pd.DataFrame:
     """
     Time each step in fresh processes (see profile_step.py), ``repeat`` times
     per variant. A variant is (label, engine, configs, 1.x run folder).
+
+    ``mode="cached"`` reuses earlier measurements of a (step, variant) when
+    nothing they depend on has changed: the engine's code, the harness, the
+    configs, the saved 1.x run and the machine. So 1.x is measured once, and
+    asim_core again only when its code changes. ``mode="all"`` measures
+    everything again (and refreshes the cache).
     """
     import subprocess
 
-    rows_csv = out / "step_profile_runs.csv"
-    if rows_csv.exists():
-        rows_csv.unlink()
+    cache_dir = REPO / "asim_core" / "work" / "profile_cache" / example.name
+    code = _code_fingerprints()
+    frames = []
     for step in steps:
         for label, engine, configs, run_dir in variants:
+            key = _profile_key(step, label, engine, configs, run_dir, repeat, example, code)
+            cached_csv = cache_dir / label / f"{step}.csv"
+            cached_key = cached_csv.with_suffix(".json")
+            if (mode == "cached" and cached_csv.exists() and cached_key.exists()
+                    and json.loads(cached_key.read_text()) == key):
+                frames.append(pd.read_csv(cached_csv).assign(reused=True))
+                continue
+            cached_csv.parent.mkdir(parents=True, exist_ok=True)
+            if cached_csv.exists():
+                cached_csv.unlink()
             for k in range(repeat):
                 cmd = [
                     sys.executable, str(HERE / "profile_step.py"),
                     "--engine", engine, "--step", step, "--label", label,
                     "--example-dir", str(example),
                     "--configs", *configs, "--asim1-out", str(run_dir),
-                    "--scratch", str(out / "scratch" / label), "--out", str(rows_csv),
+                    "--scratch", str(out / "scratch" / label), "--out", str(cached_csv),
                 ]
                 subprocess.run(cmd, check=True, capture_output=True)
-    return pd.read_csv(rows_csv)
+            cached_key.write_text(json.dumps(key, indent=2))
+            frames.append(pd.read_csv(cached_csv).assign(reused=False))
+    runs = pd.concat(frames, ignore_index=True)
+    out.mkdir(parents=True, exist_ok=True)
+    runs.to_csv(out / "step_profile_runs.csv", index=False)
+    return runs
 
 
 def profile_tables(runs: pd.DataFrame, legacy: pd.DataFrame, sharrow: pd.DataFrame | None):
@@ -291,9 +351,12 @@ def write_summary(out: Path, info: dict, step_cmp, util_rows, e2e_cmp, e2e_repor
           "skims ready, which in a full run happen once, in earlier steps or at the first step "
           "that needs them. `median_skims_ready_s` is the time to get skims ready: 1.x loads "
           "them from OMX; asim_core opens its memory-mapped store. "
-          "`wall_s_in_full_1x_run` is the same step inside the full 1.x run, for reference.", ""]
-    s.append(md_table(prof_cmp))
-    s += ["", "ActivitySim 1.x, every step:", "", md_table(full_prof)]
+          "`wall_s_in_full_1x_run` is the same step inside the full 1.x run, for reference. "
+          "`reused` is True where earlier measurements were reused because nothing they depend "
+          "on changed (engine code, harness, configs, saved 1.x run, machine).", ""]
+    s.append(md_table(prof_cmp) if len(prof_cmp) else "Not run (`--profiles none`).")
+    if len(full_prof):
+        s += ["", "ActivitySim 1.x, every step:", "", md_table(full_prof)]
     path = out / "summary.md"
     path.write_text("\n".join(s) + "\n")
     return path
@@ -310,6 +373,10 @@ def main(argv=None) -> int:
     p.add_argument("--repeat", type=int, default=5)
     p.add_argument("--trace-hh-id", type=int, default=None)
     p.add_argument("--skip-utility-check", action="store_true")
+    p.add_argument("--profiles", choices=["cached", "all", "none"], default="cached",
+                   help="cached (default): reuse earlier measurements when the code, configs, "
+                        "1.x run and machine are unchanged; all: measure everything again; "
+                        "none: skip profiling (the quick correctness check)")
     args = p.parse_args(argv)
 
     example = Path(args.example_dir).resolve()
@@ -343,8 +410,15 @@ def main(argv=None) -> int:
     ]
     if sharrow is not None:
         variants.append(("asim1_sharrow", "asim1", args.sharrow_configs, Path(args.asim1_sharrow_out)))
-    runs = profile_steps([c.name for c in components], variants, args.repeat, out / "step_profiles", example)
-    prof_cmp, full_prof = profile_tables(runs, legacy, sharrow)
+    if args.profiles == "none":
+        prof_cmp, full_prof = pd.DataFrame(), legacy if legacy is not None else pd.DataFrame()
+        reused = None
+    else:
+        runs = profile_steps([c.name for c in components], variants, args.repeat, out / "step_profiles",
+                             example, mode=args.profiles)
+        prof_cmp, full_prof = profile_tables(runs, legacy, sharrow)
+        reused = runs.groupby(["step", "label"])["reused"].first().reset_index()
+        prof_cmp = prof_cmp.merge(reused, on=["step", "label"], how="left")
 
     write_comparisons(step_cmp + e2e_cmp, out / "comparisons.csv")
     pd.DataFrame(util_rows).to_csv(out / "utility_check.csv", index=False)
@@ -359,6 +433,7 @@ def main(argv=None) -> int:
         "platform": platform.platform(),
         "cpu_count": os.cpu_count(),
         "not_ported": dict(NOT_BUILT),
+        "profiles": args.profiles,
     }
     (out / "run_info.json").write_text(json.dumps(info, indent=2))
     summary = write_summary(out, info, step_cmp, util_rows, e2e_cmp, e2e_report, prof_cmp, full_prof, shares)

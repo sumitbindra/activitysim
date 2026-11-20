@@ -110,6 +110,17 @@ from the example's OMX file the first time):
 python asim_core/harness/run_milestone1.py
 ```
 
+Profiles are cached: a step is measured again for an engine only when that
+engine's code, the profiling harness, the configs, the saved 1.x run or
+the machine changed. So 1.x is measured once, and asim_core again after
+its code changes. With everything cached, the whole run takes seconds.
+`--profiles all` measures everything again; `--profiles none` skips
+profiling, for a quick correctness check after a change:
+
+```bash
+python asim_core/harness/run_milestone1.py --profiles none
+```
+
 Results land in `asim_core/work/milestone1/` (`summary.md`, `comparisons.csv`,
 `utility_check.csv`, `profile_comparison.csv`, `asim1_profiles.csv`, traces,
 and the generated NumPy code for each model).
