@@ -30,6 +30,7 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 7 | Time-of-day skim lookups are a third of tour mode choice's time | Speed | Measured | Not reported |
 | 8 | Tours of a type with no spec segment are silently left unscheduled | Bug (configuration) | From reading the code | Not reported |
 | 9 | Smaller items (4) | Various | From reading the code, one measured | Not reported |
+| 10 | Bad input data runs silently: negative employment changed results across the model with no error or warning | Data checking | Reproduced (MTC) | Not reported |
 
 ---
 
@@ -298,6 +299,40 @@ From reading the code; low priority.
   code), which is empty without `LOGSUM_SETTINGS`, so the preprocessor
   silently doesn't run. The examples all have logsums, so it doesn't
   affect them.
+
+---
+
+## 10. Bad input data runs silently
+
+**Evidence: reproduced** (MTC, 2,000 households, first 17 steps).
+
+**What happens.** The employment columns of one zone (zone 8) were made
+negative, as a paste with a flipped sign would. 1.x ran all 17 steps with
+no error and no warning about it, and the results changed across the
+model:
+
+| | Clean data | Negative employment in zone 8 |
+|---|---|---|
+| Zones whose accessibility changed | | 25 of 25 |
+| Workers with a workplace in zone 8 | 25 | 0 |
+| Workers whose workplace changed | | 1,620 of 1,779 |
+| Households whose car ownership changed | | 119 of 2,000 |
+| Non-mandatory tours to zone 8 | 49 | 5 |
+
+1.x has an optional `input_checker` step (pandera classes written in
+Python per region, in a `data_model` folder), but the MTC, MWCOG and ARC
+examples don't turn it on, and its row-by-row Pydantic option is marked as
+still in development.
+
+**To reproduce:** copy `activitysim/examples/prototype_mtc`, negate the
+employment columns of `TAZ` 8 in `data/land_use.csv`, and run both copies
+with `run_asim1.py --households 2000 --stop-after non_mandatory_tour_destination`.
+
+**Suggested change.** Basic input checks by default: non-negative
+employment and sizes, valid zone references, unique IDs, household size
+matching persons. Also checks derived from how models use columns (size
+terms can't be negative, log inputs must be positive), all reported before
+the first step.
 
 ---
 
