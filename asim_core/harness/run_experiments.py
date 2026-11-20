@@ -100,7 +100,8 @@ def match_check(comp, st: Asim1State, engine: Engine, base_seed: int, out: Path,
 # --- profiles ---------------------------------------------------------------------
 
 
-def profile(step, label, engine_kind, configs, run_dir, seams, repeat, out: Path) -> pd.DataFrame:
+def profile(step, label, engine_kind, configs, run_dir, seams, repeat, out: Path,
+            example: Path) -> pd.DataFrame:
     rows_csv = out / "runs" / f"{label}.csv"
     rows_csv.parent.mkdir(parents=True, exist_ok=True)
     if rows_csv.exists():
@@ -109,6 +110,7 @@ def profile(step, label, engine_kind, configs, run_dir, seams, repeat, out: Path
         cmd = [
             sys.executable, str(HERE / "profile_step.py"),
             "--engine", engine_kind, "--step", step, "--label", label,
+            "--example-dir", str(example),
             "--configs", *configs, "--asim1-out", str(run_dir),
             "--scratch", str(out / "scratch" / label), "--out", str(rows_csv),
             "--seams", json.dumps(seams),
@@ -233,7 +235,7 @@ def main(argv=None) -> int:
                "agreement": engine.agreement}
         row.update(match_check(comp, st, engine, base_seed, out / "match" / name, skims))
         runs = profile(step, name, "asim_core", args.configs, Path(args.asim1_out),
-                       engine.changed, repeat, out)
+                       engine.changed, repeat, out, example)
         row.update(summarize_runs(runs))
         rows.append(row)
 
@@ -243,7 +245,7 @@ def main(argv=None) -> int:
     for label, cfgs, run_dir in baselines:
         print(f"baseline {label}", flush=True)
         safe = label.split(" (")[0].replace(" ", "_").replace(".", "")
-        runs = profile(step, safe, "asim1", cfgs, run_dir, {}, repeat, out)
+        runs = profile(step, safe, "asim1", cfgs, run_dir, {}, repeat, out, example)
         rows.append({"experiment": label, "pieces_changed": "", "result_vs_1x": "",
                      "rows_different": np.nan, "rows": np.nan, "largest_share_diff_pp": np.nan,
                      "sampling_error_2se_pp": np.nan, "max_utility_diff": np.nan,

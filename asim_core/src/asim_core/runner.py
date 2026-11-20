@@ -77,6 +77,7 @@ class Runner:
         self.save_outputs = save_outputs
         self.engine = engine or Engine()
         self.step_engines = dict(step_engines or {})
+        self._zones_checked = False
 
     # --- planning and startup checks ---------------------------------------------
 
@@ -171,6 +172,13 @@ class Runner:
 
     def _run_component(self, step, store: Store, needs, computed_cols) -> None:
         comp = self.components[step]
+        if SKIMS in needs and not self._zones_checked and "land_use" in store:
+            from .skims import check_zone_order
+
+            problem = check_zone_order(self.skims, store["land_use"])
+            if problem:
+                raise StartupCheckError(f"{step}: {problem}")
+            self._zones_checked = True
         engine = self.step_engines.get(step, self.engine)
         ctx = StepContext(comp, store, needs, engine, self.tracer, self.base_seed, skims=self.skims)
         outputs = comp.run(ctx) or {}

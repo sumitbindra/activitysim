@@ -101,7 +101,11 @@ def main(argv=None) -> int:
     ns = cli.parse_args(cli_args)
 
     t0 = time.perf_counter()
-    rc = run(ns)
+    error = None
+    try:
+        rc = run(ns)
+    except Exception as err:  # keep the profile and saved state of the steps that ran
+        rc, error = 1, f"{type(err).__name__}: {err}"
     total = time.perf_counter() - t0
 
     profile_path = profiler.write_csv(out / "asim_core_profile.csv")
@@ -113,6 +117,8 @@ def main(argv=None) -> int:
         "households_sample_size": args.households,
         "trace_hh_id": args.trace_hh_id,
         "exit_code": rc,
+        "error": error,
+        "steps_completed": len(profiler.records),
         "total_wall_s": round(total, 3),
         "steps_wall_s": round(profiler.total_wall_s(), 3),
         "max_peak_mb": profiler.max_peak_mb(),

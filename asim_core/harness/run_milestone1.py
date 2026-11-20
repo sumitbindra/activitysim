@@ -54,10 +54,11 @@ def skim_store(example: Path, configs, read_skim_cache: bool | None = None) -> S
     """
     The example's skims, prepared as 1.x would from its network_los.yaml:
     imported from OMX on every run unless read_skim_cache is on, in which case
-    an unchanged cache is reused. The cache lives in asim_core/work/cache.
+    an unchanged cache is reused. The cache lives in asim_core/work/<example>/cache.
     """
     return prepare_skims_from_settings(
-        configs, [example / "data"], REPO / "asim_core" / "work", read_skim_cache=read_skim_cache
+        configs, [example / "data"], REPO / "asim_core" / "work" / example.name,
+        read_skim_cache=read_skim_cache,
     )
 
 
@@ -167,7 +168,7 @@ def load_asim1_profile(run_dir: Path) -> pd.DataFrame | None:
     return pd.read_csv(p) if p.exists() else None
 
 
-def profile_steps(steps, variants, repeat: int, out: Path) -> pd.DataFrame:
+def profile_steps(steps, variants, repeat: int, out: Path, example: Path) -> pd.DataFrame:
     """
     Time each step in fresh processes (see profile_step.py), ``repeat`` times
     per variant. A variant is (label, engine, configs, 1.x run folder).
@@ -183,6 +184,7 @@ def profile_steps(steps, variants, repeat: int, out: Path) -> pd.DataFrame:
                 cmd = [
                     sys.executable, str(HERE / "profile_step.py"),
                     "--engine", engine, "--step", step, "--label", label,
+                    "--example-dir", str(example),
                     "--configs", *configs, "--asim1-out", str(run_dir),
                     "--scratch", str(out / "scratch" / label), "--out", str(rows_csv),
                 ]
@@ -313,7 +315,7 @@ def main(argv=None) -> int:
     ]
     if sharrow is not None:
         variants.append(("asim1_sharrow", "asim1", args.sharrow_configs, Path(args.asim1_sharrow_out)))
-    runs = profile_steps([c.name for c in components], variants, args.repeat, out / "step_profiles")
+    runs = profile_steps([c.name for c in components], variants, args.repeat, out / "step_profiles", example)
     prof_cmp, full_prof = profile_tables(runs, legacy, sharrow)
 
     write_comparisons(step_cmp + e2e_cmp, out / "comparisons.csv")

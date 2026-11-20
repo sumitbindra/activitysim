@@ -19,7 +19,7 @@ from asim_core.store import Store, Table
 tables = pytest.importorskip("tables")  # only needed for importing OMX
 
 
-def write_omx(path, mats):
+def write_omx(path, mats, lookup=None):
     with tables.open_file(str(path), "w") as f:
         f.root._v_attrs["OMX_VERSION"] = b"0.2"
         shape = next(iter(mats.values())).shape
@@ -27,6 +27,9 @@ def write_omx(path, mats):
         f.create_group("/", "data")
         for name, m in mats.items():
             f.create_carray("/data", name, obj=np.asarray(m, dtype=np.float64))
+        if lookup is not None:
+            f.create_group("/", "lookup")
+            f.create_carray("/lookup", "zone_number", obj=np.asarray(lookup))
 
 
 def bump_mtime(path):
@@ -110,6 +113,18 @@ def test_read_skim_cache_on_reuses_only_unchanged_skims(omx, tmp_path):
     np.testing.assert_array_equal(updated["DIST"], new["DIST"].astype(np.float32))
 
 
+def test_cleanup_leaves_other_models_caches_alone(omx, tmp_path):
+    path, mats = omx
+    other = tmp_path / "other.omx"
+    write_omx(other, {"DIST": np.ones((3, 3))})
+    cache = tmp_path / "cache"
+    mine = prepare_skims([path], cache)
+    theirs = prepare_skims([other], cache)
+    assert mine.path.exists() and theirs.path.exists()
+    newer = prepare_skims([path], cache)  # replaces only the older cache of the same files
+    assert not mine.path.exists() and newer.path.exists() and theirs.path.exists()
+
+
 def test_later_files_win_and_unknown_periods_are_skipped(tmp_path):
     a, b = tmp_path / "a.omx", tmp_path / "b.omx"
     write_omx(a, {"DIST": np.ones((2, 2)), "TIME__AM": np.ones((2, 2)), "TIME__XX": np.ones((2, 2))})
@@ -148,6 +163,51 @@ def test_files_found_as_1x_does(tmp_path):
     (configs / "network_los.yaml").write_text("taz_skims: missing.omx\n")
     with pytest.raises(FileNotFoundError):
         omx_files_from_settings([configs], [data1, data2])
+
+
+def _write_settings(configs, recode: bool | None):
+    lines = ["input_table_list:", "  - tablename: land_use", "    index_col: zone_id"]
+    if recode is not None:
+        lines += ["    recode_columns:", "      zone_id: zero-based"]
+        lines += [f"recode_pipeline_columns: {recode}"]
+    (configs / "settings.yaml").write_text("\n".join(lines) + "\n")
+    (configs / "network_los.yaml").write_text("taz_skims: skims.omx\n")
+
+
+def test_zone_numbers_follow_1x_recoding_rules(tmp_path):
+    from asim_core.skims import land_use_zones_recoded
+
+    configs, data = tmp_path / "configs", tmp_path / "data"
+    configs.mkdir(), data.mkdir()
+    write_omx(data / "skims.omx", {"DIST": np.arange(9.0).reshape(3, 3)}, lookup=[10, 20, 30])
+
+    # recoding off (1.x's default, as in MWCOG): original zone numbers, via the OMX lookup
+    _write_settings(configs, recode=False)
+    assert not land_use_zones_recoded([configs])
+    store = prepare_skims_from_settings([configs], [data], tmp_path / "out1")
+    assert store.positions([30, 10]).tolist() == [2, 0]
+
+    # recode_columns alone does nothing without recode_pipeline_columns
+    _write_settings(configs, recode=None)
+    assert not land_use_zones_recoded([configs])
+
+    # both set (as in MTC): zones renumbered 0, 1, 2 = matrix positions
+    _write_settings(configs, recode=True)
+    assert land_use_zones_recoded([configs])
+    store = prepare_skims_from_settings([configs], [data], tmp_path / "out2")
+    assert store.positions([2, 0]).tolist() == [2, 0]
+    assert store.omx_zone_numbers.tolist() == [10, 20, 30]
+
+
+def test_zone_order_is_checked_against_land_use(tmp_path):
+    from asim_core.skims import check_zone_order
+
+    write_omx(tmp_path / "skims.omx", {"DIST": np.ones((3, 3))}, lookup=[10, 20, 30])
+    store = import_omx(tmp_path / "skims.omx", tmp_path / "s")
+    good = Table("land_use", np.array([0, 1, 2]), "zone_id", {"_original_zone_id": np.array([10, 20, 30])})
+    bad = Table("land_use", np.array([0, 1, 2]), "zone_id", {"_original_zone_id": np.array([10, 30, 20])})
+    assert check_zone_order(store, good) is None
+    assert "doesn't match land_use" in check_zone_order(store, bad)
 
 
 def _store():

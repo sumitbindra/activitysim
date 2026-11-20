@@ -68,6 +68,9 @@ class SkimStore:
         self.names: list[str] = manifest["names"]
         self.zone_ids = np.asarray(manifest["zone_ids"])
         self.fingerprint: str = manifest.get("fingerprint", "")
+        lookup = manifest.get("omx_zone_lookup")
+        # zone numbers from the OMX file's lookup, if it had one (row order)
+        self.omx_zone_numbers = None if lookup is None else np.asarray(lookup["values"])
         self._index = {n: i for i, n in enumerate(self.names)}
         self._data = np.load(self.path / DATA, mmap_mode="r")
         self._identity = np.array_equal(self.zone_ids, np.arange(len(self.zone_ids)))
@@ -129,7 +132,8 @@ def fingerprint(omx_paths: Sequence[str | Path], dtype: str = "float32", zone_id
         "format": FORMAT_VERSION,
         "sources": _source_info([Path(p) for p in omx_paths]),
         "dtype": str(np.dtype(dtype)),
-        "zone_ids": None if zone_ids is None else np.asarray(zone_ids).tolist(),
+        "zone_ids": None if zone_ids is None else (
+            zone_ids if isinstance(zone_ids, str) else np.asarray(zone_ids).tolist()),
         "periods": None if periods is None else sorted(set(periods)),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
@@ -154,7 +158,10 @@ def import_omx(
 
     ``zone_ids``: the zone ID used in the tables for each matrix row, in
     order. Defaults to 0, 1, 2, ..., which is what ActivitySim 1.x uses after
-    it recodes zone IDs (``recode_columns`` in settings.yaml).
+    it recodes zone IDs (``recode_columns`` in settings.yaml). ``"omx"`` uses
+    the OMX file's zone lookup, for models that keep their original zone
+    numbers (as 1.x does with the lookup when zones aren't recoded); without
+    a lookup, positions are used.
 
     ``periods``: if given, time-period skims (``NAME__PERIOD``) for other
     periods are skipped with a warning, as in 1.x.
@@ -179,6 +186,15 @@ def import_omx(
             # skim name -> (file index, node); later files win, as in 1.x
             chosen: dict[str, tuple[int, object]] = {}
             shape = None
+            lookup = None  # first zone lookup found; all must agree, as in 1.x
+            for path, f in zip(omx_paths, handles):
+                if "/lookup" in f:
+                    for name, node in f.get_node("/lookup")._v_children.items():
+                        values = np.asarray(node.read())
+                        if lookup is None:
+                            lookup = {"name": name, "values": values}
+                        elif not np.array_equal(lookup["values"], values):
+                            raise ValueError(f"zone lookups differ: '{lookup['name']}' and '{name}' in {path}")
             for i, (path, f) in enumerate(zip(omx_paths, handles)):
                 group = f.get_node("/data")  # keep a reference: PyTables children need it alive
                 for name in sorted(group._v_children.keys()):
@@ -213,7 +229,11 @@ def import_omx(
             for f in handles:
                 f.close()
 
-        ids = np.arange(rows) if zone_ids is None else np.asarray(zone_ids)
+        if isinstance(zone_ids, str) and zone_ids == "omx":
+            # no lookup in the file: zone IDs are matrix positions, as in 1.x
+            ids = np.arange(rows) if lookup is None else lookup["values"]
+        else:
+            ids = np.arange(rows) if zone_ids is None else np.asarray(zone_ids)
         if len(ids) != rows:
             raise ValueError(f"{len(ids)} zone IDs given for {rows} zones")
         manifest = {
@@ -223,6 +243,8 @@ def import_omx(
             "dtype": str(np.dtype(dtype)),
             "periods": None if periods is None else sorted(allowed),
             "sources": sources,
+            "omx_zone_lookup": None if lookup is None else
+                {"name": lookup["name"], "values": lookup["values"].tolist()},
             "fingerprint": fp,
             "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "complete": True,  # written last
@@ -250,10 +272,23 @@ def _valid(path: Path, fp: str) -> bool:
     return bool(manifest.get("complete")) and manifest.get("fingerprint") == fp and (path / DATA).exists()
 
 
+def _source_paths(path: Path) -> set[str] | None:
+    try:
+        manifest = json.loads((path / MANIFEST).read_text())
+    except (OSError, ValueError):
+        return None
+    return {src["path"] for src in manifest.get("sources", [])}
+
+
 def _remove_other_caches(cache_dir: Path, tag: str, keep: Path) -> None:
-    """Remove caches other than ``keep``. Ones still open elsewhere (Windows) are left for next time."""
+    """
+    Remove older caches made from the same OMX files as ``keep`` (caches of
+    other skim files sharing the folder are left alone). Ones still open
+    elsewhere (Windows) are left for next time.
+    """
+    sources = _source_paths(keep)
     for p in _cache_folders(cache_dir, tag):
-        if p.resolve() == keep.resolve():
+        if p.resolve() == keep.resolve() or _source_paths(p) != sources:
             continue
         try:
             shutil.rmtree(p)
@@ -358,4 +393,45 @@ def prepare_skims_from_settings(
     reuse = bool(los.get("read_skim_cache", False)) if read_skim_cache is None else read_skim_cache
     cache_dir = los.get("network_cache_dir")
     cache_dir = Path(cache_dir) if cache_dir else Path(output_dir) / "cache"
-    return prepare_skims(paths, cache_dir, reuse=reuse, periods=periods, tag=tag)
+    # zones renumbered from 0 (recode_columns): zone IDs are matrix positions.
+    # Otherwise the original zone numbers are used, matched through the OMX lookup.
+    zone_ids = None if land_use_zones_recoded(configs_dirs) else "omx"
+    return prepare_skims(paths, cache_dir, reuse=reuse, zone_ids=zone_ids, periods=periods, tag=tag)
+
+
+def land_use_zones_recoded(configs_dirs: Sequence[str | Path]) -> bool:
+    """
+    True if settings.yaml renumbers land_use zone IDs from 0. As in 1.x, that
+    needs both ``recode_columns: {zone_id: zero-based}`` on the land_use input
+    table and ``recode_pipeline_columns: True`` (off by default), which turns
+    recoding on at all.
+    """
+    from .spec.legacy import load_top_settings
+
+    settings = load_top_settings(configs_dirs)
+    if not settings.get("recode_pipeline_columns", False):
+        return False
+    for table in settings.get("input_table_list") or []:
+        if table.get("tablename") == "land_use":
+            recode = table.get("recode_columns") or {}
+            return str(recode.get("zone_id", "")).strip() == "zero-based"
+    return False
+
+
+def check_zone_order(skims: SkimStore, land_use) -> str | None:
+    """
+    For renumbered zones: the OMX zone lookup must list land_use's original
+    zone numbers in matrix order. Returns a problem description, or None.
+    """
+    if skims.omx_zone_numbers is None or "_original_zone_id" not in land_use:
+        return None
+    pos = skims.positions(land_use.index)
+    expected = np.asarray(land_use["_original_zone_id"])
+    found = skims.omx_zone_numbers[pos]
+    bad = np.flatnonzero(found != expected)
+    if len(bad) == 0:
+        return None
+    i = bad[0]
+    return (f"skim zone order doesn't match land_use: zone_id {land_use.index[i]} is original zone "
+            f"{expected[i]}, but matrix row {pos[i]} is zone {found[i]} in the OMX lookup "
+            f"({len(bad)} zones differ)")
