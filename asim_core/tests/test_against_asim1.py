@@ -60,3 +60,21 @@ def test_tour_mode_choice_matches_1x_exactly(tmp_path):
     for col in ("tour_mode", "mode_choice_logsum"):  # logsums bit for bit
         result = compare_column(comp.name, store["tours"], col, ref[col])
         assert result.status == "exact", result
+
+
+@pytest.mark.skipif(not BASELINE.exists(), reason="no ActivitySim 1.x baseline run")
+def test_non_mandatory_tour_scheduling_matches_1x_exactly(tmp_path):
+    from asim_core.components import non_mandatory_tour_scheduling
+
+    st = Asim1State(BASELINE)
+    # small batches: the results must not depend on the batch size
+    comp = non_mandatory_tour_scheduling(CONFIGS, max_rows=20_000)
+    store = st.load_store(st.previous_step(comp.name))
+    Runner([comp], tmp_path).run([comp.name], store)
+    tours = st.read("tours", comp.name)
+    for col in ("tdd", "start", "end", "duration"):
+        result = compare_column(comp.name, store["tours"], col, tours[col])
+        assert result.status == "exact", result
+    windows = st.read("person_windows", comp.name)
+    for col in windows.columns:
+        assert compare_column(comp.name, store["person_windows"], col, windows[col]).status == "exact"

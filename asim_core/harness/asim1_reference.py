@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 
@@ -64,3 +65,72 @@ def simple_model_internals(
         nested = simulate.compute_nested_probabilities(state, exp_u, nest_spec, "asim1_reference")
         probs = simulate.compute_base_probabilities(nested, nest_spec, spec)
     return utils, probs
+
+
+def scheduling_round_utilities(
+    example_dir: Path,
+    configs: list[str],
+    pipeline: Path,
+    resume_after: str,
+    scratch_dir: Path,
+    tour_num: int = 1,
+    settings_file: str = "non_mandatory_tour_scheduling.yaml",
+    category: str = "non_mandatory",
+    rows_per_call: int | None = None,
+) -> pd.Series:
+    """
+    The utility of every (tour, departure-return option) row of one
+    scheduling round, as 1.x computes it: its preprocessor, its
+    tdd_interaction_dataset (options that fit each person's day), the
+    previous-tour columns, then eval_interaction_utilities on the whole
+    round at once (1.x's default, without chunking). Round 1 only needs no
+    earlier choices, so ``tour_num`` is normally 1. Unsegmented specs only.
+    ``rows_per_call`` evaluates the rows in slices of that size instead (as
+    1.x's chunking would). Returns a Series indexed by (tour_id, tdd).
+    """
+    from activitysim import abm  # noqa: F401
+    from activitysim.abm.models.util import vectorize_tour_scheduling as vts
+    from activitysim.core import config, expressions, interaction_simulate, workflow
+
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    state = workflow.State.make_default(
+        working_dir=example_dir, configs_dir=tuple(configs), data_dir=("data",), output_dir=scratch_dir,
+    )
+    state.checkpoint.restore_from(Path(pipeline), resume_after)
+    settings = vts.TourSchedulingSettings.read_settings_file(state.filesystem, settings_file, mandatory=False)
+    if settings.TOUR_SPEC_SEGMENTS:
+        raise NotImplementedError("segmented specs are not supported by this check")
+    tours = state.get_dataframe("tours")
+    persons_merged = state.get_dataframe("persons_merged")
+    tdd_alts = state.get_injectable("tdd_alts")
+    timetable = state.get_injectable("timetable")
+    chosen = tours[tours.tour_category == category].copy()
+    constants = config.get_model_constants(settings) or {}
+    locals_d = {"tt": timetable.attach_state(state), **constants}
+    expressions.annotate_preprocessors(state, df=chosen, locals_dict=locals_d, skims=None,
+                                       model_settings=settings, trace_label="asim1_reference")
+    spec = state.filesystem.read_model_spec(file_name=settings.SPEC)
+    coefficients = state.filesystem.read_model_coefficients(settings)
+    from activitysim.core import simulate
+
+    spec = simulate.eval_coefficients(state, spec, coefficients, None)
+    nth = chosen[chosen.tour_num == tour_num].sort_index()
+    merged = pd.merge(nth, persons_merged, left_on="person_id", right_index=True, suffixes=("", "_y"))
+    alt_tdd = vts.tdd_interaction_dataset(state, merged, tdd_alts, timetable, "tdd", "person_id",
+                                          "asim1_reference")
+    alt_tdd["mode_choice_logsum"] = 0
+    previous = pd.Series(tdd_alts.index[0], index=chosen.person_id.unique())
+    merged = merged.join(vts.get_previous_tour_by_tourid(merged["person_id"], previous, tdd_alts))
+    interaction_df = alt_tdd.join(merged, how="left", rsuffix="_chooser")
+    step = rows_per_call or len(interaction_df)
+    values = []
+    for start in range(0, len(interaction_df), step):
+        utils, _ = interaction_simulate.eval_interaction_utilities(
+            state, spec, interaction_df.iloc[start:start + step],
+            {"tt": timetable.attach_state(state), **constants}, "asim1_reference", None,
+        )
+        values.append(utils.utility.to_numpy())
+    return pd.Series(np.concatenate(values),
+                     index=pd.MultiIndex.from_arrays([interaction_df.index.to_numpy(),
+                                                      interaction_df["tdd"].to_numpy()],
+                                                     names=["tour_id", "tdd"]))

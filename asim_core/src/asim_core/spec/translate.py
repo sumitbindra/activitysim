@@ -66,7 +66,7 @@ class NotConstant(FormulaError):
 # numpy functions a formula may call as np.<name>(...)
 NP_FUNCTIONS = {
     "where", "minimum", "maximum", "clip", "isin",
-    "log", "log1p", "exp", "sqrt", "abs", "floor", "ceil",
+    "log", "log1p", "log10", "log2", "exp", "sqrt", "abs", "floor", "ceil",
 }
 NP_VALUES = {"inf", "nan"}  # np.inf, np.nan
 ASTYPE_NAMES = {"int", "float", "bool"}  # .astype(int) etc.
@@ -125,6 +125,9 @@ class _Translator:
         tables: Mapping[str, set[str]] | None = None,
         settings: Mapping[str, object] | None = None,
         random_index: int | None = None,
+        pandas_locals: bool = False,
+        df_names: set[str] = frozenset({"df"}),
+        objects: Mapping[str, set[str]] | None = None,
     ):
         self.formula = formula
         self.constants = constants
@@ -137,6 +140,9 @@ class _Translator:
         self.table_columns = dict(tables or {})
         self.settings = settings or {}
         self.random_index = random_index
+        self.pandas_locals = pandas_locals
+        self.df_names = set(df_names) | {"df"}
+        self.objects = dict(objects or {})
         self.columns: set[str] = set()
         self.used_constants: set[str] = set()
         self.skims: set[str] = set()
@@ -229,7 +235,7 @@ class _Translator:
             container = container.value
         if not isinstance(container, ast.Name):
             return None
-        if container.id == "df":
+        if container.id in self.df_names:
             if self.df_columns is None:
                 raise NeedsColumns(f"formula {self.formula!r}: testing which columns exist "
                                    f"needs the chooser's columns")
@@ -271,6 +277,16 @@ class _Translator:
 
         if isinstance(node, ast.Name):
             if not self.python_mode:
+                if self.pandas_locals:  # names the model defines come before columns
+                    if node.id in self.assigned:
+                        self.names.add(node.id)
+                        return f"v[{node.id!r}]"
+                    if node.id in self.coefficient_names:
+                        self.coefficients.add(node.id)
+                        return f"k[{node.id!r}]"
+                    if node.id in self.constants:
+                        self.used_constants.add(node.id)
+                        return _literal(self.constants[node.id])
                 return self.column(node.id)  # pandas style: bare names are columns
             if node.id in self.assigned:  # a variable assigned by an earlier row
                 self.names.add(node.id)
@@ -285,7 +301,7 @@ class _Translator:
                             f"variable; columns are written df.name)")
 
         if isinstance(node, ast.Attribute):
-            if isinstance(node.value, ast.Name) and node.value.id == "df":
+            if isinstance(node.value, ast.Name) and node.value.id in self.df_names:
                 return self.column(node.attr)
             if isinstance(node.value, ast.Name) and node.value.id == "np" and node.attr in NP_VALUES:
                 return f"np.{node.attr}"
@@ -294,7 +310,7 @@ class _Translator:
             self.fail(node, "unsupported attribute")
 
         if isinstance(node, ast.Subscript):
-            if isinstance(node.value, ast.Name) and node.value.id == "df":
+            if isinstance(node.value, ast.Name) and node.value.id in self.df_names:
                 name = self.fold(node.slice)
                 if isinstance(name, str):
                     return self.column(name)
@@ -400,6 +416,21 @@ class _Translator:
             return _literal(self.setting(node))
         if isinstance(func, ast.Name) and func.id == "reindex":
             return self.reindex(node)
+        if isinstance(func, ast.Name) and func.id == "reindex_i":
+            return self.reindex_i(node)
+        # methods of objects the model provides, e.g. tt.previous_tour_ends(...)
+        if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
+                and func.value.id in self.objects):
+            if func.attr not in self.objects[func.value.id]:
+                self.fail(node, f"{func.value.id}.{func.attr}() is not supported "
+                                f"(supported: {sorted(self.objects[func.value.id])})")
+            if node.keywords:
+                self.fail(node, f"{func.value.id}.{func.attr}() takes no keyword arguments")
+            return f"{func.value.id}.{func.attr}({', '.join(self.visit(a) for a in node.args)})"
+        # skim_dict.lookup(origins, destinations, ('NAME', 'PERIOD'))
+        if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
+                and func.value.id in self.skim_accessors and func.attr == "lookup"):
+            return self.skim_lookup(node, func.value.id)
         # bare functions made available by the model, e.g. exp(...) -> np.exp(...)
         if isinstance(func, ast.Name) and func.id in self.functions:
             if node.keywords:
@@ -471,6 +502,9 @@ class _Translator:
                     return f"_astype({target}, {a.id})"
                 if isinstance(a, ast.Constant) and a.value in ASTYPE_STRINGS:
                     return f"_astype({target}, {a.value!r})"
+                if (isinstance(a, ast.Attribute) and isinstance(a.value, ast.Name)
+                        and a.value.id == "np" and a.attr in ASTYPE_STRINGS):
+                    return f"_astype({target}, np.{a.attr})"
                 self.fail(node, f"astype() supports {sorted(ASTYPE_NAMES)} and {sorted(ASTYPE_STRINGS)}")
             self.fail(node, f"method .{method}() is not supported")
         self.fail(node, "unsupported function call")
@@ -500,6 +534,57 @@ class _Translator:
             return self.visit(node.args[0])
         finally:
             self._lookup = None
+
+    def reindex_i(self, node: ast.Call) -> str:
+        """
+        reindex_i(joint_tour_participants.groupby('person_id').size(), df.person_id):
+        how many rows of a table each ID has (0 if none), as 8-bit integers,
+        like 1.x's reindex_i. Also reindex_i(table.column, ids), with 0 for
+        missing IDs.
+        """
+        if len(node.args) != 2 or node.keywords:
+            self.fail(node, "reindex_i() takes a table column (or group size) and the IDs to look up")
+        arg = node.args[0]
+        keys = self.visit(node.args[1])
+        # T.groupby('col').size()
+        if (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute) and arg.func.attr == "size"
+                and not arg.args and isinstance(arg.func.value, ast.Call)):
+            g = arg.func.value
+            if (isinstance(g.func, ast.Attribute) and g.func.attr == "groupby"
+                    and isinstance(g.func.value, ast.Name) and g.func.value.id in self.table_columns
+                    and len(g.args) == 1 and isinstance(self.fold(g.args[0]), str)):
+                table, col = g.func.value.id, self.fold(g.args[0])
+                if self.table_columns[table] is None:
+                    raise NeedsColumns(f"formula {self.formula!r}: needs the columns of table '{table}'")
+                if col not in self.table_columns[table]:
+                    self.fail(node, f"table '{table}' has no column '{col}'")
+                self.tables.add((table, col))
+                return f"_as_int8(t.count({table!r}, {col!r}, {keys}))"
+        if (isinstance(arg, ast.Attribute) and isinstance(arg.value, ast.Name)
+                and arg.value.id in self.table_columns):
+            table, col = arg.value.id, arg.attr
+            if self.table_columns[table] is None:
+                raise NeedsColumns(f"formula {self.formula!r}: needs the columns of table '{table}'")
+            if col not in self.table_columns[table]:
+                self.fail(node, f"table '{table}' has no column '{col}'")
+            self.tables.add((table, col))
+            return f"_as_int8(t.fill({table!r}, {col!r}, {keys}, 0))"
+        self.fail(node, "reindex_i() supports table.column or table.groupby('column').size()")
+
+    def skim_lookup(self, node: ast.Call, accessor: str) -> str:
+        """skim_dict.lookup(o, d, ('SOV_DIST', 'MD')) -> s.lookup('SOV_DIST__MD', o, d)"""
+        if len(node.args) != 3 or node.keywords:
+            self.fail(node, "lookup() takes origins, destinations and a skim name")
+        key = self.fold(node.args[2])
+        if isinstance(key, (list, tuple)) and len(key) == 2 and all(isinstance(x, str) for x in key):
+            name = f"{key[0]}__{key[1]}"
+        elif isinstance(key, str):
+            name = key
+        else:
+            self.fail(node, "skim name must be 'NAME' or ('NAME', 'PERIOD')")
+        self.skims.add(name)
+        self.skim_uses.add((accessor, name, "lookup"))
+        return f"s.lookup({name!r}, {self.visit(node.args[0])}, {self.visit(node.args[1])})"
 
     def table_column(self, node: ast.AST, table: str, name: str) -> str:
         """A table's column inside reindex(): looked up for the reindex keys."""
@@ -578,6 +663,9 @@ def translate(
     tables: Mapping[str, set[str]] | None = None,
     settings: Mapping[str, object] | None = None,
     random_index: int | None = None,
+    pandas_locals: bool = False,
+    df_names: set[str] = frozenset({"df"}),
+    objects: Mapping[str, set[str]] | None = None,
 ) -> Translated:
     """
     Translate one spec formula to a NumPy expression over column arrays ``c``.
@@ -594,6 +682,19 @@ def translate(
     test which columns exist and look up other tables' columns; ``settings``
     answers ``setting('name')``; ``random_index`` is the position of this
     formula's random draws, for ``rng.lognormal_for_df``.
+
+    Plain-style (pandas) formulas: with ``pandas_locals``, bare names the
+    model defines (earlier temporaries, coefficients, constants) come before
+    columns, as in 1.x's interaction models. A plain-style formula that does
+    arithmetic is evaluated with ``pandas.eval``, exactly as 1.x evaluates it:
+    pandas.eval uses numexpr, whose type rules differ from NumPy's (e.g. a
+    float32 column times an int64 column is computed in 32 bits), so NumPy
+    code would not give the same last bits. Comparisons and logic give the
+    same values either way and are written as NumPy code.
+
+    ``df_names`` are other names for the chooser table (1.x's DF setting);
+    ``objects`` maps names of objects the model provides to the methods
+    formulas may call (e.g. ``{'tt': {'previous_tour_ends', ...}}``).
     """
     text = formula.strip()
     if python_mode is None:
@@ -605,12 +706,24 @@ def translate(
     except SyntaxError as err:
         raise FormulaError(f"formula {formula!r} is not valid syntax: {err.msg}") from None
     t = _Translator(formula, constants or {}, python_mode, assigned, functions, skim_accessors,
-                    coefficients, df_columns, tables, settings, random_index)
+                    coefficients, df_columns, tables, settings, random_index,
+                    pandas_locals, df_names, objects)
     source = t.visit(tree)
+    if not python_mode and _has_arithmetic(tree):
+        names = sorted({n.id for n in ast.walk(tree) if isinstance(n, ast.Name)})
+        mapping = ", ".join(f"{n!r}: {t.visit(ast.Name(id=n, ctx=ast.Load()))}" for n in names)
+        source = f"_pandas_eval({text.strip()!r}, {{{mapping}}})"
     return Translated(formula=formula, source=source, columns=t.columns,
                       constants=t.used_constants, skims=t.skims, names=t.names,
                       skim_uses=t.skim_uses, coefficients=t.coefficients, tables=t.tables,
                       random_draws=t.random_draws)
+
+
+_ARITHMETIC = (ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)
+
+
+def _has_arithmetic(tree: ast.AST) -> bool:
+    return any(isinstance(n, ast.BinOp) and isinstance(n.op, _ARITHMETIC) for n in ast.walk(tree))
 
 
 def fold_constant(formula: str, constants: Mapping[str, object] | None = None, **kw):
@@ -674,6 +787,24 @@ def _lognormal(draws, mu, sigma, scale=False):
     return np.exp(draws * sigma + mu)
 
 
+def _pandas_eval(expr, names):
+    """A plain-style formula evaluated with pandas.eval, as 1.x's fast_eval does."""
+    n = next((len(v) for v in names.values() if np.ndim(v)), None)
+    index = pd.RangeIndex(n) if n is not None else None
+    resolvers = {k: (pd.Series(v, index=index, copy=False) if np.ndim(v) else v)
+                 for k, v in names.items()}
+    out = pd.eval(expr, resolvers=[resolvers])
+    return out.to_numpy() if isinstance(out, pd.Series) else out
+
+
+def _as_int8(x):
+    """1.x's reindex_i: missing values become 0, then 8-bit integers."""
+    x = np.asarray(x)
+    if x.dtype.kind == "f":
+        x = np.where(np.isnan(x), 0, x)
+    return x.astype(np.int8)
+
+
 def _full(x, n):
     """A scalar result becomes a column of n equal values (1.x promotes scalars to Series)."""
     if np.ndim(x) == 0:
@@ -684,7 +815,8 @@ def _full(x, n):
 
 
 RUNTIME_NAMESPACE = {"np": np, "_clip": _clip, "_fillna": _fillna, "_map": _map, "_cut": _cut,
-                     "_astype": _astype, "_lognormal": _lognormal, "_full": _full}
+                     "_astype": _astype, "_lognormal": _lognormal, "_full": _full,
+                     "_pandas_eval": _pandas_eval, "_as_int8": _as_int8}
 
 
 def build_function(name: str, items: list[tuple[str, Translated]], doc: str = "") -> str:

@@ -37,7 +37,12 @@ import pandas as pd  # noqa: E402
 
 from asim_core.asim1 import Asim1State  # noqa: E402
 from asim_core.compare import compare_column, value_shares, write_comparisons  # noqa: E402
-from asim_core.components import auto_ownership, compute_accessibility, tour_mode_choice  # noqa: E402
+from asim_core.components import (  # noqa: E402
+    auto_ownership,
+    compute_accessibility,
+    non_mandatory_tour_scheduling,
+    tour_mode_choice,
+)
 from asim_core.spec.translate import FormulaError  # noqa: E402
 from asim_core.profiler import Profiler  # noqa: E402
 from asim_core.runner import Runner  # noqa: E402
@@ -47,7 +52,7 @@ from asim_core.spec.legacy import load_top_settings  # noqa: E402
 from asim_core.store import Store  # noqa: E402
 
 
-PORTED = [compute_accessibility, auto_ownership, tour_mode_choice]
+PORTED = [compute_accessibility, auto_ownership, non_mandatory_tour_scheduling, tour_mode_choice]
 NOT_BUILT: dict[str, str] = {}  # component -> why it could not be built for this example
 
 
@@ -112,7 +117,7 @@ def step_check(comp, st: Asim1State, out: Path, base_seed: int, skims, trace_ids
         ref = st.read(t, comp.name)
         for col in cols:
             comparisons.append(compare_column(comp.name, store[t], col, ref[col]))
-            if few_values(store[t][col]):
+            if t != "person_windows" and few_values(store[t][col]):
                 shares[f"{t}.{col}"] = value_shares(store[t][col], ref[col])
     if "generated_source" in comp.info:
         gen = out / "generated"

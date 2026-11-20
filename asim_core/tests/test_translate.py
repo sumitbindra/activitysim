@@ -85,3 +85,26 @@ def test_plain_style_names_are_columns():
 def test_unsupported_formulas_are_rejected(formula, message):
     with pytest.raises(FormulaError, match=message):
         translate(formula, CONSTANTS)
+
+
+def test_plain_style_arithmetic_uses_pandas_eval():
+    """numexpr (used by pandas.eval, as in 1.x) computes float32 x int64 in 32 bits; NumPy wouldn't."""
+    tr = translate("a * i")
+    assert tr.source.startswith("_pandas_eval(")
+    fn = compile_function(build_function("f", [("t", tr)]), "f")
+    a = np.array([0.1, 1.7, 2.3], dtype=np.float32)
+    i = np.array([1, 2, 3])
+    (value,) = list(fn({"a": a, "i": i}))
+    expected = pd.eval("a * i", resolvers=[{"a": pd.Series(a), "i": pd.Series(i)}]).to_numpy()
+    np.testing.assert_array_equal(value, expected)
+    # comparisons and logic give the same values either way: plain NumPy code
+    assert not translate("(a > 1) & (i < 3)").source.startswith("_pandas_eval(")
+
+
+def test_interaction_style_names_and_timetable_calls():
+    tr = translate("_x * start", {"K": 2}, assigned={"_x"}, pandas_locals=True)
+    assert "'_x': v['_x']" in tr.source and "'start': c['start']" in tr.source
+    tr = translate("@tt.previous_tour_ends(df.person_id, df.start)", objects={"tt": {"previous_tour_ends"}})
+    assert tr.source == "tt.previous_tour_ends(c['person_id'], c['start'])"
+    with pytest.raises(FormulaError, match="not supported"):
+        translate("@tt.rollback()", objects={"tt": {"previous_tour_ends"}})

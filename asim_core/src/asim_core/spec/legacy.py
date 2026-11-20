@@ -22,7 +22,15 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from .definition import Assignment, AssignmentSpec, ChoiceModelDefinition, Coefficient, Term
+from .definition import (
+    Assignment,
+    AssignmentSpec,
+    ChoiceModelDefinition,
+    Coefficient,
+    InteractionModelDefinition,
+    InteractionTerm,
+    Term,
+)
 
 # values read as missing in assignment specs: pandas 1.5's defaults, without
 # 'None' (used in spec files as the object None), as in ActivitySim 1.x
@@ -200,6 +208,7 @@ def load_assignment_spec(
     tables: Sequence[str] = (),
     coefficients: Sequence[str] = (),
     settings: dict | None = None,
+    df_names: Sequence[str] = (),
 ) -> AssignmentSpec:
     """
     Read an assignment spec CSV (Description, Target, Expression), following
@@ -231,5 +240,65 @@ def load_assignment_spec(
         tables=list(tables),
         coefficients=list(coefficients),
         settings=dict(settings or {}),
+        df_names=list(df_names),
         source_files=[path.name],
+    )
+
+
+def read_coefficients(path: Path) -> dict[str, Coefficient]:
+    """A coefficients file, with 1.x's read_model_coefficients checks."""
+    coef_df = pd.read_csv(path, comment="#", index_col="coefficient_name")
+    dupes = coef_df.index[coef_df.index.duplicated()].unique().tolist()
+    if dupes:
+        raise ValueError(f"duplicate coefficients in {path}: {dupes}")
+    nulls = coef_df.index[coef_df["value"].isnull()].tolist()
+    if nulls:
+        raise ValueError(f"coefficients without a value in {path}: {nulls}")
+    out = {}
+    for name, row in coef_df.iterrows():
+        constrain = str(row.get("constrain", "F")).strip().upper() in ("T", "TRUE", "1")
+        out[str(name)] = Coefficient(value=float(row["value"]), constrain=constrain)
+    return out
+
+
+def load_interaction_model(
+    configs_dirs: Sequence[str | Path],
+    spec_file: str,
+    coefficients_file: str,
+    constants: dict | None = None,
+    objects: dict[str, Sequence[str]] | None = None,
+    name: str | None = None,
+) -> InteractionModelDefinition:
+    """
+    An interaction spec (Label, Description, Expression, one coefficient
+    column), read as 1.x's read_model_spec reads it. Rows written
+    ``_name@formula`` assign a temporary.
+    """
+    configs_dirs = [Path(d) for d in configs_dirs]
+    if not spec_file.lower().endswith(".csv"):
+        spec_file += ".csv"
+    spec_path = find_config_file(configs_dirs, spec_file)
+    coef_path = find_config_file(configs_dirs, coefficients_file)
+    spec = pd.read_csv(spec_path, comment="#").dropna(subset=["Expression"])
+    value_cols = [c for c in spec.columns if c not in _SPEC_META_COLUMNS]
+    if len(value_cols) != 1:
+        raise ValueError(f"{spec_path.name}: an interaction spec has one coefficient column, "
+                         f"found {value_cols}")
+    terms = []
+    for _, row in spec.iterrows():
+        expr = str(row["Expression"]).strip()
+        cell = row[value_cols[0]]
+        cell = "0" if pd.isna(cell) or str(cell).strip() == "" else str(cell).strip()
+        label = row["Label"] if "Label" in spec.columns and not pd.isna(row["Label"]) else None
+        target = None
+        if expr.startswith("_") and "@" in expr:  # _name@formula: a temporary (1.x)
+            target, expr = expr[:expr.index("@")], expr[expr.index("@") + 1:]
+        terms.append(InteractionTerm(label=label, formula=expr, coefficient=cell, target=target))
+    return InteractionModelDefinition(
+        name=name or Path(spec_file).stem,
+        terms=terms,
+        coefficients=read_coefficients(coef_path),
+        constants=constants or {},
+        objects={k: list(v) for k, v in (objects or {}).items()},
+        source_files=[spec_path.name, coef_path.name],
     )

@@ -47,6 +47,25 @@ def utilities(terms: Iterable, coefficients: np.ndarray, n: int) -> np.ndarray:
     return np.dot(values.transpose(), coefficients)
 
 
+@register("interaction_utilities", "sequential", reference=True,
+          description="add term value x coefficient one term at a time into a 64-bit total, "
+                      "as 1.x's eval_interaction_utilities does")
+def interaction_utilities(terms: Iterable, coefficients: list[float], n: int) -> np.ndarray:
+    """
+    Utilities of ``n`` chooser-alternative rows. Each product is computed in
+    the term's own type (a 32-bit column times its coefficient stays 32-bit,
+    as in 1.x), then added to the 64-bit total. ``coefficients`` should be
+    Python floats (see InteractionModelDefinition.utility_terms).
+    """
+    total = np.zeros(n, dtype=np.float64)
+    k = -1
+    for k, (v, c) in enumerate(zip(terms, coefficients)):
+        total += np.asarray(v * c, dtype=np.float64)
+    if k + 1 != len(coefficients):
+        raise ValueError(f"expected {len(coefficients)} term values, got {k + 1}")
+    return total
+
+
 @register("probabilities", "asim1", reference=True,
           description="exponentiate, zero out values below 1e-300, divide by row totals")
 def probabilities(utils: np.ndarray, shift: bool = False) -> tuple[np.ndarray, np.ndarray]:

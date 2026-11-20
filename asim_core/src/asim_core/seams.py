@@ -35,6 +35,8 @@ SEAMS = {
                    "skim_lookup(matrix, orig_positions, dest_positions) -> values",
     "utilities": "formula values and coefficients -> utilities: "
                  "utilities(terms, coefficients, n) -> (n x alternatives) array",
+    "interaction_utilities": "one utility per chooser-alternative row (e.g. a tour's departure "
+                             "options): interaction_utilities(terms, coefficients, n) -> (n,) array",
     "probabilities": "utilities -> probabilities: "
                      "probabilities(utils, shift) -> (probs, unusable_rows)",
     "nested_probabilities": "utilities and a nest tree -> probabilities (nested logit): "
