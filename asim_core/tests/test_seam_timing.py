@@ -22,5 +22,5 @@ def test_pieces_are_timed_without_the_pieces_they_call():
     assert times.calls["formulas"] == 3  # two values, then the end of the terms
     assert times.seconds["formulas"] >= 0.02 > times.seconds["utilities"]
     draws = e.random("step", 0).uniform("households", np.arange(5))
-    assert len(draws) == 5 and times.calls["random"] == 1
+    assert len(draws) == 5 and times.calls["random"] == 2  # setting up the streams, then drawing
     assert e.changed == {} and e.agreement == "exact"
