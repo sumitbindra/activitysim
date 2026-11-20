@@ -16,9 +16,10 @@ picked by a setting and tested with the experiment harness. Speed-ups come
 from those experiments. Sharrow is not used; 1.x with sharrow is only a
 baseline in the reports.
 
-Status: six components are ported and match 1.x exactly:
-`compute_accessibility` (with skims), `auto_ownership` (multinomial or nested
-logit), `mandatory_tour_scheduling` and `non_mandatory_tour_scheduling`
+Status: eight components are ported and match 1.x exactly:
+`compute_accessibility` (with skims), `school_location` and
+`workplace_location` (sampling, logsums, annotations after the model),
+`auto_ownership` (multinomial or nested logit), `mandatory_tour_scheduling` and `non_mandatory_tour_scheduling`
 (timetables, rounds of tours, one utility per tour × departure-return
 option, mode choice logsums computed once per distinct input),
 `non_mandatory_tour_destination` (sampling of alternatives, size terms) and
@@ -31,7 +32,8 @@ MTC, MWCOG and ARC (all 24,061 households). Every other step can be
 [docs/tour_mode_choice.md](docs/tour_mode_choice.md),
 [docs/non_mandatory_scheduling.md](docs/non_mandatory_scheduling.md),
 [docs/mandatory_scheduling.md](docs/mandatory_scheduling.md),
-[docs/destination_choice.md](docs/destination_choice.md).
+[docs/destination_choice.md](docs/destination_choice.md),
+[docs/location_choice.md](docs/location_choice.md).
 
 Inputs are checked before the first step
 ([docs/input_checks.md](docs/input_checks.md)): every table and column is
@@ -94,7 +96,7 @@ written so they can be reported to the ActivitySim project:
 | `src/asim_core/spec/model_file.py` | Reading model files (YAML with `extends`, CSV term, coefficient and derived-value tables). |
 | `configs/<example>/` | asim_core's additions to the 1.x examples' configs: each region's `input_tables.yaml`, and the six ported steps converted to model files. |
 | `src/asim_core/spec/` | Model definitions (Pydantic): choice models and assignment specs; the loader for today's YAML/CSV files; the formula translator. |
-| `src/asim_core/components/` | Components. `simple_choice.py` runs any simple choice model from its definition; `auto_ownership.py`, `accessibility.py`, `tour_mode_choice.py`, `tour_scheduling.py` and `tour_destination.py` are ported models. |
+| `src/asim_core/components/` | Components. `simple_choice.py` runs any simple choice model from its definition; `auto_ownership.py`, `accessibility.py`, `location_choice.py`, `tour_mode_choice.py`, `tour_scheduling.py` and `tour_destination.py` are ported models; `annotate.py` runs annotations after a model. |
 | `harness/` | Scripts that run 1.x and compare (these import 1.x). |
 | `tests/` | Unit tests, plus an exact-match test against a saved 1.x run. |
 
@@ -222,8 +224,8 @@ Simple choice models, multinomial or nested logit, need no code: build them with
 
 ## Not supported yet
 
-Annotation after a model, park-and-ride, shadow pricing (workplace and
-school location), Parquet skim files, two- and
+Park-and-ride, shadow pricing (workplace and school location), annotations
+of tours and trips, Parquet skim files, two- and
 three-zone systems (MAZ, TAP), writing trip tables to OMX, starting a run
 from asim_core's own saved state, a command-line `run` for agency model
 loops, multiprocessing, estimation, and peak-memory measurement outside

@@ -185,6 +185,12 @@ class Runner:
         engine = self.step_engines.get(step, self.engine)
         ctx = StepContext(comp, store, needs, engine, self.tracer, self.base_seed, skims=self.skims)
         outputs = comp.run(ctx) or {}
+        # a step can make a new table (e.g. 1.x's workplace_modeled_size): it
+        # returns the whole Table, which replaces any table of that name
+        for table, value in list(outputs.items()):
+            if isinstance(value, Table):
+                store.add(value)
+                outputs[table] = {c: value[c] for c in value.column_names}
         declared = {(t, c) for t, cols in comp.provides.items() for c in cols}
         produced = {(t, c) for t, cols in outputs.items() for c in cols}
         if produced != declared:

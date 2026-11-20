@@ -8,8 +8,10 @@ files keep loading, so every result can still be compared with 1.x.
 
 ## Summary
 
-- **All six ported steps convert, on all three regions, and give exactly
-  1.x's results from the converted files.** Each step was run twice on the
+- **All eight ported steps convert, on all three regions, and give exactly
+  1.x's results from the converted files** (school and workplace location
+  were added after this write-up, written up in
+  [location_choice.md](location_choice.md)). Each step was run twice on the
   same saved 1.x state, from today's files and from the converted ones;
   every output column is identical between the two and with 1.x
   (`harness/check_model_files.py`, and a test per region):
@@ -22,6 +24,7 @@ files keep loading, so every result can still be compared with 1.x.
   | non_mandatory_tour_destination (sampling, logsums) | exact | exact | exact |
   | non_mandatory_tour_scheduling | exact | exact | exact |
   | tour_mode_choice (modes and logsums, bit for bit) | exact | exact | exact |
+  | school_location, workplace_location (with annotations) | exact | exact | exact |
 
   End to end on MTC from the model files: 34 steps (6 computed from the
   converted files, 28 replayed from 1.x), all 217 compared columns exact.
@@ -86,8 +89,9 @@ Files a model shares with 1.x unchanged (`tour_departure_and_duration_alternativ
 constants.yaml) are named in the model file and found the usual way: next
 to it, or in the first configs folder that has them.
 
-The kinds so far: `accessibility`, `auto_ownership`, `tour_mode_choice`,
-`tour_scheduling` and `tour_destination`. The converted files for the three
+The kinds so far: `accessibility`, `auto_ownership`, `location_choice`
+(school and workplace), `tour_mode_choice`, `tour_scheduling` and
+`tour_destination`. The converted files for the three
 examples are in `asim_core/configs/<example>/`.
 
 ## The formula language
@@ -103,8 +107,8 @@ Python syntax, parsed and checked, never executed; compiled to NumPy code
 | `alt.start`, `alt.alt_dest` | the alternative being evaluated in scheduling (a departure-return option) and destination choice (a candidate zone) |
 | `is_joint`, `out_period`, `mode_choice_logsum` | a bare name: one of the model's own values (a derived value, or a value the step works out), a constant, a coefficient where allowed, or a parameter |
 | `o`, `d` | the zones the model is evaluated between (origin, destination), set by the step |
-| `land_use.TOPOLOGY[d]` | another table's column, looked up by ID |
-| `skim.SOV_TIME[o, d]`, `skim.SOV_TIME[d, o, in_period]`, `skim.DIST[o, d, 'AM']`, `skim.DIST[tour.origin, tour.destination, 'MD']` | skims: from, to, and optionally a time period (a derived value holding each row's period, or a period in quotes) |
+| `land_use.TOPOLOGY[d]` | another table's column, looked up by ID (an ID not in the table, e.g. zone -1 for a person without a workplace, gives a missing value, as 1.x's `reindex`) |
+| `skim.SOV_TIME[o, d]`, `skim.SOV_TIME[d, o, in_period]`, `skim.DIST[o, d, 'AM']`, `skim.DIST[tour.origin, tour.destination, 'MD']` | skims: from, to, and optionally a time period (a derived value holding each row's period, or a period in quotes); zone -1 gives a missing value, as in 1.x |
 | `tt.previous_tour_ends(tour.person_id, alt.start)` | the timetable's functions (scheduling) |
 
 **Operators:** `+ - * / // % **`; comparisons, chained too
@@ -117,7 +121,10 @@ choices).
 (element by element), `clip(x, lower, upper)`, `between(x, lower, upper)`,
 `log`, `log1p`, `log10`, `log2`, `exp`, `sqrt`, `abs`, `floor`, `ceil`,
 `fillna(x, value)`, `map(x, {...})`, `cut(x, bins=[...], labels=[...])`,
-`shift(x, rows)`, `count_by(table.column, keys)`, `int(x)`, `float(x)`,
+`shift(x, rows)`, `count_by(table.column, keys)`,
+`sum_by(table.column, table.key, keys)` (e.g. a household's sum over its
+persons: `sum_by(persons.x, persons.household_id, household.household_id)`),
+`int(x)`, `float(x)`,
 `bool(x)`, `int8(x)` ... `float64(x)`, `setting('name')`, and the random
 draw `random_lognormal(mean=..., sd=...)` (or `mu=..., sigma=...` for the
 underlying normal).
@@ -148,6 +155,14 @@ columns the run's tables have, with "did you mean" suggestions.
 | `tour_mode_choice` | `tour`, `person`, `household`, `home_zone`; derived values may look up `land_use`, `tours` by ID | `tour_purpose`, `out_period`, `in_period` |
 | `tour_scheduling` | terms: `tour`, `person`, `household`, `home_zone`, `alt` (`start`, `end`, `duration`, `tdd`); tours' derived values: `tour`; options' derived values: `alt` | `mode_choice_logsum`, `out_period`, `in_period`, `start_previous`, `end_previous` |
 | `tour_destination` | `tour`, `person`, `household`, `home_zone`, `alt` (the candidate zone: `zone_id` in the sample, `alt_dest` in the choice); skims from the tour's origin (`o`) to the candidate (`d`) | `size_term`, `prob`, `pick_count`, `mode_choice_logsum` |
+| `location_choice` | `person`, `household`, `home_zone`, `alt` (as `tour_destination`); annotations: their table (`person` or `household`), other tables by ID, skims between any zones | as `tour_destination`, and `shadow_price_size_term_adjustment` (1), `shadow_price_utility_adjustment` (0) |
+
+**Annotations** (1.x's `annotate_persons`, `annotate_households`): derived
+values for a whole table after the step's choices, listed under
+`annotate:` in the model file. They run in 1.x's order (persons, then
+households), so a households annotation sees the persons annotation's
+results; a result for a column the table already has replaces it except
+where the new value is missing, as 1.x does.
 
 Tour mode choice also runs inside scheduling and destination choice, to
 give logsums. There, its `tour` columns are what those steps put in the

@@ -288,12 +288,16 @@ def tour_scheduling_component(
                     logsum_plan = (model, resolved["bound_ls"][seg], seg,
                                    _segment_times(tdd_segments, seg) if tdd_segments is not None else None,
                                    stats)
+                # one padding width for the round and segment, as 1.x pads its
+                # (unchunked) call; it changes how NumPy adds rows up
+                width = max((int(tt.available(person_rows[sel[b:b + per_batch]]).sum(axis=1).max())
+                             for b in range(0, len(sel), per_batch)), default=0)
                 for b in range(0, len(sel), per_batch):
                     batch = sel[b:b + per_batch]
                     chosen[batch] = _schedule_batch(
                         ctx, batch, tour_ids, cols, person_rows, previous, tt, alts,
                         terms_fn, coefs, shift, traced, logsum_plan, resolved["bound_alts"].get(seg),
-                        kept.setdefault(int(tour_num), []) if keep_utilities else None,
+                        kept.setdefault(int(tour_num), []) if keep_utilities else None, width,
                     )
                     tt.assign(person_rows[batch], chosen[batch])
                     previous[person_rows[batch]] = chosen[batch]
@@ -608,7 +612,7 @@ def _segment_times(tdd_segments: pd.DataFrame, purpose) -> dict[str, tuple]:
 
 
 def _schedule_batch(ctx, batch, tour_ids, cols, person_rows, previous, tt, alts, terms_fn, coefs,
-                    shift, traced, logsum_plan, bound_alts, keep):
+                    shift, traced, logsum_plan, bound_alts, keep, width=None):
     """Choose an option for each tour in ``batch`` (positions among the tours being scheduled)."""
     rows_p = person_rows[batch]
     fits = tt.available(rows_p)                        # (tours, options)
@@ -647,7 +651,7 @@ def _schedule_batch(ctx, batch, tour_ids, cols, person_rows, previous, tt, alts,
 
     # one row per tour, options left-aligned, padded with -999 (as 1.x)
     offsets = np.concatenate([[0], np.cumsum(counts)[:-1]])
-    width = int(counts.max())
+    width = int(counts.max()) if width is None else width
     padded = np.full((len(batch), width), PAD_UTILITY)
     padded[tour_ix, np.arange(n) - offsets[tour_ix]] = utils
     probs, bad = ctx.engine.probabilities(padded, shift=shift)

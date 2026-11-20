@@ -47,6 +47,8 @@ def mode_choice_contexts(configs_dirs, state: Asim1State) -> list[dict]:
         ("non_mandatory_tour_scheduling", non_mandatory_tour_scheduling, "logsum_model", _tmc.VIEW, TOUR_ROLES),
         ("non_mandatory_tour_destination", non_mandatory_tour_destination, "logsum_model", PERSONS_VIEW,
          PERSON_ROLES),
+        ("school_location", _loc.school_location, "logsum_model", PERSONS_VIEW, PERSON_ROLES),
+        ("workplace_location", _loc.workplace_location, "logsum_model", PERSONS_VIEW, PERSON_ROLES),
     ]
     for step, make, key, view, roles in users:
         if step not in state.steps:
@@ -87,10 +89,22 @@ def _convert_scheduling(category, settings_file):
 
 
 _dest = importlib.import_module(".components.tour_destination", __package__)
+_loc = importlib.import_module(".components.location_choice", __package__)
+_loc_files = importlib.import_module(".components.location_choice_files", __package__)
+
+
+def _convert_location(settings_file):
+    def run(configs_dirs, state, out_dir, step):
+        return _loc_files.convert(configs_dirs, _columns(state, step), out_dir, step, settings_file)
+    return run
+
 
 STEPS = {
     "compute_accessibility": {"component": _accessibility.compute_accessibility,
                               "convert": _convert_with_columns(_accessibility.convert)},
+    "school_location": {"component": _loc.school_location, "convert": _convert_location("school_location.yaml")},
+    "workplace_location": {"component": _loc.workplace_location,
+                           "convert": _convert_location("workplace_location.yaml")},
     "auto_ownership_simulate": {"component": auto_ownership,
                                 "convert": _convert_with_columns(convert_auto_ownership)},
     "tour_mode_choice_simulate": {"component": _tmc.tour_mode_choice,

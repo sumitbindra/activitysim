@@ -52,7 +52,9 @@ from asim_core.components import (  # noqa: E402
     mandatory_tour_scheduling,
     non_mandatory_tour_destination,
     non_mandatory_tour_scheduling,
+    school_location,
     tour_mode_choice,
+    workplace_location,
 )
 from asim_core.spec.translate import FormulaError  # noqa: E402
 from asim_core.profiler import Profiler  # noqa: E402
@@ -63,8 +65,9 @@ from asim_core.spec.legacy import load_top_settings  # noqa: E402
 from asim_core.store import Store  # noqa: E402
 
 
-PORTED = [compute_accessibility, auto_ownership, mandatory_tour_scheduling,
-          non_mandatory_tour_destination, non_mandatory_tour_scheduling, tour_mode_choice]
+PORTED = [compute_accessibility, school_location, workplace_location, auto_ownership,
+          mandatory_tour_scheduling, non_mandatory_tour_destination, non_mandatory_tour_scheduling,
+          tour_mode_choice]
 NOT_BUILT: dict[str, str] = {}  # component -> why it could not be built for this example
 
 

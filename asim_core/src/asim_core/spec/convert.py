@@ -55,6 +55,7 @@ class LegacyScope:
     coefficients: set[str] = field(default_factory=set)
     settings: Mapping[str, object] = field(default_factory=dict)
     df_columns: set[str] | None = None  # for folding tests of which columns exist
+    index_name: str | None = None  # the table's ID column (1.x: df.index), e.g. household_id
     # columns of the other tables (e.g. land_use), for tests such as 'x' in land_use: a
     # region's input tables don't change from step to step, so those tests are settled now
     table_columns: dict[str, set[str]] = field(default_factory=dict)
@@ -140,6 +141,10 @@ class _Converter:
         if isinstance(node, ast.Attribute):
             v = node.value
             if isinstance(v, ast.Name) and v.id in lg.df_names:
+                if node.attr == "index":
+                    if not lg.index_name:
+                        self.fail(node, "the table's ID column is not known")
+                    return self.column(node, lg.index_name)
                 return self.column(node, node.attr)
             if isinstance(v, ast.Name) and v.id == "np" and node.attr in ("inf", "nan"):
                 return _name(node.attr)
@@ -306,9 +311,29 @@ class _Converter:
             return _call("abs", [self.visit(a) for a in node.args])
         if isinstance(func, ast.Name) and func.id in lg.functions:
             return _call(func.id, [self.visit(a) for a in node.args])
+        if isinstance(func, ast.Attribute) and func.attr == "reindex":
+            grouped = self.group_sum(func.value)
+            if grouped is not None:
+                col, key = grouped
+                return _call("sum_by", [col, key, self.visit(node.args[0])])
         if isinstance(func, ast.Attribute):
             return self.method(node, func)
         self.fail(node, "unsupported function call")
+
+    def group_sum(self, node):
+        """T.column.groupby(T.key).sum() -> (T.column, T.key) as written in asim_core's language."""
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "sum"):
+            return None
+        g = node.func.value
+        if not (isinstance(g, ast.Call) and isinstance(g.func, ast.Attribute) and g.func.attr == "groupby"):
+            return None
+        col, key = g.func.value, g.args[0]
+        if (isinstance(col, ast.Attribute) and isinstance(col.value, ast.Name) and col.value.id in self.legacy.tables
+                and isinstance(key, ast.Attribute) and isinstance(key.value, ast.Name)
+                and key.value.id == col.value.id):
+            return (ast.Attribute(value=_name(col.value.id), attr=col.attr, ctx=ast.Load()),
+                    ast.Attribute(value=_name(key.value.id), attr=key.attr, ctx=ast.Load()))
+        return None
 
     def method(self, node: ast.Call, func: ast.Attribute) -> ast.AST:
         x = self.visit(func.value)

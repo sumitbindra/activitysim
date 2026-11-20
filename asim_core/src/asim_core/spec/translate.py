@@ -55,6 +55,9 @@ class FormulaError(ValueError):
     pass
 
 
+INDEX = "@index"  # the key under which generated code finds the rows' IDs (1.x: df.index)
+
+
 class NeedsColumns(FormulaError):
     """The formula tests or reads columns that are only known once the run's tables are."""
 
@@ -304,6 +307,8 @@ class _Translator:
 
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name) and node.value.id in self.df_names:
+                if node.attr == "index":  # the table's IDs
+                    return self.column(INDEX)
                 return self.column(node.attr)
             if isinstance(node.value, ast.Name) and node.value.id == "np" and node.attr in NP_VALUES:
                 return f"np.{node.attr}"
@@ -462,6 +467,14 @@ class _Translator:
         if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
                 and func.value.id in self.skim_accessors and func.attr in ("reverse", "max")):
             return self.skim_method(node, func.value.id, func.attr)
+        # T.column.groupby(T.key).sum().reindex(ids): a sum over another table's rows per ID
+        if isinstance(func, ast.Attribute) and func.attr == "reindex":
+            grouped = self.group_sum(func.value)
+            if grouped is not None:
+                if len(node.args) != 1 or node.keywords:
+                    self.fail(node, "reindex() takes the IDs to look up")
+                table, col, key = grouped
+                return f"t.sum_by({table!r}, {col!r}, {key!r}, {self.visit(node.args[0])})"
         # <column expression>.<method>(...)
         if isinstance(func, ast.Attribute):
             target = self.visit(func.value)
@@ -527,6 +540,30 @@ class _Translator:
                 self.fail(node, f"astype() supports {sorted(ASTYPE_NAMES)} and {sorted(ASTYPE_STRINGS)}")
             self.fail(node, f"method .{method}() is not supported")
         self.fail(node, "unsupported function call")
+
+    def group_sum(self, node) -> tuple[str, str, str] | None:
+        """T.column.groupby(T.key).sum() -> (T, column, key), else None."""
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "sum" and not node.args and not node.keywords):
+            return None
+        g = node.func.value
+        if not (isinstance(g, ast.Call) and isinstance(g.func, ast.Attribute) and g.func.attr == "groupby"
+                and len(g.args) == 1 and not g.keywords):
+            return None
+        col, key = g.func.value, g.args[0]
+        if not (isinstance(col, ast.Attribute) and isinstance(col.value, ast.Name)
+                and isinstance(key, ast.Attribute) and isinstance(key.value, ast.Name)
+                and col.value.id == key.value.id and col.value.id in self.table_columns):
+            return None
+        table = col.value.id
+        cols = self.table_columns[table]
+        if cols is None:
+            raise NeedsColumns(f"formula {self.formula!r}: needs the columns of table '{table}'")
+        for c in (col.attr, key.attr):
+            if c not in cols:
+                self.fail(node, f"table '{table}' has no column '{c}'")
+            self.tables.add((table, c))
+        return table, col.attr, key.attr
 
     def reindex(self, node: ast.Call) -> str:
         """

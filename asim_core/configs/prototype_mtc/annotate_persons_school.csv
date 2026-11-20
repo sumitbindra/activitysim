@@ -1,0 +1,5 @@
+Description,Name,Formula
+,distance_to_school,"where(person.school_zone_id >= 0, skim.DIST[person.home_zone_id, person.school_zone_id], nan)"
+temp auto_time_to_school,_auto_time_to_school,"skim.SOV_TIME[person.home_zone_id, person.school_zone_id, 'MD']"
+temp auto_time_return,_auto_time_return,"skim.SOV_TIME[person.school_zone_id, person.home_zone_id, 'MD']"
+free flow roundtrip_auto_time_to_school,roundtrip_auto_time_to_school,"where(person.school_zone_id >= 0, _auto_time_to_school + _auto_time_return, 0)"

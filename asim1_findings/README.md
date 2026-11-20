@@ -23,7 +23,7 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 |---|---|---|---|---|
 | 1 | `mandatory_tour_frequency` crashes when a household's choice fails | Bug | Reproduced (MWCOG, all households) | Not reported |
 | 2 | Tour scheduling computes the same mode choice logsums many times | Speed and memory | Measured; patch tested (results identical) | Not reported |
-| 3 | Results depend on how many rows are evaluated at once | Reproducibility | Measured; one-line fix tested | Not reported |
+| 3 | Results depend on how many rows are evaluated at once (numexpr above 1M elements; padding width per chunk) | Reproducibility | Measured; one-line fix tested | Not reported |
 | 4 | Tour mode choice's choice draw reuses random numbers already used | Random numbers | Measured | Not reported |
 | 5 | Building every tour × time option at once uses gigabytes | Memory | Measured | Not reported |
 | 6 | Numba functions are compiled again in every run | Speed | Measured | Not reported |
@@ -170,6 +170,25 @@ utilities with 1.x's functions, whole or in slices (`rows_per_call`).
 for 1.x's expression evaluation (tested above: removes the dependence).
 Possible cost: numexpr is multi-threaded, so very large arithmetic may be
 slower; not measured.
+
+**A second way chunking changes results: the padding width.** When the
+alternatives differ per chooser (sampled destinations, a tour's departure
+options), `interaction_sample_simulate` pads every chooser's utilities to
+the widest chooser *in the chunk* with -999 before adding up the
+exponentials (`max_sample_count`). The padding adds zeros, but NumPy adds
+each row in pairs, so the row's length changes how the sum is rounded.
+With a different chunk size, a chooser gets a different width, and its
+logsum and probabilities can change in the last bits.
+
+**Measured** with asim_core, which reproduces 1.x's arithmetic exactly:
+padding each batch of 3,000 rows to its own widest chooser, instead of the
+whole segment's, changed 12 of 8,212 MTC school location logsums (by up to
+3.6e-15). asim_core now pads to the widest chooser of the segment (1.x's
+unchunked call), so its results don't depend on its batch size.
+
+**Suggested change.** Pad to a width that doesn't depend on the chunk:
+the sample size for destination choice, the number of alternatives for
+scheduling.
 
 ---
 

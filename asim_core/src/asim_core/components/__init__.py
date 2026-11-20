@@ -2,6 +2,7 @@
 
 from .accessibility import compute_accessibility
 from .auto_ownership import auto_ownership
+from .location_choice import school_location, workplace_location
 from .simple_choice import ChooserView, simple_choice_component
 from .tour_destination import non_mandatory_tour_destination
 from .tour_mode_choice import tour_mode_choice
@@ -9,4 +10,4 @@ from .tour_scheduling import mandatory_tour_scheduling, non_mandatory_tour_sched
 
 __all__ = ["auto_ownership", "compute_accessibility", "ChooserView", "simple_choice_component",
            "mandatory_tour_scheduling", "non_mandatory_tour_destination", "non_mandatory_tour_scheduling",
-           "tour_mode_choice"]
+           "school_location", "tour_mode_choice", "workplace_location"]

@@ -1,0 +1,51 @@
+# asim_core model file (formulas in asim_core's language; see docs/model_files.md)
+# alt.<column>: the candidate zone; size_term, prob, pick_count, mode_choice_logsum
+# and the shadow price adjustments: worked out by the step
+
+kind: location_choice
+description: School location (converted from school_location.yaml and the files it names).
+filter: person.is_student
+segment: person.school_segment
+segments:
+  university: 3
+  highschool: 2
+  gradeschool: 1
+size_terms:
+  file: destination_choice_size_terms.csv
+  selector: school
+sample_size: 30
+sample_terms: school_location_sample_terms.csv
+terms: school_location_terms.csv
+coefficients: school_location_coefficients.csv
+origin: person.home_zone_id
+alternative_zone: alt_dest
+logsums:
+  model: tour_mode_choice.yaml
+  tour_purpose:
+    university: univ
+    highschool: school
+    gradeschool: school
+  periods:
+  - 8
+  - 14
+  parameters:
+    has_parent_tour_id: false
+    has_tour_category: false
+    has_tour_type: false
+outputs:
+  zone: school_zone_id
+  zone_when_none: -1
+  logsum: school_location_logsum
+  mode_choice_logsum: null
+  modeled_size: school_modeled_size
+annotate:
+  persons:
+    derived: annotate_persons_school.csv
+options:
+  utility_shift: false
+  max_rows: null
+  shadow_pricing: false
+  sample_method: inverse_cdf
+  sample_size_cap: zones_with_size
+  sample_order: by_zone
+  sample_probabilities: float32

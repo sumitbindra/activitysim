@@ -117,3 +117,27 @@ def test_non_mandatory_tour_destination_matches_1x_exactly(tmp_path):
     for col in ("destination", "destination_logsum"):  # logsums bit for bit
         result = compare_column(comp.name, store["tours"], col, tours[col])
         assert result.status == "exact", result
+
+
+@pytest.mark.skipif(not BASELINE.exists(), reason="no ActivitySim 1.x baseline run")
+@pytest.mark.parametrize("step", ["school_location", "workplace_location"])
+def test_location_choice_matches_1x_exactly(step, tmp_path):
+    """Choices, logsums, annotations (persons and households) and the modeled size table."""
+    pytest.importorskip("tables")
+    from asim_core.components import school_location, workplace_location
+    from asim_core.skims import import_omx
+
+    skims = import_omx(REPO / "activitysim/examples/prototype_mtc/data/skims.omx", tmp_path / "skims")
+    st = Asim1State(BASELINE)
+    make = school_location if step == "school_location" else workplace_location
+    comp = make(CONFIGS, max_rows=3_000)  # small batches: same results
+    store = st.load_store(st.previous_step(step))
+    Runner([comp], tmp_path / "run", skims=skims).run([step], store)
+    n = 0
+    for table, cols in comp.provides.items():
+        ref = st.read(table, step)
+        for col in cols:
+            result = compare_column(step, store[table], col, ref[col])
+            assert result.status == "exact", result
+            n += 1
+    assert n >= 7

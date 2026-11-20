@@ -411,13 +411,14 @@ class TourModeChoiceModel:
     # --- evaluating -----------------------------------------------------------------
 
     def evaluate(self, ctx: StepContext, bound: BoundModel, c: dict, n: int, segment: str,
-                 draw_ids: np.ndarray, logsums_only: bool = False):
+                 draw_ids: np.ndarray, logsums_only: bool = False, channel: str = CHANNEL):
         """
         Run the preprocessor and the model for ``n`` rows of chooser columns
         ``c`` (changed in place: the preprocessor's results are added), with
         segment ``segment``'s coefficients. Random draws (the preprocessor's)
         come from each row's ``draw_ids`` stream; rows with the same ID share
-        a draw, as 1.x broadcasts them.
+        a draw, as 1.x broadcasts them. ``channel``: the random stream (tours,
+        or persons in location choice).
 
         Returns logsums, or (utilities, probabilities, unusable rows,
         logsums, preprocessor values).
@@ -434,7 +435,7 @@ class TourModeChoiceModel:
             draws = None
             if bound.preprocessor.n_random:
                 uniq, inv = np.unique(np.asarray(draw_ids), return_inverse=True)
-                draws = ctx.random.normal(CHANNEL, uniq, bound.preprocessor.n_random)[inv]
+                draws = ctx.random.normal(channel, uniq, bound.preprocessor.n_random)[inv]
             with np.errstate(all="ignore"):  # 1.x logs numpy warnings and carries on
                 pre_values = bound.preprocessor.function(c, s, n, TableLookup(ctx), draws, k)
             for name in bound.preprocessor.targets:

@@ -1,0 +1,25 @@
+Description,Name,Formula
+,distance_to_work,"where(person.workplace_zone_id >= 0, skim.DIST[person.home_zone_id, person.workplace_zone_id], nan)"
+workplace_in_cbd,workplace_in_cbd,land_use.area_type[person.workplace_zone_id] < setting('cbd_threshold')
+work_zone_area_type,work_zone_area_type,land_use.area_type[person.workplace_zone_id]
+,_auto_time_home_to_work,"skim.SOV_TIME[person.home_zone_id, person.workplace_zone_id, 'MD']"
+,_auto_time_work_to_home,"skim.SOV_TIME[person.workplace_zone_id, person.home_zone_id, 'MD']"
+,roundtrip_auto_time_to_work,"where(person.workplace_zone_id >= 0, _auto_time_home_to_work + _auto_time_work_to_home, 0)"
+,_MAX_TIME_TO_WORK,999
+,_WALK_SPEED_MPH,3
+,_walk_time_home_to_work,"60 * skim.DISTWALK[person.home_zone_id, person.workplace_zone_id] / _WALK_SPEED_MPH"
+,_walk_time_work_to_home,"60 * skim.DISTWALK[person.workplace_zone_id, person.home_zone_id] / _WALK_SPEED_MPH"
+,_work_walk_available,_walk_time_home_to_work > 0 and _walk_time_work_to_home > 0
+,_roundtrip_walk_time_to_work,"where(_work_walk_available, _walk_time_home_to_work + _walk_time_work_to_home, _MAX_TIME_TO_WORK)"
+,_transit_ivt_home_to_work,"skim.WLK_TRN_WLK_IVT[person.home_zone_id, person.workplace_zone_id, 'MD'] / TRANSIT_SCALE_FACTOR"
+,_transit_ivt_work_to_home,"skim.WLK_TRN_WLK_IVT[person.workplace_zone_id, person.home_zone_id, 'MD'] / TRANSIT_SCALE_FACTOR"
+,_work_transit_available,_transit_ivt_home_to_work > 0 and _transit_ivt_work_to_home > 0
+,_transit_iwait,"skim.WLK_TRN_WLK_IWAIT[person.home_zone_id, person.workplace_zone_id, 'MD'] / TRANSIT_SCALE_FACTOR + skim.WLK_TRN_WLK_IWAIT[person.workplace_zone_id, person.home_zone_id, 'MD'] / TRANSIT_SCALE_FACTOR"
+,_transit_xwait,"skim.WLK_TRN_WLK_XWAIT[person.home_zone_id, person.workplace_zone_id, 'MD'] / TRANSIT_SCALE_FACTOR + skim.WLK_TRN_WLK_XWAIT[person.workplace_zone_id, person.home_zone_id, 'MD'] / TRANSIT_SCALE_FACTOR"
+,_transit_waux,"skim.WLK_TRN_WLK_WAUX[person.home_zone_id, person.workplace_zone_id, 'MD'] / TRANSIT_SCALE_FACTOR + skim.WLK_TRN_WLK_WAUX[person.workplace_zone_id, person.home_zone_id, 'MD'] / TRANSIT_SCALE_FACTOR"
+,_transit_wacc,"skim.WLK_TRN_WLK_WACC[person.home_zone_id, person.workplace_zone_id, 'MD'] / TRANSIT_SCALE_FACTOR + skim.WLK_TRN_WLK_WACC[person.workplace_zone_id, person.home_zone_id, 'MD'] / TRANSIT_SCALE_FACTOR"
+,_transit_wegr,"skim.WLK_TRN_WLK_WEGR[person.home_zone_id, person.workplace_zone_id, 'MD'] / TRANSIT_SCALE_FACTOR + skim.WLK_TRN_WLK_WEGR[person.workplace_zone_id, person.home_zone_id, 'MD'] / TRANSIT_SCALE_FACTOR"
+,_roundtrip_transit_time_to_work,_transit_ivt_home_to_work + _transit_ivt_work_to_home + _transit_iwait + _transit_xwait + _transit_waux + _transit_wacc + _transit_wegr
+,_min_work_walk_transit,"where(_work_transit_available, min(_roundtrip_transit_time_to_work, _roundtrip_walk_time_to_work), _roundtrip_walk_time_to_work)"
+,work_auto_savings,"where(person.is_worker, _min_work_walk_transit - roundtrip_auto_time_to_work, 0)"
+,work_auto_savings_ratio,"clip(work_auto_savings / 120.0, -1.0, 1.0)"

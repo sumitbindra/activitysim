@@ -56,6 +56,8 @@ def _scope(**kw) -> Scope:
     ("int8(count_by(land_use.TOTPOP, household.home_zone_id))",
      "_astype(t.count('land_use', 'TOTPOP', c['home_zone_id']), 'int8')"),
     ("log1p(out_period)", "np.log1p(c['out_period'])"),
+    ("fillna(sum_by(land_use.TOTPOP, land_use.TOPOLOGY, household.home_zone_id), 0.0)",
+     "_fillna(t.sum_by('land_use', 'TOTPOP', 'TOPOLOGY', c['home_zone_id']), 0.0)"),
 ])
 def test_language_compiles_to_numpy(formula, source):
     assert compile_formula(formula, _scope()).source == source
@@ -92,7 +94,7 @@ def test_split_assignment_keeps_the_text():
 
 
 ROLES = {"age": "person", "income": "household", "ptype": "person", "tour_type": "tour",
-         "destination": "tour", "home_zone_id": "household"}.get
+         "destination": "tour", "home_zone_id": "household", "household_id": "household"}.get
 
 
 @pytest.mark.parametrize("legacy, scope, new", [
@@ -116,6 +118,9 @@ ROLES = {"age": "person", "income": "household", "ptype": "person", "tour_type":
     ("@reindex_i(jtp.groupby('person_id').size(), df.age)", {"tables": {"jtp"}},
      "int8(count_by(jtp.person_id, person.age))"),
     ("@pd.cut(df.age, bins=[0, 5], labels=[1]).astype(int)", {}, "int(cut(person.age, bins=[0, 5], labels=[1]))"),
+    ("persons.x.groupby(persons.household_id).sum().reindex(households.index).fillna(0.0)",
+     {"python_mode": True, "tables": {"persons"}, "df_names": {"households"}, "index_name": "household_id"},
+     "fillna(sum_by(persons.x, persons.household_id, household.household_id), 0.0)"),
 ])
 def test_converter(legacy, scope, new):
     assert convert_formula(legacy, LegacyScope(**scope), NewNames(role_of=ROLES)).text == new
@@ -238,3 +243,32 @@ def test_committed_model_files_are_up_to_date(tmp_path):
             committed = REPO / "asim_core/configs/prototype_mtc" / path.name
             assert committed.read_text() == path.read_text(), path.name
     assert yaml.safe_load((tmp_path / "tour_mode_choice.yaml").read_text())["kind"] == "tour_mode_choice"
+
+
+def test_lookups_of_missing_ids_and_no_zone_give_missing_values():
+    """As 1.x: reindex() of an ID not in the table, and skims for zone -1, are missing values."""
+    from asim_core.component import Component, StepContext
+    from asim_core.components.runtime import TableLookup, ZoneSkims
+    from asim_core.seams import Engine
+    from asim_core.store import Store, Table
+
+    store = Store([Table("land_use", np.array([1, 2, 3]), "zone_id", {"area_type": np.array([5, 6, 7])}),
+                   Table("persons", np.array([10, 11, 12]), "person_id",
+                         {"x": np.array([1.0, np.nan, 2.0]), "household_id": np.array([7, 7, 8])})])
+    comp = Component(name="t", run=lambda ctx: {})
+    ctx = StepContext(comp, store, {"land_use": ["area_type"], "persons": ["x", "household_id"]}, Engine(),
+                      None, 0)
+    t = TableLookup(ctx)
+    np.testing.assert_array_equal(t("land_use", "area_type", np.array([2, -1])), [6.0, np.nan])
+    assert t("land_use", "area_type", np.array([3, 1])).dtype.kind == "i"  # all found: the column's type
+    # pandas' groupby sum: missing values skipped; keys with no rows missing
+    np.testing.assert_array_equal(t.sum_by("persons", "x", "household_id", np.array([7, 8, 9])), [1.0, 2.0, np.nan])
+
+    class FakeSkims(ZoneSkims):
+        def __init__(self):
+            pass
+
+    s = FakeSkims()
+    s.ctx = type("C", (), {"skim_positions": staticmethod(lambda z: np.asarray(z) - 1),
+                           "skim": staticmethod(lambda name, o, d: (o * 10 + d).astype(np.float32))})()
+    np.testing.assert_array_equal(s.lookup("DIST", np.array([1, 2]), np.array([3, -1])), [2.0, np.nan])

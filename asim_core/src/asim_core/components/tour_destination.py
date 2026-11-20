@@ -483,8 +483,14 @@ def _load_model_file(path, configs_dirs) -> _Config:
         logsum_parameters=dict(f.logsums.parameters) if f.logsums else None, max_rows=f.options.max_rows)
 
 
-def _sample(ctx, sel, tour_ids, cols, orig_pos, alt_zones, alt_size, terms, sample_size, shift, max_rows):
-    """Sampled zones per tour: rows (tour position, zone, prob as float32, pick_count)."""
+def _sample(ctx, sel, tour_ids, cols, orig_pos, alt_zones, alt_size, terms, sample_size, shift, max_rows,
+            channel=CHANNEL, step=STEP, alt_values=None):
+    """
+    Sampled zones per chooser (tour, or person in location choice): rows
+    (chooser position, zone, prob as float32, pick_count). ``alt_values``:
+    more columns of the alternatives, the same for every zone (location
+    choice's shadow price adjustments).
+    """
     terms_fn, coefs, _ = terms
     n_alts = len(alt_zones)
     # 1.x caps the number of draws at the number of zones that can be chosen
@@ -497,6 +503,8 @@ def _sample(ctx, sel, tour_ids, cols, orig_pos, alt_zones, alt_size, terms, samp
         n_b = len(batch)
         rows = np.repeat(batch, n_alts)
         c = {"zone_id": np.tile(alt_zones, n_b), "size_term": np.tile(alt_size, n_b)}
+        for name, value in (alt_values or {}).items():
+            c[name] = np.full(n_b * n_alts, value)
         for name, values in cols.items():
             if name not in c:
                 c[name] = values[rows]
@@ -506,9 +514,9 @@ def _sample(ctx, sel, tour_ids, cols, orig_pos, alt_zones, alt_size, terms, samp
             utils = ctx.engine.interaction_utilities(terms_fn(c, n, None, s), coefs, n)
         probs, bad = ctx.engine.probabilities(utils.reshape(n_b, n_alts), shift=shift)
         if bad.any():
-            raise ValueError(f"{STEP}: tours with no usable sampling probabilities: "
+            raise ValueError(f"{step}: choosers with no usable sampling probabilities: "
                              f"{tour_ids[batch][bad][:5].tolist()}")
-        rands = ctx.random.uniform(CHANNEL, tour_ids[batch], sample_size)
+        rands = ctx.random.uniform(channel, tour_ids[batch], sample_size)
         picks, picked_probs = ctx.engine.sample(probs, rands)
         parts.append(_dedupe(batch, picks, picked_probs, alt_zones))
     return {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
@@ -530,7 +538,8 @@ def _dedupe(batch, picks, picked_probs, alt_zones):
             "pick_count": counts.astype(np.uint32)}
 
 
-def _logsums(ctx, model, bound, persons_view, seg, periods, sample, tour_ids, cols, alt_col, chooser_id):
+def _logsums(ctx, model, bound, persons_view, seg, periods, sample, tour_ids, cols, alt_col, chooser_id,
+             channel=CHANNEL):
     """Mode choice logsums for the sampled rows, at the segment's fixed periods."""
     out_p, in_p = periods
     labels = model.periods.labels_for(np.array([out_p, in_p]))
@@ -554,7 +563,8 @@ def _logsums(ctx, model, bound, persons_view, seg, periods, sample, tour_ids, co
             end += 1
         part = {k: v[start:end] for k, v in c_all.items()}
         result[start:end] = model.evaluate(ctx, bound, part, end - start, seg,
-                                           tour_ids[tours_of_rows[start:end]], logsums_only=True)
+                                           tour_ids[tours_of_rows[start:end]], logsums_only=True,
+                                           channel=channel)
         start = end
     return result
 
@@ -569,20 +579,22 @@ def persons_view_gather(ctx, persons_view, person_ids):
     return {k: np.asarray(plain(v))[pos] for k, v in full.items()}
 
 
-def _choose(ctx, sel, tour_ids, cols, orig_pos, sample, zone_size, terms, shift, max_rows, alt_col, chooser_id):
-    """Choose one sampled zone per tour; returns (zones, logsums) for the tours in ``sel``."""
+def _choose(ctx, sel, tour_ids, cols, orig_pos, sample, zone_size, terms, shift, max_rows, alt_col, chooser_id,
+            channel=CHANNEL, step=STEP, alt_values=None):
+    """Choose one sampled zone per chooser; returns (zones, logsums) for the choosers in ``sel``."""
     terms_fn, coefs, _ = terms
     tour_of_row = sample["tour"]
     # rows of each tour are contiguous and tours are in ``sel`` order
     bounds = np.searchsorted(tour_of_row, sel, side="left"), np.searchsorted(tour_of_row, sel, side="right")
     position_of = {t: i for i, t in enumerate(sel)}
     if not np.array_equal(np.unique(tour_of_row), np.sort(sel)):
-        raise ValueError(f"{STEP}: sample rows don't cover every tour")
+        raise ValueError(f"{step}: sample rows don't cover every chooser")
     chosen = np.empty(len(sel), dtype=np.float64)
     logsums = np.empty(len(sel), dtype=np.float64)
     sample_dest_pos = ctx.skim_positions(sample["zone"])
     size_of = zone_size.reindex(sample["zone"]).to_numpy()
-    per_batch = max(1, max_rows // max(1, int((bounds[1] - bounds[0]).max())))
+    width = int((bounds[1] - bounds[0]).max())
+    per_batch = max(1, max_rows // max(1, width))
     for b in range(0, len(sel), per_batch):
         batch_tours = sel[b:b + per_batch]
         lo, hi = bounds[0][b], bounds[1][b + len(batch_tours) - 1]
@@ -594,6 +606,8 @@ def _choose(ctx, sel, tour_ids, cols, orig_pos, sample, zone_size, terms, shift,
              chooser_id: np.asarray(cols[chooser_id])[tours_r],
              "mode_choice_logsum": sample["mode_choice_logsum"][rows],
              "size_term": size_of[rows]}
+        for name, value in (alt_values or {}).items():
+            c[name] = np.full(n, value)
         for name, values in cols.items():
             if name not in c:
                 c[name] = values[tours_r]
@@ -603,13 +617,16 @@ def _choose(ctx, sel, tour_ids, cols, orig_pos, sample, zone_size, terms, shift,
         local = np.array([position_of[t] for t in tours_r]) - b
         counts = np.bincount(local, minlength=len(batch_tours))
         offsets = np.concatenate([[0], np.cumsum(counts)[:-1]])
-        padded = np.full((len(batch_tours), int(counts.max())), PAD_UTILITY)
+        # padded to the widest chooser of the whole segment, as 1.x pads its
+        # (unchunked) call: the width changes how NumPy adds each row up, so
+        # padding per batch would change the last bits of logsums
+        padded = np.full((len(batch_tours), width), PAD_UTILITY)
         padded[local, np.arange(n) - offsets[local]] = utils
         probs, bad, ls = ctx.engine.probabilities(padded, shift=shift, with_logsums=True)
         if bad.any():
-            raise ValueError(f"{STEP}: tours with no usable probabilities: "
+            raise ValueError(f"{step}: choosers with no usable probabilities: "
                              f"{tour_ids[batch_tours][bad][:5].tolist()}")
-        rands = ctx.random.uniform(CHANNEL, tour_ids[batch_tours])
+        rands = ctx.random.uniform(channel, tour_ids[batch_tours])
         positions = ctx.engine.choose(probs, rands)
         chosen[b:b + len(batch_tours)] = sample["zone"][rows][offsets + positions]
         logsums[b:b + len(batch_tours)] = ls

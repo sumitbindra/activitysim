@@ -284,7 +284,9 @@ def load_interaction_model(
     coef_path = find_config_file(configs_dirs, coefficients_file)
     spec = pd.read_csv(spec_path, comment="#").dropna(subset=["Expression"])
     value_cols = [c for c in spec.columns if c not in _SPEC_META_COLUMNS]
-    if value_column is not None:
+    if value_column is not None and len(value_cols) == 1 and value_cols[0] in ("coefficient", value_column):
+        pass  # 1.x's spec_for_segment: a single coefficient column serves every segment
+    elif value_column is not None:
         if value_column not in value_cols:
             raise ValueError(f"{spec_path.name}: no coefficient column '{value_column}' "
                              f"(columns: {value_cols})")

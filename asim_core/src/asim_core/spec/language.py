@@ -37,6 +37,8 @@ Functions: ``where(condition, a, b)``, ``min(a, b, ...)``, ``max(a, b, ...)``
 ``sqrt``, ``abs``, ``floor``, ``ceil``, ``fillna(x, value)``,
 ``map(x, {...})``, ``cut(x, bins=[...], labels=[...])``, ``shift(x, rows)``,
 ``count_by(table.column, keys)`` (rows of a table with each key),
+``sum_by(table.column, table.key, keys)`` (sum over a table's rows per key,
+missing where there are none; e.g. a household's sum over its persons),
 ``int(x)``, ``float(x)``, ``bool(x)``, ``int8(x)`` ... ``float64(x)``,
 ``setting('name')`` (from settings.yaml), and the random draw
 ``random_lognormal(mean=..., sd=...)`` (or ``mu=..., sigma=...`` for the
@@ -70,7 +72,7 @@ TYPES = {"int": "int", "float": "float", "bool": "bool"}
 TYPES.update({t: repr(t) for t in ("int8", "int16", "int32", "int64", "uint8", "uint16", "uint32",
                                     "uint64", "float32", "float64")})
 FUNCTIONS = (UFUNCS | set(TYPES) | {
-    "where", "min", "max", "clip", "between", "abs", "fillna", "map", "cut", "shift", "count_by",
+    "where", "min", "max", "clip", "between", "abs", "fillna", "map", "cut", "shift", "count_by", "sum_by",
     "setting", "random_lognormal",
 })
 RANDOM_CALL = "random_lognormal("
@@ -495,6 +497,21 @@ class _Compiler:
                 self.fail(node, f"table '{table}' has no column '{column}'{_suggest(column, cols)}")
             self.tables.add((table, column))
             return f"t.count({table!r}, {column!r}, {self.visit(a['keys'])})"
+        if f == "sum_by":
+            a = self.args(node, ["column", "by", "keys"], 3)
+            col, by = a["column"], a["by"]
+            ok = all(isinstance(x, ast.Attribute) and isinstance(x.value, ast.Name) and x.value.id in s.tables
+                     for x in (col, by))
+            if not ok or col.value.id != by.value.id:
+                self.fail(node, "sum_by() takes a table's column, the same table's key column, and keys, "
+                                "e.g. sum_by(persons.x, persons.household_id, household.household_id)")
+            table = col.value.id
+            cols = s.tables[table]
+            for c in (col.attr, by.attr):
+                if cols is not None and c not in cols:
+                    self.fail(node, f"table '{table}' has no column '{c}'{_suggest(c, cols)}")
+                self.tables.add((table, c))
+            return f"t.sum_by({table!r}, {col.attr!r}, {by.attr!r}, {self.visit(a['keys'])})"
         if f == "random_lognormal":
             if s.random_index is None:
                 self.fail(node, "random draws are only available in derived values")

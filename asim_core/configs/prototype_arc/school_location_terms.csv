@@ -1,0 +1,17 @@
+Label,Description,Formula,k12_predrive,k12_drive,univ
+,Mode choice logsum,mode_choice_logsum,coeff_mode_k12_predrive,coeff_mode_k12_drive,coeff_mode_univ
+,Intrazonal (origin == dest),person.home_zone_id == alt.alt_dest,-0.5708,-0.5708,-0.1518
+,Distance,"skim.SOV_FREE_DISTANCE[o, d, 'MD']",0.3526869,0.3526869,0.00726
+,CBD Area Type,household.areatype == 1,-0.6092,-0.6092,0.5678
+,Urban Area Type,"household.areatype in [2, 3, 4]",-1.759,-1.759,0
+,Distance Squared,"skim.SOV_FREE_DISTANCE[o, d, 'MD'] ** 2",-0.0444378,-0.0444378,-0.00019
+,Distance Cubed,"skim.SOV_FREE_DISTANCE[o, d, 'MD'] ** 3",0.00085359,0.00085359,-0.00000116
+,Natural Log of Distance,"log(skim.SOV_FREE_DISTANCE[o, d, 'MD'])",-2.73091,-2.73091,-0.9622
+,Distance - low income,"person.is_low_income * skim.SOV_FREE_DISTANCE[o, d, 'MD']",-0.01406,-0.01406,-0.02285
+,Distance - very high income,"person.is_very_high_income * skim.SOV_FREE_DISTANCE[o, d, 'MD']",0.01152,0.01152,0
+,Distance - drive age student,"skim.SOV_FREE_DISTANCE[o, d, 'MD']",0,0.01476,0
+,Size variable,log1p(size_term * shadow_price_size_term_adjustment),1,1,1
+,No attractions,size_term == 0,-999,-999,-999
+,Y17 Calib - Distance,"skim.SOV_FREE_DISTANCE[o, d, 'MD']",0,0,0.07
+,Sample of alternatives correction factor,"min(log(pick_count / prob), 60)",0,0,0
+,Distance Less Than 10 Miles,"min(skim.SOV_FREE_DISTANCE[o, d, 'MD'], 10) ** 2",0.015,0.015,0
