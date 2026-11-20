@@ -21,10 +21,13 @@ from pydantic import BaseModel, ConfigDict, PrivateAttr, field_validator, model_
 
 from .translate import (
     FormulaError,
+    NeedsColumns,
+    NotConstant,
     Translated,
     build_assignment_function,
     build_function,
     compile_function,
+    fold_constant,
     translate,
 )
 
@@ -104,6 +107,15 @@ class ChoiceModelDefinition(BaseModel):
     constants: dict[str, Any] = {}
     terms: list[Term]
     coefficients: dict[str, Coefficient]
+    # Optional coefficient template (segments, e.g. tour purposes): generic
+    # coefficient name -> {segment: the coefficient used for that segment}.
+    # Terms and nests then use the generic names.
+    coefficient_template: dict[str, dict[str, str]] | None = None
+    # whether formulas can use coefficient names as values (1.x's mode choice
+    # models allow it; other simple models don't)
+    formulas_see_coefficients: bool = False
+    # names that look up skims in formulas, e.g. odt_skims['SOV_TIME']
+    skim_accessors: list[str] = []
     source_files: list[str] = []
 
     _translated: list[Translated] = PrivateAttr(default_factory=list)
@@ -112,8 +124,9 @@ class ChoiceModelDefinition(BaseModel):
 
     @model_validator(mode="after")
     def _check(self) -> ChoiceModelDefinition:
-        problems = []
+        problems = self._check_template()
         alts = set(self.alternatives)
+        names = self.coefficient_names
         translated = []
         for i, term in enumerate(self.terms):
             where = f"term {i + 1} ({term.label or term.formula})"
@@ -122,12 +135,16 @@ class ChoiceModelDefinition(BaseModel):
                     problems.append(f"{where}: unknown alternative '{alt}'")
                 try:
                     for name in _names_in_cell(cell):
-                        if name not in self.coefficients:
+                        if name not in names:
                             problems.append(f"{where}, {alt}: unknown coefficient '{name}'")
                 except FormulaError as err:
                     problems.append(f"{where}, {alt}: {err}")
             try:
-                translated.append(translate(term.formula, self.constants))
+                translated.append(translate(
+                    term.formula, self.constants,
+                    coefficients=names if self.formulas_see_coefficients else frozenset(),
+                    skim_accessors=set(self.skim_accessors),
+                ))
             except FormulaError as err:
                 problems.append(f"{where}: {err}")
                 translated.append(None)
@@ -139,6 +156,46 @@ class ChoiceModelDefinition(BaseModel):
         self._translated = translated
         return self
 
+    def _check_template(self) -> list[str]:
+        if self.coefficient_template is None:
+            return []
+        problems = []
+        for generic, by_segment in self.coefficient_template.items():
+            for segment, name in by_segment.items():
+                if name not in self.coefficients:
+                    problems.append(f"coefficient template: '{generic}' for segment '{segment}' "
+                                    f"is '{name}', which is not in the coefficients")
+        if not self.segments:
+            problems.append("coefficient template has no segments")
+        return problems
+
+    @property
+    def segments(self) -> list[str]:
+        """Segment names of the coefficient template (empty without one)."""
+        if not self.coefficient_template:
+            return []
+        first = next(iter(self.coefficient_template.values()))
+        return list(first)
+
+    @property
+    def coefficient_names(self) -> set[str]:
+        """Names terms and nests use: generic names with a template, else the coefficients."""
+        if self.coefficient_template is not None:
+            return set(self.coefficient_template)
+        return set(self.coefficients)
+
+    def coefficient_values(self, segment: str | None = None) -> dict[str, float]:
+        """Name -> value, for one segment when the model has a coefficient template."""
+        if self.coefficient_template is None:
+            if segment is not None:
+                raise ValueError(f"model '{self.name}' has no segments")
+            return {k: c.value for k, c in self.coefficients.items()}
+        if segment not in self.segments:
+            raise KeyError(f"model '{self.name}' has no segment '{segment}' "
+                           f"(segments: {self.segments})")
+        return {g: self.coefficients[by_seg[segment]].value
+                for g, by_seg in self.coefficient_template.items()}
+
     def _check_nests(self) -> list[str]:
         if self.logit_type == "MNL":
             return []
@@ -149,7 +206,7 @@ class ChoiceModelDefinition(BaseModel):
         for node in self.nests.walk():
             if isinstance(node, Nest):
                 names.append(node.name)
-                if isinstance(node.coefficient, str) and node.coefficient not in self.coefficients:
+                if isinstance(node.coefficient, str) and node.coefficient not in self.coefficient_names:
                     problems.append(f"nest '{node.name}': unknown coefficient '{node.coefficient}'")
                 if not node.alternatives:
                     problems.append(f"nest '{node.name}' has no alternatives")
@@ -169,11 +226,11 @@ class ChoiceModelDefinition(BaseModel):
 
     # --- derived values -------------------------------------------------------
 
-    def nest_tree(self) -> NestTree | None:
+    def nest_tree(self, segment: str | None = None) -> NestTree | None:
         """The nests with coefficient names replaced by values (64-bit, as 1.x does)."""
         if self.logit_type != "NL":
             return None
-        values = {k: c.value for k, c in self.coefficients.items()}
+        values = self.coefficient_values(segment)
 
         def resolve(nest: Nest) -> NestTree:
             coef = nest.coefficient
@@ -194,13 +251,21 @@ class ChoiceModelDefinition(BaseModel):
                 cols |= tr.columns
         return cols
 
-    def coefficient_matrix(self, float32_rounding: bool = True) -> np.ndarray:
+    def skim_uses(self, term_mask: np.ndarray | None = None) -> set[tuple[str, str, str]]:
+        """(accessor, skim key, how) for every skim lookup in the formulas."""
+        uses = set()
+        for i, tr in enumerate(self._translated):
+            if term_mask is None or term_mask[i]:
+                uses |= tr.skim_uses
+        return uses
+
+    def coefficient_matrix(self, float32_rounding: bool = True, segment: str | None = None) -> np.ndarray:
         """
         Coefficients as a (terms x alternatives) array; 0 where a term does not
         apply. ActivitySim 1.x rounds coefficients to 32-bit floats before using
         them, so that is the default here too, for exact matching.
         """
-        values = {k: c.value for k, c in self.coefficients.items()}
+        values = self.coefficient_values(segment)
         m = np.zeros((len(self.terms), len(self.alternatives)), dtype=np.float64)
         col = {a: j for j, a in enumerate(self.alternatives)}
         for i, term in enumerate(self.terms):
@@ -243,15 +308,59 @@ class Assignment(BaseModel):
     description: str = ""
 
 
+RANDOM_MARKER = "rng.lognormal_for_df(df,"  # as 1.x's assign_variables looks for it
+
+
+@dataclass
+class BoundAssignments:
+    """
+    An assignment spec translated for a known set of columns: the generated
+    function and everything it reads. Made by ``AssignmentSpec.bind``.
+    """
+
+    spec_name: str
+    # (target, description, Translated) or (target, description, value) for
+    # scalar temporaries worked out when the model loaded
+    items: list[tuple[str, str, object]]
+    function: Any
+    source: str
+    targets: list[str]
+    n_random: int  # random draws per row (rng.lognormal_for_df)
+
+    @property
+    def translated(self) -> list[Translated]:
+        return [tr for _, _, tr in self.items if isinstance(tr, Translated)]
+
+    def columns_used(self) -> set[str]:
+        return set().union(set(), *(t.columns for t in self.translated))
+
+    def skims_used(self) -> set[str]:
+        return set().union(set(), *(t.skims for t in self.translated))
+
+    def skim_uses(self) -> set[tuple[str, str, str]]:
+        return set().union(set(), *(t.skim_uses for t in self.translated))
+
+    def tables_used(self) -> set[tuple[str, str]]:
+        return set().union(set(), *(t.tables for t in self.translated))
+
+    def coefficients_used(self) -> set[str]:
+        return set().union(set(), *(t.coefficients for t in self.translated))
+
+
 class AssignmentSpec(BaseModel):
     """
     A list of assignments evaluated in order, as in ActivitySim 1.x's
     preprocessor, annotation and accessibility files. Targets starting with
     ``_`` are temporary; ``_`` alone is evaluated and thrown away. Any target,
-    once assigned, can be used by later rows by name.
+    once assigned, can be used by later rows by name. Temporaries in capitals
+    (``_DF_IS_TOUR``) hold a single value; when it can be worked out from
+    constants and which columns exist, that is done when the model loads.
 
     Loading checks every formula, with each row seeing only the variables
-    assigned before it.
+    assigned before it. Rows that test which columns exist (``'x' in
+    df.columns``) or read other tables can only be checked once the run's
+    columns are known: ``bind`` does that, and the components call it in the
+    startup check, before anything runs.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -263,34 +372,93 @@ class AssignmentSpec(BaseModel):
     functions: dict[str, str] = {"exp": "np.exp", "log": "np.log"}
     # names that look up skims, e.g. skim_od[('SOVTOLL_TIME', 'AM')]
     skim_accessors: list[str] = []
+    # other tables formulas may read with reindex(), e.g. ['land_use', 'tours']
+    tables: list[str] = []
+    # names whose values are supplied at run time (k['name']), e.g. coefficients
+    coefficients: list[str] = []
+    # values for setting('name')
+    settings: dict[str, Any] = {}
     source_files: list[str] = []
 
-    _translated: list[Translated] = PrivateAttr(default_factory=list)
+    _bound: BoundAssignments | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def _check(self) -> AssignmentSpec:
         problems = []
-        translated = []
-        assigned: set[str] = set()
-        for i, a in enumerate(self.assignments):
-            try:
-                translated.append(translate(
-                    a.formula, self.constants, python_mode=True, assigned=assigned,
-                    functions=self.functions, skim_accessors=set(self.skim_accessors),
-                ))
-            except FormulaError as err:
-                problems.append(f"row {i + 1} ({a.target}): {err}")
-                translated.append(None)
-            if a.target != "_":
-                assigned.add(a.target)
+        try:
+            self._bound = self._bind(None, None, problems)
+        except NeedsColumns:
+            self._bound = None  # checked by bind() once the columns are known
         if not self.targets:
             problems.append("no non-temporary targets: nothing would be produced")
         if problems:
             raise ValueError(
                 f"assignments '{self.name}' have {len(problems)} problem(s):\n  " + "\n  ".join(problems)
             )
-        self._translated = translated
         return self
+
+    def bind(self, df_columns: set[str] | None = None,
+             tables: dict[str, set[str]] | None = None) -> BoundAssignments:
+        """
+        Translate for the given chooser columns and other tables' columns
+        (table name -> columns). Raises ValueError listing every problem.
+        """
+        problems: list[str] = []
+        bound = self._bind(df_columns, tables, problems)
+        if problems:
+            raise ValueError(
+                f"assignments '{self.name}' have {len(problems)} problem(s):\n  " + "\n  ".join(problems)
+            )
+        return bound
+
+    def _bind(self, df_columns, tables, problems) -> BoundAssignments:
+        table_columns = {t: None for t in self.tables}
+        table_columns.update({t: set(c) for t, c in (tables or {}).items() if t in table_columns})
+        constants = dict(self.constants)
+        kw = dict(functions=self.functions, skim_accessors=set(self.skim_accessors),
+                  coefficients=set(self.coefficients), df_columns=df_columns,
+                  tables=table_columns, settings=self.settings)
+        assigned: set[str] = set()
+        items: list[tuple[str, str, object]] = []
+        n_random = 0
+        for i, a in enumerate(self.assignments):
+            random_index = None
+            if RANDOM_MARKER in a.formula:
+                random_index = n_random
+                n_random += 1
+            if a.target.startswith("_") and a.target.isupper():
+                try:
+                    value, _ = fold_constant(a.formula, constants, assigned=assigned, **kw)
+                except NotConstant:
+                    pass  # computed when the step runs
+                except NeedsColumns:
+                    raise
+                except FormulaError as err:
+                    problems.append(f"row {i + 1} ({a.target}): {err}")
+                    continue
+                else:
+                    constants[a.target] = value
+                    assigned.discard(a.target)
+                    items.append((a.target, a.description, value))
+                    continue
+            try:
+                tr = translate(a.formula, constants, python_mode=True, assigned=assigned,
+                               random_index=random_index, **kw)
+                items.append((a.target, a.description, tr))
+            except NeedsColumns:
+                raise
+            except FormulaError as err:
+                problems.append(f"row {i + 1} ({a.target}): {err}")
+            if a.target != "_":
+                assigned.add(a.target)
+        func_name = f"{_identifier(self.name)}_assign"
+        doc = (f"Assignments for '{self.name}', generated by asim_core from "
+               f"{', '.join(self.source_files) or 'the definition'}.")
+        if problems:
+            return BoundAssignments(self.name, items, None, "", self.targets, n_random)
+        source = build_assignment_function(func_name, items, doc)
+        func = compile_function(source, func_name, f"<{func_name}>")
+        return BoundAssignments(self.name, items, func, source, self.targets, n_random)
 
     @property
     def targets(self) -> list[str]:
@@ -301,23 +469,25 @@ class AssignmentSpec(BaseModel):
                 out.append(a.target)
         return out
 
+    def _loaded(self) -> BoundAssignments:
+        if self._bound is None:
+            raise ValueError(f"assignments '{self.name}' depend on the run's columns; use bind()")
+        return self._bound
+
     @property
     def translated(self) -> list[Translated]:
-        return self._translated
+        return self._loaded().translated
 
     def columns_used(self) -> set[str]:
-        return set().union(*(t.columns for t in self._translated)) if self._translated else set()
+        return self._loaded().columns_used()
 
     def skims_used(self) -> set[str]:
-        return set().union(*(t.skims for t in self._translated)) if self._translated else set()
+        return self._loaded().skims_used()
 
     def function(self):
-        """Compile into ``f(c, s) -> dict of assigned variables``. Returns (function, source)."""
-        func_name = f"{_identifier(self.name)}_assign"
-        items = [(a.target, a.description, tr) for a, tr in zip(self.assignments, self._translated)]
-        doc = f"Assignments for '{self.name}', generated by asim_core from {', '.join(self.source_files) or 'the definition'}."
-        source = build_assignment_function(func_name, items, doc)
-        return compile_function(source, func_name, f"<{func_name}>"), source
+        """The compiled ``f(c, s, n, ...) -> dict of assigned variables``, and its source."""
+        b = self._loaded()
+        return b.function, b.source
 
 
 # --- coefficient cells ----------------------------------------------------------

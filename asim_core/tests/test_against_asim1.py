@@ -43,3 +43,20 @@ def test_auto_ownership_matches_1x_exactly(tmp_path):
     ref = st.read("households", comp.name)["auto_ownership"]
     result = compare_column(comp.name, store["households"], "auto_ownership", ref)
     assert result.status == "exact", result
+
+
+@pytest.mark.skipif(not BASELINE.exists(), reason="no ActivitySim 1.x baseline run")
+def test_tour_mode_choice_matches_1x_exactly(tmp_path):
+    pytest.importorskip("tables")
+    from asim_core.components import tour_mode_choice
+    from asim_core.skims import import_omx
+
+    skims = import_omx(REPO / "activitysim/examples/prototype_mtc/data/skims.omx", tmp_path / "skims")
+    st = Asim1State(BASELINE)
+    comp = tour_mode_choice(CONFIGS)
+    store = st.load_store(st.previous_step(comp.name))
+    Runner([comp], tmp_path / "run", skims=skims).run([comp.name], store)
+    ref = st.read("tours", comp.name)
+    for col in ("tour_mode", "mode_choice_logsum"):  # logsums bit for bit
+        result = compare_column(comp.name, store["tours"], col, ref[col])
+        assert result.status == "exact", result

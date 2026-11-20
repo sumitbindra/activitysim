@@ -45,6 +45,7 @@ import shutil
 import time
 import uuid
 import warnings
+from dataclasses import dataclass
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -435,3 +436,51 @@ def check_zone_order(skims: SkimStore, land_use) -> str | None:
     return (f"skim zone order doesn't match land_use: zone_id {land_use.index[i]} is original zone "
             f"{expected[i]}, but matrix row {pos[i]} is zone {found[i]} in the OMX lookup "
             f"({len(bad)} zones differ)")
+
+
+# --- time periods ------------------------------------------------------------------
+
+
+@dataclass
+class TimePeriods:
+    """
+    Skim time periods from network_los.yaml (``skim_time_periods``): times in
+    (periods[i], periods[i+1]] get labels[i], as 1.x's
+    ``skim_time_period_label`` (pandas ``cut``) assigns them.
+    """
+
+    periods: list[float]
+    labels: list[str]
+
+    @property
+    def unique_labels(self) -> list[str]:
+        return list(dict.fromkeys(self.labels))
+
+    def label_index(self, times) -> np.ndarray:
+        """For each time, the position of its label in ``unique_labels``."""
+        times = np.asarray(times, dtype=np.float64)
+        bins = np.searchsorted(np.asarray(self.periods, dtype=np.float64), times, side="left") - 1
+        bad = (bins < 0) | (bins >= len(self.labels)) | np.isnan(times)
+        if bad.any():
+            raise ValueError(
+                f"times outside the skim time periods {self.periods}: {np.unique(times[bad])[:5].tolist()}"
+            )
+        unique = self.unique_labels
+        to_unique = np.array([unique.index(lab) for lab in self.labels])
+        return to_unique[bins]
+
+    def labels_for(self, times) -> np.ndarray:
+        """Each time's label, as an array of strings (object dtype, like 1.x's)."""
+        return np.asarray(self.unique_labels, dtype=object)[self.label_index(times)]
+
+
+def time_periods_from_settings(configs_dirs: Sequence[str | Path]) -> TimePeriods:
+    from .spec.legacy import find_config_file, read_yaml
+
+    los = read_yaml(find_config_file(configs_dirs, "network_los.yaml"))
+    tp = los.get("skim_time_periods")
+    if not tp:
+        raise ValueError("network_los.yaml has no skim_time_periods")
+    if len(tp["labels"]) != len(tp["periods"]) - 1:
+        raise ValueError("skim_time_periods: need one label per period interval")
+    return TimePeriods(periods=list(tp["periods"]), labels=[str(x) for x in tp["labels"]])

@@ -146,7 +146,9 @@ class Runner:
         resolved = self.check(plan, store)
         profiler = profiler or Profiler()
         report = RunReport(plan=plan, profiler=profiler)
-        computed_cols: dict[str, set[str]] = defaultdict(set)
+        # table -> column -> IDs of the rows asim_core computed (a later
+        # replayed 1.x step may add rows, whose values then come from 1.x)
+        computed_cols: dict[str, dict[str, np.ndarray]] = defaultdict(dict)
         self.out_dir.mkdir(parents=True, exist_ok=True)
 
         for step, mode in plan:
@@ -191,7 +193,7 @@ class Runner:
         for table, cols in outputs.items():
             for column, values in cols.items():
                 store[table].set_column(column, values)
-                computed_cols[table].add(column)
+                computed_cols[table][column] = store[table].index.copy()
             if self.save_outputs:
                 path = self.out_dir / "state" / step / f"{table}.parquet"
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -203,16 +205,47 @@ class Runner:
             df = self.replay.read(table, step)
             new = Table.from_pandas(table, df)
             old = store.tables.get(table)
-            for column in sorted(computed_cols.get(table, ())):
+            for column, ids in sorted(computed_cols.get(table, {}).items()):
                 if old is None or column not in old:
                     continue
+                # rows we computed that the replayed table still has
+                ids = ids[np.isin(ids, new.index)]
+                ours = old[column][old.positions(ids)]
                 if column in df.columns:
-                    comparisons.append(compare_column(step, old, column, df[column]))
+                    comparisons.append(
+                        compare_column(step, Table(table, ids, old.index_name, {column: ours}),
+                                       column, df[column].loc[ids])
+                    )
+                    values = new[column]
+                elif len(ids) == len(new):
+                    values = ours
+                else:
+                    raise ValueError(
+                        f"replaying '{step}': table '{table}' gained rows, and 1.x has no "
+                        f"'{column}' for them"
+                    )
                 # keep our computed values, aligned to the replayed rows
-                new.set_column(column, np.asarray(old[column])[old.positions(new.index)])
+                values = _with_values(values, new.positions(ids), ours)
+                new.set_column(column, values)
             store.add(new)
         still_there = set(self.replay.tables_at(step))
         for table in list(store.tables):
             if table not in still_there and table not in computed_cols:
                 del store.tables[table]
         return comparisons
+
+
+def _with_values(values, positions, ours):
+    """``values`` with ``ours`` written at ``positions`` (categoricals keep their categories)."""
+    import pandas as pd
+
+    if isinstance(values, pd.Categorical) or isinstance(ours, pd.Categorical):
+        cats = values.categories if isinstance(values, pd.Categorical) else ours.categories
+        if isinstance(ours, pd.Categorical) and isinstance(values, pd.Categorical):
+            cats = values.categories.union(ours.categories)
+        out = pd.Categorical(np.asarray(values, dtype=object), categories=cats)
+        out[positions] = np.asarray(ours, dtype=object)
+        return out
+    out = np.array(values, copy=True)
+    out[positions] = ours
+    return out

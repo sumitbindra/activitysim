@@ -40,7 +40,7 @@ def random_utils(n=2000, k=len(ALTS), seed=0):
 
 
 def test_probabilities_sum_to_one():
-    probs, bad = nested_probabilities(random_utils(), ALTS, definition().nest_tree())
+    probs, bad, _ = nested_probabilities(random_utils(), ALTS, definition().nest_tree())
     assert not bad.any()
     np.testing.assert_allclose(probs.sum(axis=1), 1.0, atol=1e-12)
 
@@ -48,7 +48,7 @@ def test_probabilities_sum_to_one():
 def test_all_coefficients_one_is_multinomial_logit():
     flat = NestTree("root", 1.0, [NestTree("A", 1.0, ALTS[:3]), NestTree("B", 1.0, ALTS[3:])])
     u = random_utils()
-    nl, _ = nested_probabilities(u, ALTS, flat)
+    nl, _, _ = nested_probabilities(u, ALTS, flat)
     mnl, _ = probabilities(u)
     np.testing.assert_allclose(nl, mnl, rtol=1e-12, atol=1e-15)
 
@@ -90,8 +90,10 @@ def test_matches_activitysim_1x_bit_for_bit():
     nested = simulate.compute_nested_probabilities(state, exp_u, nest_spec, "test")
     ref = simulate.compute_base_probabilities(nested, nest_spec, spec).to_numpy()
 
-    ours, _ = nested_probabilities(u, ALTS, definition().nest_tree())
+    ours, _, logsums = nested_probabilities(u, ALTS, definition().nest_tree())
     assert np.array_equal(ours, ref)
+    # logsums as 1.x's eval_nl computes them for mode choice
+    assert np.array_equal(logsums, np.log(exp_u["root"].to_numpy()))
 
 
 @pytest.mark.skipif(not ARC_CONFIGS.exists(), reason="ARC example not present")

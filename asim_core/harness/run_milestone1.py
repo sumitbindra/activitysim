@@ -37,7 +37,8 @@ import pandas as pd  # noqa: E402
 
 from asim_core.asim1 import Asim1State  # noqa: E402
 from asim_core.compare import compare_column, value_shares, write_comparisons  # noqa: E402
-from asim_core.components import auto_ownership, compute_accessibility  # noqa: E402
+from asim_core.components import auto_ownership, compute_accessibility, tour_mode_choice  # noqa: E402
+from asim_core.spec.translate import FormulaError  # noqa: E402
 from asim_core.profiler import Profiler  # noqa: E402
 from asim_core.runner import Runner  # noqa: E402
 from asim_core.seams import Engine  # noqa: E402
@@ -46,8 +47,24 @@ from asim_core.spec.legacy import load_top_settings  # noqa: E402
 from asim_core.store import Store  # noqa: E402
 
 
+PORTED = [compute_accessibility, auto_ownership, tour_mode_choice]
+NOT_BUILT: dict[str, str] = {}  # component -> why it could not be built for this example
+
+
 def build_components(configs):
-    return [compute_accessibility(configs), auto_ownership(configs)]
+    """
+    The ported components for this example's configs. A component whose
+    configs use something asim_core doesn't support yet is left out (that
+    step is then replayed from 1.x), and the reason recorded in NOT_BUILT.
+    """
+    out = []
+    for make in PORTED:
+        try:
+            out.append(make(configs))
+        except (NotImplementedError, FormulaError, ValueError) as err:
+            NOT_BUILT[make.__name__] = str(err).splitlines()[0][:300]
+            print(f"not ported for this example: {make.__name__}: {NOT_BUILT[make.__name__]}")
+    return out
 
 
 def skim_store(example: Path, configs, read_skim_cache: bool | None = None) -> SkimStore:
@@ -246,6 +263,9 @@ def write_summary(out: Path, info: dict, step_cmp, util_rows, e2e_cmp, e2e_repor
     s.append(f"Example: `{info['example']}`, configs {info['configs']}. "
              f"Machine: {info['platform']}, {info['cpu_count']} CPUs. "
              f"Python {info['python']}.")
+    if NOT_BUILT:
+        s += ["", "Not ported for this example (replayed from 1.x instead):", ""]
+        s += [f"- `{k}`: {v}" for k, v in NOT_BUILT.items()]
     s += ["", "## 1. Step check (start from 1.x's saved state before the step)", ""]
     s.append(md_table(pd.DataFrame([c.__dict__ for c in step_cmp])))
     for name, df in shares.items():
@@ -330,6 +350,7 @@ def main(argv=None) -> int:
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "cpu_count": os.cpu_count(),
+        "not_ported": dict(NOT_BUILT),
     }
     (out / "run_info.json").write_text(json.dumps(info, indent=2))
     summary = write_summary(out, info, step_cmp, util_rows, e2e_cmp, e2e_report, prof_cmp, full_prof, shares)

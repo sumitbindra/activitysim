@@ -58,15 +58,29 @@ class StepRandom:
         Repeated calls in the same step continue each row's stream.
         Returns an array of shape (len(ids), n).
         """
+        return self._next(channel, ids, n, self._draw)
+
+    def normal(self, channel: str, ids, n: int = 1) -> np.ndarray:
+        """
+        ``n`` standard normal draws for each ID, as 1.x's
+        ``normal_for_df(df, broadcast=True, size=n)``. As in 1.x, each
+        stream's position then moves on by ``n``, although NumPy's normal
+        generator uses more uniform numbers than that; later draws in the
+        same step depend on this, so it is reproduced as is.
+        Returns an array of shape (len(ids), n).
+        """
+        return self._next(channel, ids, n, self._draw_normal)
+
+    def _next(self, channel, ids, n, draw) -> np.ndarray:
         ids = np.asarray(ids, dtype=np.int64)
         if len(np.unique(ids)) != len(ids):
-            raise ValueError("uniform() needs unique IDs")
+            raise ValueError("random draws need unique IDs")
         offsets = self._offsets.get(channel)
         if offsets is None:
             offsets = pd.Series(dtype=np.int64)
         current = offsets.reindex(ids, fill_value=0).to_numpy()
         seeds = row_seeds(self.base_seed, channel, self.step, ids)
-        out = self._draw(seeds, current, n)
+        out = draw(seeds, current, n)
         updated = pd.Series(current + n, index=ids)
         self._offsets[channel] = updated.combine_first(offsets).astype(np.int64)
         return out
@@ -79,6 +93,16 @@ class StepRandom:
             if offsets[i]:
                 prng.rand(int(offsets[i]))  # fast-forward past draws already used
             out[i] = prng.rand(n)
+        return out
+
+    def _draw_normal(self, seeds: np.ndarray, offsets: np.ndarray, n: int) -> np.ndarray:
+        out = np.empty((len(seeds), n), dtype=np.float64)
+        prng = np.random.RandomState()
+        for i in range(len(seeds)):
+            prng.seed(int(seeds[i]))
+            if offsets[i]:
+                prng.rand(int(offsets[i]))
+            out[i] = prng.normal(loc=0, scale=1, size=n)
         return out
 
 
@@ -110,3 +134,9 @@ class CounterRandom(StepRandom):
         )
         bits = _splitmix64(counters)
         return (bits >> np.uint64(11)).astype(np.float64) * (1.0 / (1 << 53))
+
+    def _draw_normal(self, seeds: np.ndarray, offsets: np.ndarray, n: int) -> np.ndarray:
+        # Box-Muller transform of two independent counter-based uniforms
+        u1 = self._draw(seeds, offsets, n)
+        u2 = self._draw(seeds ^ np.int64(0x5DEECE66D), offsets, n)
+        return np.sqrt(-2.0 * np.log1p(-u1)) * np.cos(2.0 * np.pi * u2)

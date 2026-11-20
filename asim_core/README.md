@@ -16,14 +16,17 @@ picked by a setting and tested with the experiment harness. Speed-ups come
 from those experiments. Sharrow is not used; 1.x with sharrow is only a
 baseline in the reports.
 
-Status: two components are ported and match 1.x exactly: `compute_accessibility`
-(with skims) and `auto_ownership` (multinomial or nested logit), on three
-regions' example models: MTC, MWCOG (all 29,972 households) and ARC (all
-24,061 households, nested logit). Every other step can be **replayed** from a
-1.x run, so the model runs end to end today. Results:
-[docs/milestone1.md](docs/milestone1.md),
+Status: three components are ported and match 1.x exactly:
+`compute_accessibility` (with skims), `auto_ownership` (multinomial or nested
+logit) and `tour_mode_choice_simulate` (nested logit, purpose segments,
+preprocessor, time-of-day skims; every mode and every logsum identical). They
+were checked on three regions' example models: MTC, MWCOG (all 29,972
+households for the first two) and ARC (all 24,061 households). Every other
+step can be **replayed** from a 1.x run, so the model runs end to end today.
+Results: [docs/milestone1.md](docs/milestone1.md),
 [docs/skims_and_accessibility.md](docs/skims_and_accessibility.md),
-[docs/mwcog.md](docs/mwcog.md), [docs/arc.md](docs/arc.md).
+[docs/mwcog.md](docs/mwcog.md), [docs/arc.md](docs/arc.md),
+[docs/tour_mode_choice.md](docs/tour_mode_choice.md).
 
 The harness can also test changes to 1.x itself
 ([docs/scheduling.md](docs/scheduling.md)): a run-time patch that computes
@@ -61,7 +64,7 @@ pieces and the first experiments: [docs/experiments.md](docs/experiments.md).
 | `src/asim_core/logit.py` | Reference implementations of utilities, probabilities (multinomial and nested logit) and choices, with 1.x's arithmetic. |
 | `src/asim_core/alternatives.py` | Alternative implementations for experiments (e.g. `accumulate` utilities). |
 | `src/asim_core/spec/` | Model definitions (Pydantic): choice models and assignment specs; the loader for today's YAML/CSV files; the formula translator. |
-| `src/asim_core/components/` | Components. `simple_choice.py` runs any simple choice model from its definition; `auto_ownership.py` and `accessibility.py` are ported models. |
+| `src/asim_core/components/` | Components. `simple_choice.py` runs any simple choice model from its definition; `auto_ownership.py`, `accessibility.py` and `tour_mode_choice.py` are ported models. |
 | `harness/` | Scripts that run 1.x and compare (these import 1.x). |
 | `tests/` | Unit tests, plus an exact-match test against a saved 1.x run. |
 
@@ -122,12 +125,20 @@ Today's files are read unchanged. For `auto_ownership` the loader reads
 Loading fails with a list of every problem found: unknown coefficients or
 alternatives, or formulas that use something unsupported.
 
+Models with purpose segments (a coefficient template) and preprocessors,
+like tour mode choice, are read the same way, unchanged.
+
 Formulas are parsed with Python's `ast` module, not executed, and turned
 into plain NumPy code you can read. For example,
 `@(df.num_workers==0)*df.density_index.clip(0, 10)` becomes
 `((c['num_workers'] == 0) * _clip(c['density_index'], 0, 10))`. The
 milestone script writes each model's generated code to
 `work/milestone1/step_check/<step>/generated/`.
+
+Preprocessor rows that test what data exists, such as
+`df.number_of_participants if 'tour_type' in df.columns else 1`, are worked
+out in the startup check, once the step's columns are known; only the branch
+that applies is written into the generated code.
 
 ## Adding a component
 
@@ -155,11 +166,10 @@ Simple choice models, multinomial or nested logit, need no code: build them with
 
 ## Not supported yet
 
-Coefficient templates (purpose segments), preprocessors and
-annotation (assignment specs work, but joins to other tables like
-`persons.age` and `reindex()` don't yet), skims indexed by each row's time
-period (`odt_skims`), Parquet skim files, two- and three-zone systems (MAZ,
-TAP), writing trip tables to OMX, starting a run from asim_core's own saved
-state, a command-line `run` for agency model loops, sampling of alternatives,
-multiprocessing, estimation, and peak-memory measurement outside Linux. The loader names any unsupported
-setting it finds instead of running a partial model.
+Annotation after a model, park-and-ride, sampling of alternatives (so no
+destination choice or scheduling yet), Parquet skim files, two- and
+three-zone systems (MAZ, TAP), writing trip tables to OMX, starting a run
+from asim_core's own saved state, a command-line `run` for agency model
+loops, multiprocessing, estimation, and peak-memory measurement outside
+Linux. The loader names any unsupported setting it finds instead of running
+a partial model.

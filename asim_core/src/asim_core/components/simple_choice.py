@@ -24,51 +24,98 @@ from ..spec.definition import ChoiceModelDefinition
 
 @dataclass
 class ChooserView:
+    """
+    The chooser table plus other tables joined by a key column, e.g. tours
+    joined to persons by person_id, persons to households by household_id.
+    A join's key can come from the chooser table or an earlier join.
+
+    When a column name is in several tables, the chooser table wins, then
+    the earlier join; this is the order 1.x's merged tables give.
+    """
+
     table: str
-    # (other table, key column in the chooser table), in order of precedence:
-    # a column found in the chooser table wins, then the first joined table
+    # (other table, key column), in order of precedence
     joins: list[tuple[str, str]] = field(default_factory=list)
+
+    def _join_index(self, table: str) -> int:
+        return [t for t, _ in self.joins].index(table)
+
+    def _source(self, col: str, available: Mapping[str, set[str]], upto: int | None = None):
+        if col in available.get(self.table, set()):
+            return self.table
+        for other, _ in self.joins[:upto]:
+            if col in available.get(other, set()):
+                return other
+        return None
+
+    def columns(self, available: Mapping[str, set[str]]) -> set[str]:
+        """Every column the view offers."""
+        out = set(available.get(self.table, set()))
+        for other, _ in self.joins:
+            out |= available.get(other, set())
+        return out
 
     def resolve(self, columns: set[str], available: Mapping[str, set[str]]) -> Needs:
         needs: dict[str, set[str]] = {self.table: set()}
-        missing = []
-        for col in sorted(columns):
-            if col in available.get(self.table, set()):
-                needs[self.table].add(col)
-                continue
-            for other, key in self.joins:
-                if col in available.get(other, set()):
-                    needs.setdefault(other, set()).add(col)
-                    needs[self.table].add(key)
-                    break
-            else:
-                missing.append(col)
+
+        def add(col: str, upto: int | None = None) -> bool:
+            src = self._source(col, available, upto)
+            if src is None:
+                return False
+            if col in needs.get(src, set()):
+                return True
+            needs.setdefault(src, set()).add(col)
+            if src != self.table:
+                i = self._join_index(src)
+                key = self.joins[i][1]
+                if not add(key, i):
+                    raise MissingInputError(
+                        f"key '{key}' to join '{src}' not found in {self.table} or an earlier join"
+                    )
+            return True
+
+        missing = [col for col in sorted(columns) if not add(col)]
         if missing:
             where = [self.table] + [t for t, _ in self.joins]
             raise MissingInputError(f"columns {missing} not found in {where}")
         return {t: sorted(c) for t, c in needs.items()}
 
-    def gather(self, ctx: StepContext, needs: Needs) -> dict[str, object]:
-        cols = {c: ctx.column(self.table, c) for c in needs.get(self.table, [])}
-        for other, key in self.joins:
-            if other in needs:
-                keys = ctx.column(self.table, key)
-                for c in needs[other]:
-                    if c not in cols:
-                        cols[c] = ctx.column_for(other, c, keys)
+    def _collect(self, needs: Needs, column, positions, column_at) -> dict[str, object]:
+        sources: dict[str, str] = {}
+        for t in [self.table] + [o for o, _ in self.joins]:
+            for c in needs.get(t, []):
+                sources.setdefault(c, t)
+        cols: dict[str, object] = {}
+        pos: dict[str, object] = {}
+
+        def value(c):
+            if c not in cols:
+                t = sources[c]
+                if t == self.table:
+                    cols[c] = column(t, c)
+                else:
+                    if t not in pos:
+                        pos[t] = positions(t, value(self.joins[self._join_index(t)][1]))
+                    cols[c] = column_at(t, c, pos[t])
+            return cols[c]
+
+        for c in sources:
+            value(c)
         return cols
+
+    def gather(self, ctx: StepContext, needs: Needs) -> dict[str, object]:
+        """The needed columns, in chooser row order (joined columns looked up, not merged)."""
+        return self._collect(needs, ctx.column, ctx.positions, ctx.column_at)
 
     def gather_from_store(self, store, columns: set[str]) -> dict[str, object]:
         """Same as ``gather``, straight from a Store (for checks and notebooks)."""
         needs = self.resolve(columns, store.columns())
-        cols = {c: store[self.table][c] for c in needs.get(self.table, [])}
-        for other, key in self.joins:
-            if other in needs:
-                pos = store[other].positions(store[self.table][key])
-                for c in needs[other]:
-                    if c not in cols:
-                        cols[c] = store[other][c][pos]
-        return cols
+        return self._collect(
+            needs,
+            lambda t, c: store[t][c],
+            lambda t, ids: store[t].positions(ids),
+            lambda t, c, p: store[t][c][p],
+        )
 
 
 def simple_choice_component(
@@ -109,7 +156,7 @@ def simple_choice_component(
         if nests is None:
             probs, bad = engine.probabilities(utils, shift=shift_utilities)
         else:  # 1.x uses no overflow protection for nested logit
-            probs, bad = engine.nested_probabilities(utils, definition.alternatives, nests)
+            probs, bad, _ = engine.nested_probabilities(utils, definition.alternatives, nests)
         return utils, probs, bad
 
     def run(ctx: StepContext):

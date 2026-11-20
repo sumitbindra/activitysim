@@ -3,5 +3,7 @@
 from .accessibility import compute_accessibility
 from .auto_ownership import auto_ownership
 from .simple_choice import ChooserView, simple_choice_component
+from .tour_mode_choice import tour_mode_choice
 
-__all__ = ["auto_ownership", "compute_accessibility", "ChooserView", "simple_choice_component"]
+__all__ = ["auto_ownership", "compute_accessibility", "ChooserView", "simple_choice_component",
+           "tour_mode_choice"]

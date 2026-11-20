@@ -23,6 +23,22 @@ Assignment specs (preprocessors, annotations, accessibility) are always
 Python style, and can also use variables assigned by earlier rows (``v[name]``),
 skim lookups such as ``skim_od[('SOVTOLL_TIME', 'AM')]`` (``s(accessor,
 'SOVTOLL_TIME__AM')``) and bare functions such as ``exp`` (``np.exp``).
+
+**Decided when the model loads.** Some formulas test what data exists, e.g.
+``df.number_of_participants if 'tour_type' in df.columns else 1``. Given the
+columns that will be present (``df_columns``, ``tables``), such tests are
+worked out during translation and only the branch that applies is written
+into the code. So the generated code is simpler, and the columns a step reads
+are known exactly before it runs. A test that can't be worked out from
+constants and column names is reported as unsupported.
+
+Other names the generated code can use, supplied by the component:
+
+* ``k['name']``: a coefficient used inside a formula (its value can differ by
+  segment, e.g. tour purpose);
+* ``t('land_use', 'TOPOLOGY', keys)``: a column of another table looked up by
+  ID (1.x's ``reindex(land_use.TOPOLOGY, keys)``);
+* ``r[:, i]``: the step's i-th set of random draws (``rng.lognormal_for_df``).
 """
 
 from __future__ import annotations
@@ -32,10 +48,19 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 import numpy as np
+import pandas as pd
 
 
 class FormulaError(ValueError):
     pass
+
+
+class NeedsColumns(FormulaError):
+    """The formula tests or reads columns that are only known once the run's tables are."""
+
+
+class NotConstant(FormulaError):
+    """The formula's value can't be worked out when the model loads."""
 
 
 # numpy functions a formula may call as np.<name>(...)
@@ -43,6 +68,10 @@ NP_FUNCTIONS = {
     "where", "minimum", "maximum", "clip", "isin",
     "log", "log1p", "exp", "sqrt", "abs", "floor", "ceil",
 }
+NP_VALUES = {"inf", "nan"}  # np.inf, np.nan
+ASTYPE_NAMES = {"int", "float", "bool"}  # .astype(int) etc.
+ASTYPE_STRINGS = {"int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
+                  "float32", "float64", "bool"}
 
 _BINOPS = {
     ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/", ast.FloorDiv: "//",
@@ -52,6 +81,7 @@ _CMPOPS = {
     ast.Eq: "==", ast.NotEq: "!=", ast.Lt: "<", ast.LtE: "<=", ast.Gt: ">", ast.GtE: ">=",
 }
 _UNARY = {ast.USub: "-", ast.UAdd: "+", ast.Invert: "~"}
+_NOT_CONSTANT = object()
 
 
 @dataclass
@@ -62,14 +92,23 @@ class Translated:
     constants: set[str] = field(default_factory=set)
     skims: set[str] = field(default_factory=set)  # skim names, e.g. 'SOVTOLL_TIME__AM'
     names: set[str] = field(default_factory=set)  # earlier assigned variables used
+    # (accessor, skim key, how): how is 'get', 'reverse' or 'max'
+    skim_uses: set[tuple[str, str, str]] = field(default_factory=set)
+    coefficients: set[str] = field(default_factory=set)  # used as k['name']
+    tables: set[tuple[str, str]] = field(default_factory=set)  # (table, column) looked up by ID
+    random_draws: bool = False
 
 
 def _literal(value) -> str:
     if isinstance(value, (bool, int, float, str)) or value is None:
+        if isinstance(value, float) and not np.isfinite(value):
+            return "np.nan" if np.isnan(value) else ("np.inf" if value > 0 else "(-np.inf)")
         return repr(value)
     if isinstance(value, (list, tuple)):
         return "[" + ", ".join(_literal(v) for v in value) + "]"
-    raise FormulaError(f"constant value {value!r} is not a number, string or list")
+    if isinstance(value, dict):
+        return "{" + ", ".join(f"{_literal(k)}: {_literal(v)}" for k, v in value.items()) + "}"
+    raise FormulaError(f"constant value {value!r} is not a number, string, list or dict")
 
 
 class _Translator:
@@ -81,6 +120,11 @@ class _Translator:
         assigned: set[str] = frozenset(),
         functions: Mapping[str, str] | None = None,
         skim_accessors: set[str] = frozenset(),
+        coefficients: set[str] = frozenset(),
+        df_columns: set[str] | None = None,
+        tables: Mapping[str, set[str]] | None = None,
+        settings: Mapping[str, object] | None = None,
+        random_index: int | None = None,
     ):
         self.formula = formula
         self.constants = constants
@@ -88,10 +132,20 @@ class _Translator:
         self.assigned = assigned
         self.functions = functions or {}
         self.skim_accessors = skim_accessors
+        self.coefficient_names = coefficients
+        self.df_columns = df_columns
+        self.table_columns = dict(tables or {})
+        self.settings = settings or {}
+        self.random_index = random_index
         self.columns: set[str] = set()
         self.used_constants: set[str] = set()
         self.skims: set[str] = set()
+        self.skim_uses: set[tuple[str, str, str]] = set()
         self.names: set[str] = set()
+        self.coefficients: set[str] = set()
+        self.tables: set[tuple[str, str]] = set()
+        self.random_draws = False
+        self._lookup: tuple[str, str] | None = None  # (table, keys) inside reindex()
 
     def fail(self, node: ast.AST, why: str):
         part = ast.unparse(node) if isinstance(node, ast.AST) else str(node)
@@ -100,6 +154,108 @@ class _Translator:
     def column(self, name: str) -> str:
         self.columns.add(name)
         return f"c[{name!r}]"
+
+    # --- values known when the model loads ------------------------------------
+
+    def fold(self, node: ast.AST):
+        """The node's value if it can be worked out now, else _NOT_CONSTANT."""
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name) and self.python_mode:
+            if node.id in self.assigned or node.id in self.coefficient_names:
+                return _NOT_CONSTANT
+            if node.id in self.constants:
+                self.used_constants.add(node.id)
+                return self.constants[node.id]
+            return _NOT_CONSTANT
+        if isinstance(node, (ast.List, ast.Tuple)):
+            vals = [self.fold(e) for e in node.elts]
+            return _NOT_CONSTANT if any(v is _NOT_CONSTANT for v in vals) else vals
+        if isinstance(node, ast.UnaryOp):
+            v = self.fold(node.operand)
+            if v is _NOT_CONSTANT:
+                return v
+            if isinstance(node.op, ast.Not):
+                return not v
+            if isinstance(node.op, ast.USub):
+                return -v
+            if isinstance(node.op, ast.UAdd):
+                return +v
+            return _NOT_CONSTANT
+        if isinstance(node, ast.BoolOp):
+            vals = [self.fold(v) for v in node.values]
+            if any(v is _NOT_CONSTANT for v in vals):
+                return _NOT_CONSTANT
+            if isinstance(node.op, ast.And):
+                out = True
+                for v in vals:
+                    out = out and v
+                return out
+            out = False
+            for v in vals:
+                out = out or v
+            return out
+        if isinstance(node, ast.Compare):
+            member = self.membership(node)
+            if member is not None:
+                return member
+            vals = [self.fold(node.left)] + [self.fold(c) for c in node.comparators]
+            if any(v is _NOT_CONSTANT for v in vals):
+                return _NOT_CONSTANT
+            ops = {ast.Eq: lambda a, b: a == b, ast.NotEq: lambda a, b: a != b,
+                   ast.Lt: lambda a, b: a < b, ast.LtE: lambda a, b: a <= b,
+                   ast.Gt: lambda a, b: a > b, ast.GtE: lambda a, b: a >= b,
+                   ast.In: lambda a, b: a in b, ast.NotIn: lambda a, b: a not in b}
+            for a, op, b in zip(vals, node.ops, vals[1:]):
+                if type(op) not in ops or not ops[type(op)](a, b):
+                    return False if type(op) in ops else _NOT_CONSTANT
+            return True
+        if isinstance(node, ast.IfExp):
+            test = self.fold(node.test)
+            if test is _NOT_CONSTANT:
+                return test
+            return self.fold(node.body if test else node.orelse)
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id == "setting":
+                return self.setting(node)
+        return _NOT_CONSTANT
+
+    def membership(self, node: ast.Compare):
+        """``'x' in df.columns``, ``'x' in df``, ``'x' in land_use``: True/False, or None."""
+        if len(node.ops) != 1 or not isinstance(node.ops[0], (ast.In, ast.NotIn)):
+            return None
+        container = node.comparators[0]
+        if isinstance(container, ast.Attribute) and container.attr == "columns":
+            container = container.value
+        if not isinstance(container, ast.Name):
+            return None
+        if container.id == "df":
+            if self.df_columns is None:
+                raise NeedsColumns(f"formula {self.formula!r}: testing which columns exist "
+                                   f"needs the chooser's columns")
+            columns = self.df_columns
+        elif container.id in self.table_columns:
+            columns = self.table_columns[container.id]
+            if columns is None:
+                raise NeedsColumns(f"formula {self.formula!r}: needs the columns of "
+                                   f"table '{container.id}'")
+        else:
+            return None
+        name = self.fold(node.left)
+        if not isinstance(name, str):
+            self.fail(node, "column test needs a column name in quotes")
+        found = name in columns
+        return found if isinstance(node.ops[0], ast.In) else not found
+
+    def setting(self, node: ast.Call):
+        if len(node.args) != 1 or node.keywords or not isinstance(node.args[0], ast.Constant):
+            self.fail(node, "setting() takes one setting name in quotes")
+        name = node.args[0].value
+        if name not in self.settings:
+            self.fail(node, f"setting '{name}' not found in settings.yaml")
+        return self.settings[name]
+
+    # --- translation ------------------------------------------------------------
 
     def visit(self, node: ast.AST) -> str:
         if isinstance(node, ast.Expression):
@@ -119,6 +275,9 @@ class _Translator:
             if node.id in self.assigned:  # a variable assigned by an earlier row
                 self.names.add(node.id)
                 return f"v[{node.id!r}]"
+            if node.id in self.coefficient_names:
+                self.coefficients.add(node.id)
+                return f"k[{node.id!r}]"
             if node.id in self.constants:
                 self.used_constants.add(node.id)
                 return _literal(self.constants[node.id])
@@ -128,19 +287,32 @@ class _Translator:
         if isinstance(node, ast.Attribute):
             if isinstance(node.value, ast.Name) and node.value.id == "df":
                 return self.column(node.attr)
+            if isinstance(node.value, ast.Name) and node.value.id == "np" and node.attr in NP_VALUES:
+                return f"np.{node.attr}"
+            if isinstance(node.value, ast.Name) and node.value.id in self.table_columns:
+                return self.table_column(node, node.value.id, node.attr)
             self.fail(node, "unsupported attribute")
 
         if isinstance(node, ast.Subscript):
-            if (
-                isinstance(node.value, ast.Name)
-                and node.value.id == "df"
-                and isinstance(node.slice, ast.Constant)
-                and isinstance(node.slice.value, str)
-            ):
-                return self.column(node.slice.value)
+            if isinstance(node.value, ast.Name) and node.value.id == "df":
+                name = self.fold(node.slice)
+                if isinstance(name, str):
+                    return self.column(name)
+                self.fail(node, "df[...] needs a column name")
             if isinstance(node.value, ast.Name) and node.value.id in self.skim_accessors:
                 return self.skim(node)
+            if isinstance(node.value, ast.Name) and node.value.id in self.table_columns:
+                name = self.fold(node.slice)
+                if isinstance(name, str):
+                    return self.table_column(node, node.value.id, name)
             self.fail(node, "unsupported subscript (only df['column'] and skim lookups are allowed)")
+
+        if isinstance(node, ast.IfExp):
+            test = self.fold(node.test)
+            if test is _NOT_CONSTANT:
+                self.fail(node, "the condition of 'x if condition else y' must be decided "
+                                "when the model loads (constants and column names only)")
+            return self.visit(node.body if test else node.orelse)
 
         if isinstance(node, ast.BinOp):
             op = _BINOPS.get(type(node.op))
@@ -150,11 +322,17 @@ class _Translator:
 
         if isinstance(node, ast.UnaryOp):
             if isinstance(node.op, ast.Not):
+                value = self.fold(node)
+                if value is not _NOT_CONSTANT:
+                    return repr(value)
                 return f"np.logical_not({self.visit(node.operand)})"
             return f"({_UNARY[type(node.op)]}{self.visit(node.operand)})"
 
         if isinstance(node, ast.BoolOp):
             if self.python_mode:
+                value = self.fold(node)
+                if value is not _NOT_CONSTANT:
+                    return _literal(value)
                 self.fail(node, "'and'/'or' do not work on columns; use & and |")
             op = " & " if isinstance(node.op, ast.And) else " | "
             return "(" + op.join(self.visit(v) for v in node.values) + ")"
@@ -168,6 +346,9 @@ class _Translator:
         self.fail(node, f"unsupported syntax ({type(node).__name__})")
 
     def compare(self, node: ast.Compare) -> str:
+        member = self.membership(node)
+        if member is not None:
+            return repr(member)
         if len(node.ops) > 1 and self.python_mode:
             self.fail(node, "chained comparisons are not supported")
         parts = []
@@ -199,10 +380,26 @@ class _Translator:
         else:
             self.fail(node, "skim keys must be 'NAME' or ('NAME', 'PERIOD')")
         self.skims.add(name)
+        self.skim_uses.add((node.value.id, name, "get"))
         return f"s({node.value.id!r}, {name!r})"
+
+    def skim_method(self, node: ast.Call, accessor: str, how: str) -> str:
+        """od_skims.reverse('DIST') (destination to origin) and od_skims.max('DIST') (larger of both)."""
+        if len(node.args) != 1 or node.keywords or not (
+            isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)
+        ):
+            self.fail(node, f".{how}() takes one skim name in quotes")
+        name = node.args[0].value
+        self.skims.add(name)
+        self.skim_uses.add((accessor, name, how))
+        return f"s({accessor!r}, {name!r}, {how!r})"
 
     def call(self, node: ast.Call) -> str:
         func = node.func
+        if isinstance(func, ast.Name) and func.id == "setting":
+            return _literal(self.setting(node))
+        if isinstance(func, ast.Name) and func.id == "reindex":
+            return self.reindex(node)
         # bare functions made available by the model, e.g. exp(...) -> np.exp(...)
         if isinstance(func, ast.Name) and func.id in self.functions:
             if node.keywords:
@@ -215,6 +412,18 @@ class _Translator:
             args = [self.visit(a) for a in node.args]
             args += [f"{k.arg}={self.visit(k.value)}" for k in node.keywords]
             return f"np.{func.attr}({', '.join(args)})"
+        # pd.cut(x, bins=[...], labels=[...])
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "pd":
+            if func.attr == "cut":
+                return self.cut(node)
+            self.fail(node, f"pd.{func.attr} is not supported (only pd.cut)")
+        # rng.lognormal_for_df(df, mu=..., sigma=..., broadcast=True, scale=...)
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "rng":
+            return self.lognormal(node)
+        # skim_accessor.reverse('NAME') / .max('NAME')
+        if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
+                and func.value.id in self.skim_accessors and func.attr in ("reverse", "max")):
+            return self.skim_method(node, func.value.id, func.attr)
         # <column expression>.<method>(...)
         if isinstance(func, ast.Attribute):
             target = self.visit(func.value)
@@ -250,8 +459,110 @@ class _Translator:
                 if len(node.args) != 1 or kw:
                     self.fail(node, "fillna() takes one value")
                 return f"_fillna({target}, {self.visit(node.args[0])})"
+            if method == "map":
+                if len(node.args) != 1 or kw:
+                    self.fail(node, "map() takes one dictionary")
+                return f"_map({target}, {_literal(self.mapping(node.args[0]))})"
+            if method == "astype":
+                if len(node.args) != 1 or kw:
+                    self.fail(node, "astype() takes one type")
+                a = node.args[0]
+                if isinstance(a, ast.Name) and a.id in ASTYPE_NAMES:
+                    return f"_astype({target}, {a.id})"
+                if isinstance(a, ast.Constant) and a.value in ASTYPE_STRINGS:
+                    return f"_astype({target}, {a.value!r})"
+                self.fail(node, f"astype() supports {sorted(ASTYPE_NAMES)} and {sorted(ASTYPE_STRINGS)}")
             self.fail(node, f"method .{method}() is not supported")
         self.fail(node, "unsupported function call")
+
+    def reindex(self, node: ast.Call) -> str:
+        """
+        reindex(land_use.TOPOLOGY, df.destination) -> t('land_use', 'TOPOLOGY', c['destination']).
+        The first argument can also be element-by-element arithmetic on one
+        table's columns, e.g. reindex(land_use.LANDAREA * 640, ...): the
+        columns are looked up first, then the arithmetic is done, which gives
+        the same values.
+        """
+        if len(node.args) != 2 or node.keywords:
+            self.fail(node, "reindex() takes a table column and the IDs to look up")
+        if self._lookup is not None:
+            self.fail(node, "reindex() inside reindex() is not supported")
+        tables = {n.id for n in ast.walk(node.args[0])
+                  if isinstance(n, ast.Name) and n.id in self.table_columns}
+        if len(tables) != 1:
+            known = sorted(self.table_columns) or "none"
+            self.fail(node, f"reindex() needs columns of one table the model lists (tables: {known})")
+        table = tables.pop()
+        if self.table_columns[table] is None:
+            raise NeedsColumns(f"formula {self.formula!r}: needs the columns of table '{table}'")
+        self._lookup = (table, self.visit(node.args[1]))
+        try:
+            return self.visit(node.args[0])
+        finally:
+            self._lookup = None
+
+    def table_column(self, node: ast.AST, table: str, name: str) -> str:
+        """A table's column inside reindex(): looked up for the reindex keys."""
+        lookup = self._lookup
+        if lookup is None or lookup[0] != table:
+            self.fail(node, f"columns of '{table}' can only be used inside reindex()")
+        if name not in self.table_columns[table]:
+            self.fail(node, f"table '{table}' has no column '{name}'")
+        self.tables.add((table, name))
+        return f"t({table!r}, {name!r}, {lookup[1]})"
+
+    def mapping(self, node: ast.AST) -> dict:
+        """A dictionary for .map(): a constant, a literal, or {k: v for k, v in CONSTANT.items()}."""
+        if isinstance(node, ast.DictComp) and len(node.generators) == 1:
+            gen = node.generators[0]
+            it = gen.iter
+            if (isinstance(gen.target, ast.Tuple) and len(gen.target.elts) == 2
+                    and all(isinstance(e, ast.Name) for e in gen.target.elts)
+                    and isinstance(node.key, ast.Name) and isinstance(node.value, ast.Name)
+                    and node.key.id == gen.target.elts[0].id and node.value.id == gen.target.elts[1].id
+                    and not gen.ifs and isinstance(it, ast.Call) and not it.args
+                    and isinstance(it.func, ast.Attribute) and it.func.attr == "items"):
+                node = it.func.value  # {k: v for k, v in X.items()} is X
+            else:
+                self.fail(node, "only {k: v for k, v in NAME.items()} is supported")
+        if isinstance(node, ast.Dict):
+            keys = [self.fold(k) for k in node.keys]
+            vals = [self.fold(v) for v in node.values]
+            if any(x is _NOT_CONSTANT for x in keys + vals):
+                self.fail(node, "map() dictionary must hold constants")
+            return dict(zip(keys, vals))
+        value = self.fold(node)
+        if not isinstance(value, dict):
+            self.fail(node, "map() needs a dictionary constant")
+        return value
+
+    def cut(self, node: ast.Call) -> str:
+        kw = {k.arg: k.value for k in node.keywords}
+        if len(node.args) != 1 or set(kw) != {"bins", "labels"}:
+            self.fail(node, "pd.cut() is supported as pd.cut(x, bins=[...], labels=[...])")
+        return f"_cut({self.visit(node.args[0])}, {self.visit(kw['bins'])}, {self.visit(kw['labels'])})"
+
+    def lognormal(self, node: ast.Call) -> str:
+        func = node.func
+        if func.attr != "lognormal_for_df":
+            self.fail(node, f"rng.{func.attr}() is not supported (only rng.lognormal_for_df)")
+        if self.random_index is None:
+            self.fail(node, "random draws are only available in assignment specs")
+        if not (len(node.args) == 1 and isinstance(node.args[0], ast.Name) and node.args[0].id == "df"):
+            self.fail(node, "lognormal_for_df() must draw for df")
+        kw = {k.arg: k.value for k in node.keywords}
+        if not {"mu", "sigma"} <= set(kw) or set(kw) - {"mu", "sigma", "broadcast", "scale"}:
+            self.fail(node, "lognormal_for_df() takes mu, sigma, broadcast and scale")
+        broadcast = self.fold(kw["broadcast"]) if "broadcast" in kw else False
+        if broadcast is not True:
+            # 1.x draws all of a spec's lognormals in one call, which needs broadcast=True
+            self.fail(node, "lognormal_for_df() needs broadcast=True")
+        scale = self.fold(kw["scale"]) if "scale" in kw else False
+        if not isinstance(scale, bool):
+            self.fail(node, "scale must be True or False")
+        self.random_draws = True
+        return (f"_lognormal(r[:, {self.random_index}], {self.visit(kw['mu'])}, "
+                f"{self.visit(kw['sigma'])}, scale={scale})")
 
 
 def translate(
@@ -262,6 +573,11 @@ def translate(
     assigned: set[str] = frozenset(),
     functions: Mapping[str, str] | None = None,
     skim_accessors: set[str] = frozenset(),
+    coefficients: set[str] = frozenset(),
+    df_columns: set[str] | None = None,
+    tables: Mapping[str, set[str]] | None = None,
+    settings: Mapping[str, object] | None = None,
+    random_index: int | None = None,
 ) -> Translated:
     """
     Translate one spec formula to a NumPy expression over column arrays ``c``.
@@ -271,6 +587,13 @@ def translate(
     variables (referenced as ``v[name]``), ``functions`` maps bare function
     names to NumPy (e.g. ``{'exp': 'np.exp'}``) and ``skim_accessors`` names
     the skim lookups available (referenced as ``s(accessor, skim_name)``).
+
+    ``coefficients`` are names whose values are supplied at run time
+    (``k[name]``); they take precedence over constants of the same name.
+    ``df_columns`` and ``tables`` (table name -> its columns) let formulas
+    test which columns exist and look up other tables' columns; ``settings``
+    answers ``setting('name')``; ``random_index`` is the position of this
+    formula's random draws, for ``rng.lognormal_for_df``.
     """
     text = formula.strip()
     if python_mode is None:
@@ -281,10 +604,30 @@ def translate(
         tree = ast.parse(text.strip(), mode="eval")
     except SyntaxError as err:
         raise FormulaError(f"formula {formula!r} is not valid syntax: {err.msg}") from None
-    t = _Translator(formula, constants or {}, python_mode, assigned, functions, skim_accessors)
+    t = _Translator(formula, constants or {}, python_mode, assigned, functions, skim_accessors,
+                    coefficients, df_columns, tables, settings, random_index)
     source = t.visit(tree)
     return Translated(formula=formula, source=source, columns=t.columns,
-                      constants=t.used_constants, skims=t.skims, names=t.names)
+                      constants=t.used_constants, skims=t.skims, names=t.names,
+                      skim_uses=t.skim_uses, coefficients=t.coefficients, tables=t.tables,
+                      random_draws=t.random_draws)
+
+
+def fold_constant(formula: str, constants: Mapping[str, object] | None = None, **kw):
+    """
+    The value of a Python-style formula if it can be worked out now (from
+    constants, settings and which columns exist), else raises FormulaError.
+    """
+    text = formula.strip().lstrip("@")
+    try:
+        tree = ast.parse(text, mode="eval")
+    except SyntaxError as err:
+        raise FormulaError(f"formula {formula!r} is not valid syntax: {err.msg}") from None
+    t = _Translator(formula, constants or {}, True, **kw)
+    value = t.fold(tree.body)
+    if value is _NOT_CONSTANT:
+        raise NotConstant(f"formula {formula!r} can't be worked out when the model loads")
+    return value, t.used_constants
 
 
 # --- helpers used by generated code -------------------------------------------
@@ -304,17 +647,56 @@ def _fillna(x, value):
     return np.where(np.isnan(x), value, x)
 
 
-RUNTIME_NAMESPACE = {"np": np, "_clip": _clip, "_fillna": _fillna}
+def _map(x, mapping):
+    """pandas Series.map(dict): values not in the dictionary become NaN."""
+    return pd.Series(np.asarray(x)).map(mapping).to_numpy()
+
+
+def _cut(x, bins, labels):
+    """pandas pd.cut (right-closed bins); returns labels as a pandas Categorical."""
+    return pd.cut(np.asarray(x), bins=bins, labels=labels)
+
+
+def _astype(x, dtype):
+    return np.asarray(x.astype(dtype))
+
+
+def _lognormal(draws, mu, sigma, scale=False):
+    """
+    Lognormal values from standard normal draws, as 1.x's assign_variables
+    does for rng.lognormal_for_df (scale=True: mu and sigma are the mean and
+    standard deviation of the lognormal distribution itself).
+    """
+    if scale:
+        x = 1 + ((sigma * sigma) / (mu * mu))
+        mu = np.log(mu / (np.sqrt(x)))
+        sigma = np.sqrt(np.log(x))
+    return np.exp(draws * sigma + mu)
+
+
+def _full(x, n):
+    """A scalar result becomes a column of n equal values (1.x promotes scalars to Series)."""
+    if np.ndim(x) == 0:
+        if isinstance(x, np.ndarray):
+            return np.full(n, x[()], dtype=x.dtype)
+        return np.full(n, x, dtype=object if isinstance(x, str) else None)
+    return x
+
+
+RUNTIME_NAMESPACE = {"np": np, "_clip": _clip, "_fillna": _fillna, "_map": _map, "_cut": _cut,
+                     "_astype": _astype, "_lognormal": _lognormal, "_full": _full}
 
 
 def build_function(name: str, items: list[tuple[str, Translated]], doc: str = "") -> str:
     """
-    Python source for a function ``name(c)`` that yields one array (or
-    scalar) per formula, in order, so callers can use each term and discard it
-    before the next is computed. ``items`` are (label, translated formula)
-    pairs. The source is plain NumPy code meant to be read by people.
+    Python source for a function ``name(c, s=None, k=None)`` that yields one
+    array (or scalar) per formula, in order, so callers can use each term and
+    discard it before the next is computed. ``items`` are (label, translated
+    formula) pairs. ``s`` looks up skims and ``k`` holds coefficient values
+    used inside formulas. The source is plain NumPy code meant to be read by
+    people.
     """
-    lines = [f"def {name}(c):"]
+    lines = [f"def {name}(c, s=None, k=None):"]
     if doc:
         lines.append(f'    """{doc}"""')
     for label, tr in items:
@@ -325,24 +707,39 @@ def build_function(name: str, items: list[tuple[str, Translated]], doc: str = ""
     return "\n".join(lines) + "\n"
 
 
-def build_assignment_function(name: str, items: list[tuple[str, str, Translated]], doc: str = "") -> str:
+def build_assignment_function(name: str, items: list[tuple[str, str, Translated | object]],
+                              doc: str = "") -> str:
     """
-    Python source for ``name(c, s)``, which evaluates assignments in order and
-    returns ``v``, a dict of every assigned variable (temporary ones, starting
-    with ``_``, included). ``items`` are (target, description, translated
-    formula). ``c`` maps column names to arrays; ``s(accessor, skim_name)``
-    returns skim values.
+    Python source for ``name(c, s, n, t=None, r=None, k=None)``, which
+    evaluates assignments in order and returns ``v``, a dict of every
+    assigned variable (temporary ones, starting with ``_``, included).
+
+    ``items`` are (target, description, translated formula); a non-Translated
+    third item is a value worked out when the model loaded (a scalar
+    temporary such as ``_DF_IS_TOUR``), recorded as a comment. ``c`` maps
+    column names to arrays, ``s(accessor, skim_name)`` returns skim values,
+    ``n`` is the number of rows, ``t(table, column, ids)`` looks up another
+    table, ``r`` holds random draws and ``k`` coefficient values.
+
+    As in 1.x, a scalar result is made into a column of ``n`` values, except
+    for targets in capitals starting with ``_``, which stay scalars.
     """
-    lines = [f"def {name}(c, s):"]
+    lines = [f"def {name}(c, s, n, t=None, r=None, k=None):"]
     if doc:
         lines.append(f'    """{doc}"""')
     lines.append("    v = {}")
     for target, description, tr in items:
+        if not isinstance(tr, Translated):
+            lines.append(f"    # {description + ': ' if description else ''}{target} = {tr!r} "
+                         f"(worked out when the model loaded)")
+            continue
         lines.append(f"    # {description + ': ' if description else ''}{tr.formula}")
         if target == "_":
             lines.append(f"    {tr.source}")
-        else:
+        elif target.startswith("_") and target.isupper():
             lines.append(f"    v[{target!r}] = {tr.source}")
+        else:
+            lines.append(f"    v[{target!r}] = _full({tr.source}, n)")
     lines.append("    return v")
     return "\n".join(lines) + "\n"
 

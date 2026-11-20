@@ -76,7 +76,7 @@ def compute_accessibility(
                 return ctx.skim(name, dest, orig)
 
             with np.errstate(all="ignore"):  # 1.x logs numpy warnings and carries on
-                v = assign(c, s)
+                v = assign(c, s, n_orig * n_dest)
             for t in targets:
                 values = np.broadcast_to(np.asarray(v[t]), (n_orig * n_dest,))
                 per_origin = values.reshape(n_orig, n_dest)

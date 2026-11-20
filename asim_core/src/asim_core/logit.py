@@ -147,10 +147,12 @@ def _sum_columns(columns: list[np.ndarray]) -> np.ndarray:
 @register("nested_probabilities", "asim1", reference=True,
           description="nested logit as ActivitySim 1.x computes it: exponentiated nest "
                       "utilities, conditional probabilities per nest, multiplied down the tree")
-def nested_probabilities(utils: np.ndarray, alternatives: list[str], nests) -> tuple[np.ndarray, np.ndarray]:
+def nested_probabilities(utils: np.ndarray, alternatives: list[str], nests
+                         ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Probabilities of each alternative (columns in ``alternatives`` order),
-    and a mask of rows that cannot be used. Follows 1.x's
+    Probabilities of each alternative (columns in ``alternatives`` order), a
+    mask of rows that cannot be used, and each row's logsum (log of the
+    root's exponentiated utility, as 1.x computes it). Follows 1.x's
     compute_nested_exp_utilities, compute_nested_probabilities and
     compute_base_probabilities (activitysim/core/simulate.py) operation by
     operation.
@@ -196,4 +198,6 @@ def nested_probabilities(utils: np.ndarray, alternatives: list[str], nests) -> t
             p = p * cond[a]
         probs[:, col[node.name]] = p
     bad |= np.abs(probs.sum(axis=1) - 1.0) > BAD_PROB_THRESHOLD
-    return probs, bad
+    with np.errstate(divide="ignore", invalid="ignore"):
+        logsums = np.log(exp_u[nests.name])
+    return probs, bad, logsums

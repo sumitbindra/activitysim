@@ -38,7 +38,7 @@ SEAMS = {
     "probabilities": "utilities -> probabilities: "
                      "probabilities(utils, shift) -> (probs, unusable_rows)",
     "nested_probabilities": "utilities and a nest tree -> probabilities (nested logit): "
-                            "nested_probabilities(utils, alternatives, nests) -> (probs, unusable_rows)",
+                            "nested_probabilities(utils, alternatives, nests) -> (probs, unusable_rows, logsums)",
     "choose": "probabilities and one random draw per row -> chosen position: "
               "choose(probs, rands) -> int32 array",
     "random": "per-row uniform random draws for a step: "

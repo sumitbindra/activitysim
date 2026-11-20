@@ -60,7 +60,7 @@ def test_targets_and_evaluation_match_python():
     do = {k: v[::-1].copy() for k, v in skims.items()}
     jobs = rng.integers(0, 1000, n)
     f, source = s.function()
-    v = f({"jobs": jobs}, lambda acc, name: od[name] if acc == "skim_od" else do[name])
+    v = f({"jobs": jobs}, lambda acc, name: od[name] if acc == "skim_od" else do[name], n)
 
     # the same rows evaluated the way 1.x does: Python eval over pandas Series
     df = pd.DataFrame({"jobs": jobs})
@@ -76,4 +76,4 @@ def test_targets_and_evaluation_match_python():
     for t in s.targets:
         np.testing.assert_array_equal(np.asarray(v[t]), np.asarray(loc[t]))
         assert np.asarray(v[t]).dtype == np.asarray(loc[t]).dtype
-    assert "def toy_assign(c, s):" in source
+    assert "def toy_assign(c, s, n, t=None, r=None, k=None):" in source

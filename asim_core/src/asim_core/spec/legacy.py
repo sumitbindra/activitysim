@@ -7,9 +7,11 @@ following the same rules as ActivitySim 1.x (activitysim/core/simulate.py:
 existing models load unchanged. Config folders are searched in order and the
 first match wins, as in 1.x.
 
-Supported so far: simple multinomial and nested logit models without
-preprocessors or coefficient templates. Anything else raises ``NotImplementedError`` naming
-the setting, rather than running a partial model.
+Supported so far: simple multinomial and nested logit models, with or
+without coefficient templates (segments). Preprocessors are handled by the
+components that use them (e.g. tour mode choice). Anything else raises
+``NotImplementedError`` naming the setting, rather than running a partial
+model.
 """
 
 from __future__ import annotations
@@ -31,7 +33,6 @@ _SPEC_META_COLUMNS = {"Label", "Description", "Expression"}
 
 # settings that change how a model runs and are not supported yet
 _NOT_YET_SUPPORTED = {
-    "COEFFICIENT_TEMPLATE": "coefficient templates (purpose segments)",
     "preprocessor": "preprocessors",
     "annotate_households": "annotation after the model",
     "annotate_persons": "annotation after the model",
@@ -83,12 +84,25 @@ def load_choice_model(
     configs_dirs: Sequence[str | Path],
     settings_file: str,
     name: str | None = None,
+    handled: Sequence[str] = (),
+    formulas_see_coefficients: bool = False,
+    skim_accessors: Sequence[str] = (),
+    extra_constants: dict | None = None,
 ) -> ChoiceModelDefinition:
+    """
+    ``handled`` lists settings the calling component deals with itself (e.g.
+    ``preprocessor``), so they aren't reported as unsupported.
+    ``formulas_see_coefficients``: formulas may use coefficient names as values
+    (1.x allows this in mode choice models). ``skim_accessors`` are the skim
+    lookups formulas may use (e.g. ``odt_skims``). ``extra_constants`` are
+    added last (they win over constants.yaml and the model's CONSTANTS).
+    """
     configs_dirs = [Path(d) for d in configs_dirs]
     settings_path = find_config_file(configs_dirs, settings_file)
     settings = read_yaml(settings_path)
 
-    unsupported = [f"{k} ({why})" for k, why in _NOT_YET_SUPPORTED.items() if settings.get(k)]
+    unsupported = [f"{k} ({why})" for k, why in _NOT_YET_SUPPORTED.items()
+                   if settings.get(k) and k not in handled]
     logit_type = settings.get("LOGIT_TYPE", "MNL")
     if logit_type not in ("MNL", "NL"):
         unsupported.append(f"LOGIT_TYPE: {logit_type}")
@@ -131,9 +145,18 @@ def load_choice_model(
         constrain = str(row.get("constrain", "F")).strip().upper() in ("T", "TRUE", "1")
         coefficients[str(coef_name)] = Coefficient(value=float(row["value"]), constrain=constrain)
 
+    # coefficient template: same rules as 1.x read_model_coefficient_template
+    template = None
+    source_files = [settings_path.name, spec_path.name, coef_path.name]
+    if settings.get("COEFFICIENT_TEMPLATE"):
+        template_path = find_config_file(configs_dirs, str(settings["COEFFICIENT_TEMPLATE"]))
+        source_files.append(template_path.name)
+        template = read_coefficient_template(template_path)
+
     # constants: global constants.yaml, overridden by the model's own CONSTANTS
     constants = dict(load_global_constants(configs_dirs))
     constants.update(settings.get("CONSTANTS") or {})
+    constants.update(extra_constants or {})
 
     return ChoiceModelDefinition(
         name=name or Path(settings_file).stem,
@@ -144,8 +167,28 @@ def load_choice_model(
         constants=constants,
         terms=terms,
         coefficients=coefficients,
-        source_files=[settings_path.name, spec_path.name, coef_path.name],
+        coefficient_template=template,
+        formulas_see_coefficients=formulas_see_coefficients,
+        skim_accessors=list(skim_accessors),
+        source_files=source_files,
     )
+
+
+def read_coefficient_template(path: Path) -> dict[str, dict[str, str]]:
+    """
+    Generic coefficient name -> {segment: coefficient name}. As in 1.x, an
+    empty cell means the generic name itself is used for that segment.
+    """
+    df = pd.read_csv(path, comment="#", index_col="coefficient_name")
+    dupes = df.index[df.index.duplicated()].unique().tolist()
+    if dupes:
+        raise ValueError(f"duplicate coefficient names in {path}: {dupes}")
+    template = {}
+    for generic, row in df.iterrows():
+        template[str(generic)] = {
+            str(seg): (str(generic) if pd.isna(cell) else str(cell).strip()) for seg, cell in row.items()
+        }
+    return template
 
 
 def load_assignment_spec(
@@ -154,11 +197,17 @@ def load_assignment_spec(
     constants: dict | None = None,
     skim_accessors: Sequence[str] = (),
     name: str | None = None,
+    tables: Sequence[str] = (),
+    coefficients: Sequence[str] = (),
+    settings: dict | None = None,
 ) -> AssignmentSpec:
     """
     Read an assignment spec CSV (Description, Target, Expression), following
     ActivitySim 1.x's ``read_assignment_spec``. ``constants`` should already
     combine the global constants.yaml with the model's own CONSTANTS.
+    ``tables`` are the other tables formulas may read (1.x's ``TABLES``),
+    ``coefficients`` names supplied at run time, ``settings`` the run's
+    settings.yaml (for ``setting('name')``).
     """
     configs_dirs = [Path(d) for d in configs_dirs]
     path = find_config_file(configs_dirs, spec_file)
@@ -179,5 +228,8 @@ def load_assignment_spec(
         assignments=assignments,
         constants=constants or {},
         skim_accessors=list(skim_accessors),
+        tables=list(tables),
+        coefficients=list(coefficients),
+        settings=dict(settings or {}),
         source_files=[path.name],
     )

@@ -57,10 +57,30 @@ def test_todays_auto_ownership_files_load():
     assert len(d.terms) == 29
     assert "county_id" in d.columns_used()
     _, source = d.utility_function()
-    assert "def auto_ownership_terms(c):" in source
+    assert "def auto_ownership_terms(c, s=None, k=None):" in source
 
 
 @pytest.mark.skipif(not MTC_CONFIGS.exists(), reason="example configs not present")
 def test_unsupported_settings_are_named():
-    with pytest.raises(NotImplementedError, match="COEFFICIENT_TEMPLATE"):
+    # tour mode choice has a preprocessor, which only its own component handles
+    with pytest.raises(NotImplementedError, match="preprocessor"):
         load_choice_model([MTC_CONFIGS], "tour_mode_choice.yaml")
+
+
+@pytest.mark.skipif(not MTC_CONFIGS.exists(), reason="example configs not present")
+def test_coefficient_template_segments():
+    d = load_choice_model([MTC_CONFIGS], "tour_mode_choice.yaml", handled=["preprocessor"],
+                          formulas_see_coefficients=True,
+                          skim_accessors=["odt_skims", "dot_skims", "odr_skims", "dor_skims",
+                                          "od_skims", "do_skims"])
+    assert "work" in d.segments and "univ" in d.segments
+    work, atwork = d.coefficient_values("work"), d.coefficient_values("atwork")
+    # a coefficient that differs by segment, and an empty template cell (same name for all)
+    assert work["coef_topology_walk_multiplier"] == 15.0
+    assert atwork["coef_topology_walk_multiplier"] == 7.5
+    assert work["coef_one"] == atwork["coef_one"] == 1.0
+    # formulas can use coefficient names; their values are supplied per segment
+    tr = next(t for t in d.translated if "coef_topology_walk_multiplier" in t.formula)
+    assert "k['coef_topology_walk_multiplier']" in tr.source
+    assert d.nest_tree("work").coefficient == work["coef_nest_root"]
+    assert not (d.coefficient_matrix(segment="work") == d.coefficient_matrix(segment="school")).all()

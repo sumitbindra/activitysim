@@ -145,6 +145,16 @@ class StepContext:
         t = self._store[table]
         return self.engine.lookup(t[column], t.positions(ids))
 
+    def positions(self, table: str, ids) -> np.ndarray:
+        """Row positions in a declared table for the given IDs (raises if an ID is missing)."""
+        self._check(table)
+        return self._store[table].positions(ids)
+
+    def column_at(self, table: str, column: str, positions) -> object:
+        """A declared column's values at the given row positions (see ``positions``)."""
+        self._check(table, column)
+        return self.engine.lookup(self._store[table][column], positions)
+
     def skim_positions(self, zone_ids) -> np.ndarray:
         """Matrix row/column positions for zone IDs (use with ``skim``)."""
         self._check(SKIMS)
