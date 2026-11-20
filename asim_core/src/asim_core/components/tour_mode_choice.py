@@ -33,7 +33,7 @@ mode choice models, and at-work subtours (a separate 1.x step).
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -335,7 +335,8 @@ class TourModeChoiceModel:
 
     def bind(self, df_columns: set[str], tables: Mapping[str, set[str]], dest: str = DEST,
              orig: str = ORIG, parameters: Mapping | None = None,
-             roles: Mapping[str, set[str]] | None = None) -> BoundModel:
+             roles: Mapping[str, set[str]] | None = None,
+             period_labels: Mapping[str, Iterable[str]] | None = None) -> BoundModel:
         """
         Work out, for choosers with ``df_columns`` and skims from ``orig`` to
         ``dest`` (column names), what the model reads: chooser columns, other
@@ -343,6 +344,10 @@ class TourModeChoiceModel:
         unsupported. For model files, ``parameters`` are the using step's
         values (default: this model's own step's) and ``roles`` the columns
         each table name offers in that step (checked if given).
+        ``period_labels``: the time periods the choosers can have, per period
+        column (``out_period``, ``in_period``), when the using step fixes them
+        (see ``fixed_period_labels``); time-of-day skims are then declared for
+        those periods only. By default, for every period.
         """
         self.bind_log.append((set(df_columns), dest, orig))
         if (dest, orig) != (DEST, ORIG) and self._spec_uses_dest_name:
@@ -384,9 +389,16 @@ class TourModeChoiceModel:
             elif how != "get":
                 raise MissingInputError(f"{accessor}.{how}() is not available for time-of-day skims")
             else:
-                skims.update(f"{key}__{p}" for p in self.periods.unique_labels)
+                labels = (self.periods.unique_labels if period_labels is None
+                          else period_labels.get(period_col, self.periods.unique_labels))
+                skims.update(f"{key}__{p}" for p in labels)
                 period_columns.add(period_col)
         return BoundModel(dest, bound, columns, table_cols, skims, period_columns, orig)
+
+    def fixed_period_labels(self, out_time, in_time) -> dict[str, set[str]]:
+        """The period labels of choosers whose times are fixed (logsums at set times)."""
+        return {"out_period": {self.periods.labels_for([out_time])[0]},
+                "in_period": {self.periods.labels_for([in_time])[0]}}
 
     # --- the tour purpose and time periods ---------------------------------------------
 
@@ -558,6 +570,8 @@ class SkimLookup:
                  period_labels: Mapping[str, np.ndarray]):
         self.ctx = ctx
         self.zones = {"orig": orig, "dest": dest}
+        # positions shared by every skim looked up for the same zone pairs (and periods)
+        self._pairs: dict = {}
         labels = periods.unique_labels
         self.groups = {}
         for col, values in period_labels.items():
@@ -568,20 +582,25 @@ class SkimLookup:
                 raise ValueError(f"{col}: labels not in the skim time periods {labels}")
         self.n = len(orig)
 
+    def pairs(self, o_role: str, d_role: str):
+        if (o_role, d_role) not in self._pairs:
+            self._pairs[(o_role, d_role)] = self.ctx.zone_pairs(self.zones[o_role], self.zones[d_role])
+        return self._pairs[(o_role, d_role)]
+
     def __call__(self, accessor: str, key: str, how: str = "get"):
         o_role, d_role, period_col = SKIM_WRAPPERS[accessor]
-        o, d = self.zones[o_role], self.zones[d_role]
+        pairs = self.pairs(o_role, d_role)
         if period_col is None:
             if how == "reverse":
-                return self.ctx.skim(key, d, o)
+                return self.ctx.skim(key, pairs.reversed())
             if how == "max":
-                return np.maximum(self.ctx.skim(key, d, o), self.ctx.skim(key, o, d))
-            return self.ctx.skim(key, o, d)
+                return np.maximum(self.ctx.skim(key, pairs.reversed()), self.ctx.skim(key, pairs))
+            return self.ctx.skim(key, pairs)
         out = None
         for label, rows in self.groups[period_col]:
             if not len(rows):
                 continue
-            values = self.ctx.skim(f"{key}__{label}", o[rows], d[rows])
+            values = self.ctx.skim(f"{key}__{label}", pairs.subset((period_col, label), rows))
             if out is None:
                 out = np.empty(self.n, dtype=values.dtype)
             out[rows] = values

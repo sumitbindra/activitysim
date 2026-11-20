@@ -34,7 +34,8 @@ SEAMS = {
     "skim_access": "how a step holds the skims it reads while it runs (memory-mapped, pages mapped "
                    "up front, or copied into memory): ",
     "skim_lookup": "skim values for origin/destination positions: "
-                   "skim_lookup(matrix, orig_positions, dest_positions) -> values",
+                   "skim_lookup(matrix, orig_positions, dest_positions, pairs=None) -> values "
+                   "(pairs: the same positions as a ZonePairs, shared by the skims looked up for them)",
     "utilities": "formula values and coefficients -> utilities: "
                  "utilities(terms, coefficients, n) -> (n x alternatives) array",
     "interaction_utilities": "one utility per chooser-alternative row (e.g. a tour's departure "

@@ -27,7 +27,7 @@ nothing is significantly slower.
 |---|---|---|---|
 | `lookup` | values of a column at given rows (joins between tables) | `numpy` | |
 | `skim_access` | how a step holds the skims it reads | `memory_map` | `prefault`, `in_memory` ([skim_experiments.md](skim_experiments.md)) |
-| `skim_lookup` | skim values for origin/destination zones | `numpy` | `flat_take` |
+| `skim_lookup` | skim values for origin/destination zones | `flat_take`: a one-dimensional gather, positions shared by a step's skims (the default since the skim experiment) | `index_2d` (two-dimensional indexing, the default before) |
 | `utilities` | formula values and coefficients → utilities | `matmul`: one matrix product, as 1.x | `accumulate` |
 | `probabilities` | utilities → probabilities (multinomial logit) | `asim1` | |
 | `nested_probabilities` | utilities and a nest tree → probabilities (nested logit) | `asim1` | |

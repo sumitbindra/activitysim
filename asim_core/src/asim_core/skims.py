@@ -101,6 +101,46 @@ class ZoneRows:
         return pos
 
 
+class ZonePairs:
+    """
+    Origin and destination skim positions for a set of rows (zone pairs). A
+    step looks up many skims for the same pairs; what lookups need beyond the
+    positions (the flat positions ``orig * zones + dest``) is worked out once,
+    when first needed, and shared by all of them, and so are the reversed
+    pairs and subsets of the rows (e.g. the rows of one time period).
+    """
+
+    def __init__(self, orig: np.ndarray, dest: np.ndarray, zones: int):
+        self.orig = np.asarray(orig, dtype=np.intp)
+        self.dest = np.asarray(dest, dtype=np.intp)
+        self.zones = int(zones)
+        self._flat = None
+        self._reversed = None
+        self._subsets: dict = {}
+
+    def __len__(self) -> int:
+        return len(self.orig)
+
+    @property
+    def flat(self) -> np.ndarray:
+        if self._flat is None:
+            self._flat = self.orig * self.zones + self.dest
+        return self._flat
+
+    def reversed(self) -> ZonePairs:
+        """The same rows from destination to origin."""
+        if self._reversed is None:
+            self._reversed = ZonePairs(self.dest, self.orig, self.zones)
+            self._reversed._reversed = self
+        return self._reversed
+
+    def subset(self, key, rows: np.ndarray) -> ZonePairs:
+        """The pairs of some rows, kept under ``key`` (the same key must mean the same rows)."""
+        if key not in self._subsets:
+            self._subsets[key] = ZonePairs(self.orig[rows], self.dest[rows], self.zones)
+        return self._subsets[key]
+
+
 class SkimStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)

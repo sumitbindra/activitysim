@@ -243,14 +243,17 @@ def location_choice_component(configs_dirs: Sequence[str | Path], step: str, set
         if cfg.model is not None:
             df_cols = sample_cols | ls_added | PERSONS_VIEW.columns(available)
             for seg in cfg.segments:
+                # logsums at the segment's fixed periods: only those periods' skims are read
+                labels = cfg.model.fixed_period_labels(*cfg.periods_for(cfg.logsum_purpose(seg)))
                 if new_format:
                     from .roles import PERSON_ROLES, context_roles
 
                     roles = context_roles(PERSONS_VIEW, PERSON_ROLES, available, df_cols)
                     b = cfg.model.bind(df_cols, available, dest=cfg.alt_col, orig=cfg.orig_col,
-                                       parameters=cfg.logsum_parameters, roles=roles)
+                                       parameters=cfg.logsum_parameters, roles=roles, period_labels=labels)
                 else:
-                    b = cfg.model.bind(df_cols, available, dest=cfg.alt_col, orig=cfg.orig_col)
+                    b = cfg.model.bind(df_cols, available, dest=cfg.alt_col, orig=cfg.orig_col,
+                                       period_labels=labels)
                 bound[seg] = b
                 columns |= b.columns - sample_cols - ls_added
                 for t, c in b.tables:

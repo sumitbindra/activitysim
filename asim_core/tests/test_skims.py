@@ -255,7 +255,7 @@ def test_skim_access_and_lookup_options_give_the_same_values(tmp_path):
     names = ["S1__AM", "S3__MD", "S4__AM"]
     ref = {n: store[n][o, d] for n in names}
     for access in ("memory_map", "prefault", "in_memory"):
-        for lookup in ("numpy", "flat_take"):
+        for lookup in ("index_2d", "flat_take"):
             e = Engine({"skim_access": access, "skim_lookup": lookup})
             held = e.skim_access(store, names)
             for n in names:
@@ -295,7 +295,7 @@ def test_a_zone_lookup_in_any_order_finds_the_right_values(tmp_path):
     orig, dest = np.array([10, 10, 30, 20]), np.array([30, 20, 10, 20])
     row = {z: i for i, z in enumerate(order)}
     expected = np.array([mat[row[o], row[d]] for o, d in zip(orig, dest)], dtype=np.float32)
-    for lookup in ("numpy", "flat_take"):
+    for lookup in ("index_2d", "flat_take"):
         got = Engine({"skim_lookup": lookup}).skim_lookup(
             store["DIST"], store.positions(orig), store.positions(dest))
         assert np.array_equal(got, expected), lookup
@@ -331,3 +331,22 @@ def test_input_checks_find_zones_where_1x_would_look(lookup, zones, recoded, exp
         assert p.found == []
     else:
         assert len(p.found) == 1 and expect in p.found[0][1], p.found
+
+
+def test_zone_pairs_share_positions_and_give_the_same_values():
+    from asim_core.seams import Engine
+    from asim_core.skims import ZonePairs
+
+    rng = np.random.default_rng(3)
+    m = rng.random((30, 30)).astype(np.float32)
+    o, d = rng.integers(0, 30, 1000), rng.integers(0, 30, 1000)
+    pairs = ZonePairs(o, d, 30)
+    rows = np.flatnonzero(o % 2 == 0)
+    for lookup in ("index_2d", "flat_take"):
+        e = Engine({"skim_lookup": lookup})
+        assert np.array_equal(e.skim_lookup(m, o, d, pairs=pairs), m[o, d])
+        assert np.array_equal(e.skim_lookup(m, d, o, pairs=pairs.reversed()), m[d, o])
+        sub = pairs.subset("even", rows)
+        assert np.array_equal(e.skim_lookup(m, sub.orig, sub.dest, pairs=sub), m[o[rows], d[rows]])
+    assert pairs.reversed().reversed() is pairs
+    assert pairs.subset("even", rows) is pairs.subset("even", rows)

@@ -153,12 +153,14 @@ def non_mandatory_tour_destination(
         if model is not None:
             df_cols = sample_cols | ls_added | PERSONS_VIEW.columns(available)
             for seg in segments:
+                # logsums at the segment's fixed periods: only those periods' skims are read
+                labels = model.fixed_period_labels(*periods_for(seg))
                 if new_format:
                     roles = context_roles(PERSONS_VIEW, PERSON_ROLES, available, df_cols)
                     b = model.bind(df_cols, available, dest=alt_col, orig=orig_col,
-                                   parameters=cfg.logsum_parameters, roles=roles)
+                                   parameters=cfg.logsum_parameters, roles=roles, period_labels=labels)
                 else:
-                    b = model.bind(df_cols, available, dest=alt_col, orig=orig_col)
+                    b = model.bind(df_cols, available, dest=alt_col, orig=orig_col, period_labels=labels)
                 bound[seg] = b
                 persons_columns |= b.columns - sample_cols - ls_added
                 for t, c in b.tables:
@@ -261,14 +263,15 @@ class _ZoneSkims:
     """``s('skims', key)``: skims from each row's origin to its destination zone positions."""
 
     def __init__(self, ctx, orig_pos, dest_pos):
-        self.ctx, self.orig, self.dest = ctx, orig_pos, dest_pos
+        self.ctx = ctx
+        self.pairs = ctx.zone_pairs(orig_pos, dest_pos)  # shared by every skim looked up
 
     def __call__(self, accessor, key, how="get"):
         if how == "reverse":
-            return self.ctx.skim(key, self.dest, self.orig)
+            return self.ctx.skim(key, self.pairs.reversed())
         if how == "max":
-            return np.maximum(self.ctx.skim(key, self.dest, self.orig), self.ctx.skim(key, self.orig, self.dest))
-        return self.ctx.skim(key, self.orig, self.dest)
+            return np.maximum(self.ctx.skim(key, self.pairs.reversed()), self.ctx.skim(key, self.pairs))
+        return self.ctx.skim(key, self.pairs)
 
 
 @dataclass

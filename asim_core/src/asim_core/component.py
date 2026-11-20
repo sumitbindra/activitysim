@@ -171,7 +171,21 @@ class StepContext:
         self._check(SKIMS)
         return self._skims.positions(zone_ids)
 
-    def skim(self, name: str, orig_positions, dest_positions) -> np.ndarray:
-        """Values of a declared skim for origin/destination positions."""
+    def zone_pairs(self, orig_positions, dest_positions):
+        """Origin/destination positions to look up several skims for (see ``skim``):
+        what the lookups work out from them is shared (``skims.ZonePairs``)."""
+        from .skims import ZonePairs
+
+        self._check(SKIMS)
+        return ZonePairs(orig_positions, dest_positions, self._skims.shape[1])
+
+    def skim(self, name: str, orig_positions, dest_positions=None) -> np.ndarray:
+        """Values of a declared skim for origin/destination positions, or for
+        ``zone_pairs`` (then ``dest_positions`` is not given)."""
+        from .skims import ZonePairs
+
         self._check(SKIMS, name)
+        if isinstance(orig_positions, ZonePairs):
+            pairs = orig_positions
+            return self.engine.skim_lookup(self._skims[name], pairs.orig, pairs.dest, pairs=pairs)
         return self.engine.skim_lookup(self._skims[name], orig_positions, dest_positions)

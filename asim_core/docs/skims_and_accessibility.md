@@ -25,7 +25,9 @@
   computed from asim_core's own accessibility values, still matches 1.x
   exactly, including all utilities and probabilities.
 - **Skim lookup is a swappable piece** (`skim_lookup`), with a plain NumPy
-  reference version.
+  reference version (since the skim experiment, a one-dimensional gather
+  whose positions are shared by the skims a step looks up for the same zone
+  pairs; see [skim_experiments.md](skim_experiments.md)).
 
 ## Matching results
 

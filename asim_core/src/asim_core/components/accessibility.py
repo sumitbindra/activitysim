@@ -119,10 +119,12 @@ def compute_accessibility(
             dest = np.tile(d_pos, n_orig)
             c = {col: np.tile(vals, n_orig) for col, vals in land_use.items()}
 
-            def s(accessor, name, orig=orig, dest=dest):
+            pairs = ctx.zone_pairs(orig, dest)  # shared by every skim of the batch
+
+            def s(accessor, name, pairs=pairs):
                 if accessor == "skim_od":
-                    return ctx.skim(name, orig, dest)
-                return ctx.skim(name, dest, orig)
+                    return ctx.skim(name, pairs)
+                return ctx.skim(name, pairs.reversed())
 
             with np.errstate(all="ignore"):  # 1.x logs numpy warnings and carries on
                 v = assign(c, s, n_orig * n_dest)
