@@ -49,6 +49,7 @@ from asim_core.inputs import check_inputs  # noqa: E402
 from asim_core.components import (  # noqa: E402
     auto_ownership,
     compute_accessibility,
+    free_parking,
     initialize_households,
     initialize_landuse,
     mandatory_tour_scheduling,
@@ -68,8 +69,8 @@ from asim_core.store import Store  # noqa: E402
 
 
 PORTED = [initialize_landuse, initialize_households, compute_accessibility, school_location,
-          workplace_location, auto_ownership, mandatory_tour_scheduling, non_mandatory_tour_destination,
-          non_mandatory_tour_scheduling, tour_mode_choice]
+          workplace_location, auto_ownership, free_parking, mandatory_tour_scheduling,
+          non_mandatory_tour_destination, non_mandatory_tour_scheduling, tour_mode_choice]
 # steps that read the input files: they also take the data folders (and the sample size 1.x ran with)
 READS_INPUTS = {initialize_landuse, initialize_households}
 NOT_BUILT: dict[str, str] = {}  # component -> why it could not be built for this example

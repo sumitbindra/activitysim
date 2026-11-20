@@ -166,5 +166,22 @@ def _update(old, new):
     return new
 
 
+def load_preprocessor(configs_dirs, settings, constants, top, step, label):
+    """A model's ``preprocessor`` setting (1.x: SPEC, DF, TABLES) as an assignment spec and the
+    tables it reads; (None, []) if there is none."""
+    if not settings:
+        return None, []
+    if isinstance(settings, list):
+        raise NotImplementedError("more than one preprocessor is not supported yet")
+    tables = list(settings.get("TABLES") or [])
+    spec_file = str(settings["SPEC"])
+    spec = load_assignment_spec(
+        configs_dirs, spec_file if spec_file.endswith(".csv") else spec_file + ".csv",
+        constants, skim_accessors=[SKIM_ACCESSOR], name=f"{step}_{label}",
+        tables=tables, settings=top, df_names=[settings.get("DF", "df")],
+    )
+    return spec, tables
+
+
 def find_spec(configs_dirs, name: str) -> Path:
     return find_config_file([Path(d) for d in configs_dirs], name if name.endswith(".csv") else name + ".csv")

@@ -870,9 +870,12 @@ def translate(
     if text.startswith("@"):
         text = text[1:]
     try:
-        tree = ast.parse(text.strip(), mode="eval")
-    except SyntaxError as err:
-        raise FormulaError(f"formula {formula!r} is not valid syntax: {err.msg}") from None
+        if python_mode:
+            tree = ast.parse(text.strip(), mode="eval")
+        else:  # pandas.eval's reading: & and | with the precedence of and/or
+            tree = ast.Expression(body=parse_pandas_query(text))
+    except (SyntaxError, tokenize.TokenError) as err:
+        raise FormulaError(f"formula {formula!r} is not valid syntax: {getattr(err, 'msg', err)}") from None
     t = _Translator(formula, constants or {}, python_mode, assigned, functions, skim_accessors,
                     coefficients, df_columns, tables, settings, random_index,
                     pandas_locals, df_names, objects, count_functions)

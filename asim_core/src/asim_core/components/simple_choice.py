@@ -11,7 +11,7 @@ no merged copy of the tables is built.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -21,6 +21,7 @@ from ..component import Component, MissingInputError, Needs, StepContext
 from ..logit import FormulaValues
 from ..seams import Engine
 from ..spec.definition import ChoiceModelDefinition
+from ..spec.translate import INDEX
 
 
 @dataclass
@@ -119,6 +120,28 @@ class ChooserView:
         )
 
 
+@dataclass
+class Choosers:
+    """Which rows of the chooser table choose: those whose ``column`` passes ``test``."""
+
+    column: str
+    test: Callable[[np.ndarray], np.ndarray]
+    description: str = ""
+
+
+@dataclass
+class ChoiceOutput:
+    """
+    What is written for each row of the chooser table: ``values(choices)``
+    for the rows that chose (``choices``: positions among the alternatives),
+    ``fill`` for the others, as ``dtype``.
+    """
+
+    values: Callable[[np.ndarray], np.ndarray]
+    fill: object = 0
+    dtype: object = None
+
+
 def simple_choice_component(
     definition: ChoiceModelDefinition,
     step: str,
@@ -128,13 +151,20 @@ def simple_choice_component(
     shift_utilities: bool = False,
     drop_zero_terms: bool = True,
     roles: Mapping[str, list[str]] | None = None,
+    choosers: Choosers | None = None,
+    preprocessor: tuple | None = None,
+    output: ChoiceOutput | None = None,
 ) -> Component:
     """
     Build a component that writes the chosen alternative's position
     (0 = first alternative) to ``view.table``.``output_column``.
 
     ``drop_zero_terms`` skips terms whose coefficients are all zero, as
-    ActivitySim 1.x does with its legacy engine.
+    ActivitySim 1.x does with its legacy engine. Optional, as some 1.x
+    models do: only some rows choose (``choosers``); a preprocessor
+    (``(AssignmentSpec, tables it reads)``) adds columns to the choosers
+    first, seeing every column of the view as 1.x's merged table; and
+    ``output`` turns the choices into the written values.
     """
     nests = definition.nest_tree()  # None for multinomial logit
     coef = definition.coefficient_matrix()
@@ -153,8 +183,25 @@ def simple_choice_component(
 
             translated = [t for i, t in enumerate(definition.translated) if keep[i]]
             check_roles(step, translated, role_columns(view, roles, available))
-        resolved["needs"] = view.resolve(columns, available)
-        return resolved["needs"]
+        wanted = set(columns)
+        extra: dict[str, set[str]] = {}
+        if preprocessor is not None:
+            spec, tables = preprocessor
+            bound = spec.bind(view.columns(available), {t: available.get(t, set()) for t in tables})
+            if bound.n_random or bound.skim_uses():
+                raise NotImplementedError(f"{step}: preprocessor with random draws or skims")
+            resolved["pre"] = bound
+            wanted = (wanted - set(bound.targets)) | (bound.columns_used() - {INDEX})
+            for t, c in bound.tables_used():
+                extra.setdefault(t, set()).add(c)
+        if choosers is not None:
+            wanted.add(choosers.column)
+        resolved["view_needs"] = view_needs = view.resolve(wanted, available)
+        needs = {t: set(c) for t, c in view_needs.items()}
+        for t, c in extra.items():  # read by the preprocessor's lookups, not through the view
+            needs[t] = needs.get(t, set()) | c
+        resolved["needs"] = needs
+        return needs
 
     def compute(cols: Mapping[str, object], n: int, engine: Engine):
         """Utilities and probabilities for ``n`` choosers, using ``engine``'s pieces."""
@@ -167,8 +214,25 @@ def simple_choice_component(
         return utils, probs, bad
 
     def run(ctx: StepContext):
-        ids = ctx.ids(view.table)
-        cols = view.gather(ctx, resolved["needs"])
+        ids = all_ids = ctx.ids(view.table)
+        cols = view.gather(ctx, resolved["view_needs"])
+        rows_choosing = None
+        if choosers is not None:
+            rows_choosing = np.flatnonzero(choosers.test(np.asarray(cols[choosers.column])))
+            ids = all_ids[rows_choosing]
+            cols = {c: (v[rows_choosing] if np.ndim(v) else v) for c, v in cols.items()}
+        pre = resolved.get("pre")
+        if pre is not None:
+            from .annotate import _update
+            from .runtime import TableLookup
+
+            c = {k: cols[k] for k in pre.columns_used() - {INDEX}}
+            c[INDEX] = ids
+            with np.errstate(all="ignore"):  # 1.x logs numpy warnings and carries on
+                v = pre.function(c, None, len(ids), TableLookup(ctx), None, {})
+            cols = dict(cols)
+            for target in pre.targets:
+                cols[target] = _update(cols.get(target), np.asarray(v[target]))
         utils, probs, bad = compute(cols, len(ids), ctx.engine)
         if bad.any():
             raise ValueError(
@@ -181,7 +245,13 @@ def simple_choice_component(
         if len(rows):
             _trace(ctx, ids, rows, cols, terms_fn, labels, formulas, coef, utils, probs,
                    rands, choices, definition.alternatives)
-        return {view.table: {output_column: choices}}
+        if output is None and rows_choosing is None:
+            return {view.table: {output_column: choices}}
+        values = choices if output is None else np.asarray(output.values(choices))
+        dtype = values.dtype if output is None or output.dtype is None else output.dtype
+        full = np.full(len(all_ids), 0 if output is None else output.fill, dtype=dtype)
+        full[slice(None) if rows_choosing is None else rows_choosing] = values
+        return {view.table: {output_column: full}}
 
     return Component(
         name=step,

@@ -108,3 +108,18 @@ def test_interaction_style_names_and_timetable_calls():
     assert tr.source == "tt.previous_tour_ends(c['person_id'], c['start'])"
     with pytest.raises(FormulaError, match="not supported"):
         translate("@tt.rollback()", objects={"tt": {"previous_tour_ends"}})
+
+
+def test_pandas_mode_reads_and_or_as_pandas_does():
+    # 1.x evaluates utility expressions without @ with pandas.eval: & and | bind like and/or
+    import numpy as np
+    import pandas as pd
+
+    from asim_core.spec.translate import RUNTIME_NAMESPACE
+
+    df = pd.DataFrame({"ptype": [7, 7, 1, 7], "age": [5, 8, 8, 12]})
+    for formula in ["ptype == 7 & age >= 6", "ptype == 1 | age < 6 & ptype == 7", "~(age > 6) | ptype == 1"]:
+        tr = translate(formula, {}, python_mode=False, df_columns={"ptype", "age"})
+        c = {k: df[k].to_numpy() for k in df}
+        got = eval(tr.source, dict(RUNTIME_NAMESPACE), {"c": c})
+        np.testing.assert_array_equal(np.asarray(got), df.eval(formula).to_numpy(), err_msg=formula)

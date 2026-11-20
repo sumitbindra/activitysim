@@ -79,6 +79,7 @@ from ..spec.legacy import (
     read_yaml,
 )
 from ..timetable import FORMULA_FUNCTIONS, TimeTable, read_tdd_alternatives
+from .annotate import load_preprocessor
 from .runtime import TableLookup, ZoneSkims, plain
 from .simple_choice import ChooserView
 from .tour_mode_choice import TourModeChoiceModel
@@ -538,19 +539,19 @@ def _load_legacy(configs_dirs, settings_file, step, category) -> _Config:
 
     # chooser preprocessor
     pre = settings.get("preprocessor")
-    pre_spec, pre_tables = _load_preprocessor(configs_dirs, pre, constants, top, step, "preprocessor")
+    pre_spec, pre_tables = load_preprocessor(configs_dirs, pre, constants, top, step, "preprocessor")
 
     # alternatives' preprocessor: one, or one per segment
     alts_pre = settings.get("ALTS_PREPROCESSOR") or {}
     alts_specs = {}
     if alts_pre:
         if "SPEC" in alts_pre:  # one for every segment
-            alts_specs = {seg: _load_preprocessor(configs_dirs, alts_pre, constants, top, step, "alts")[0]
+            alts_specs = {seg: load_preprocessor(configs_dirs, alts_pre, constants, top, step, "alts")[0]
                           for seg in segments}
         elif settings.get("LOGSUM_SETTINGS"):
             # 1.x looks per-segment preprocessors up by the logsum purpose, so
             # without logsums it skips them (asim1_findings, smaller items)
-            alts_specs = {seg: _load_preprocessor(configs_dirs, s, constants, top, step, f"alts_{seg}")[0]
+            alts_specs = {seg: load_preprocessor(configs_dirs, s, constants, top, step, f"alts_{seg}")[0]
                           for seg, s in alts_pre.items()}
 
     # logsums from tour mode choice, for each option's departure and return periods
@@ -573,21 +574,6 @@ def _load_legacy(configs_dirs, settings_file, step, category) -> _Config:
 
     return _Config(segments, segment_column, compiled, alts, n_alts, periods, shift, pre_spec,
                    pre_tables, alts_specs, model, tdd_segments, destination)
-
-
-def _load_preprocessor(configs_dirs, settings, constants, top, step, label):
-    if not settings:
-        return None, []
-    if isinstance(settings, list):
-        raise NotImplementedError("more than one preprocessor is not supported yet")
-    tables = list(settings.get("TABLES") or [])
-    spec_file = str(settings["SPEC"])
-    spec = load_assignment_spec(
-        configs_dirs, spec_file if spec_file.endswith(".csv") else spec_file + ".csv",
-        constants, skim_accessors=["skim_dict"], name=f"{step}_{label}",
-        tables=tables, settings=top, df_names=[settings.get("DF", "df")],
-    )
-    return spec, tables
 
 
 def _read_tdd_segments(path) -> pd.DataFrame:
