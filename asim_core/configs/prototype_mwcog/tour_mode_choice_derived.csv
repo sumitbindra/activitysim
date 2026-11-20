@@ -1,0 +1,74 @@
+Description,Name,Formula
+local,_DF_IS_TOUR,has_tour_type
+,number_of_participants,tour.number_of_participants if _DF_IS_TOUR else 1
+,is_joint,tour.tour_category == 'joint' if _DF_IS_TOUR else False
+local,_HAVE_PARENT_TOURS,has_parent_tour_id
+,_parent_tour_mode,tours.tour_mode[tour.parent_tour_id] if _HAVE_PARENT_TOURS else ''
+,work_tour_is_drive,_parent_tour_mode in ['DRIVEALONE']
+,work_tour_is_bike,_parent_tour_mode == 'BIKE'
+,work_tour_is_SOV,_parent_tour_mode in ['DRIVEALONE']
+,is_mandatory,tour.tour_category == 'mandatory' if has_tour_category else False
+,is_joint,tour.tour_category == 'joint' if has_tour_category else False
+,is_indiv,not is_joint
+,is_atwork_subtour,tour.tour_category == 'atwork' if has_tour_category else False
+,is_escort,tour.tour_type == 'escort' if _DF_IS_TOUR else False
+,is_school,tour.tour_type == 'school' and person.is_university == False if _DF_IS_TOUR else False
+,ivot,1.0 / person.value_of_time
+,dest_topology,land_use.TOPOLOGY[d]
+,terminal_time,land_use.TERMINAL[d]
+,dest_density_index,land_use.density_index[d]
+,_walk_transit_origin,True
+,_walk_transit_destination,True
+,walk_transit_available,_walk_transit_origin and _walk_transit_destination
+,pnr_transit_available,_walk_transit_destination and household.auto_ownership > 0
+,knr_transit_available,_walk_transit_origin and _walk_transit_destination
+,origin_walk_time,shortWalk * 60 / walkSpeed
+,destination_walk_time,shortWalk * 60 / walkSpeed
+,origin_density_measure,(land_use.TOTPOP[o] + land_use.TOTEMP[o]) / (land_use.LANDAREA[o] * 640 / 640)
+,dest_density_measure,(land_use.TOTPOP[d] + land_use.TOTEMP[d]) / (land_use.LANDAREA[d] * 640 / 640)
+,origin_density,"int(cut(origin_density_measure, bins=[-inf, 500, 2000, 5000, 15000, inf], labels=[5, 4, 3, 2, 1]))"
+,dest_density,"int(cut(dest_density_measure, bins=[-inf, 500, 2000, 5000, 15000, inf], labels=[5, 4, 3, 2, 1]))"
+,origin_zone_taxi_wait_time_mean,"map(origin_density, Taxi_waitTime_mean)"
+,origin_zone_taxi_wait_time_sd,"map(origin_density, Taxi_waitTime_sd)"
+,dest_zone_taxi_wait_time_mean,"map(dest_density, Taxi_waitTime_mean)"
+,dest_zone_taxi_wait_time_sd,"map(dest_density, Taxi_waitTime_sd)"
+,origTaxiWaitTime,"clip(random_lognormal(mean=origin_zone_taxi_wait_time_mean, sd=origin_zone_taxi_wait_time_sd), min_waitTime, max_waitTime)"
+,destTaxiWaitTime,"clip(random_lognormal(mean=dest_zone_taxi_wait_time_mean, sd=dest_zone_taxi_wait_time_sd), min_waitTime, max_waitTime)"
+,origin_zone_singleTNC_wait_time_mean,"map(origin_density, TNC_single_waitTime_mean)"
+,origin_zone_singleTNC_wait_time_sd,"map(origin_density, TNC_single_waitTime_sd)"
+,dest_zone_singleTNC_wait_time_mean,"map(dest_density, TNC_single_waitTime_mean)"
+,dest_zone_singleTNC_wait_time_sd,"map(dest_density, TNC_single_waitTime_sd)"
+,origSingleTNCWaitTime,"clip(random_lognormal(mean=origin_zone_singleTNC_wait_time_mean, sd=origin_zone_singleTNC_wait_time_sd), min_waitTime, max_waitTime)"
+,destSingleTNCWaitTime,"clip(random_lognormal(mean=dest_zone_singleTNC_wait_time_mean, sd=dest_zone_singleTNC_wait_time_sd), min_waitTime, max_waitTime)"
+,origin_zone_sharedTNC_wait_time_mean,"map(origin_density, TNC_shared_waitTime_mean)"
+,origin_zone_sharedTNC_wait_time_sd,"map(origin_density, TNC_shared_waitTime_sd)"
+,dest_zone_sharedTNC_wait_time_mean,"map(dest_density, TNC_shared_waitTime_mean)"
+,dest_zone_sharedTNC_wait_time_sd,"map(dest_density, TNC_shared_waitTime_sd)"
+,origSharedTNCWaitTime,"clip(random_lognormal(mean=origin_zone_sharedTNC_wait_time_mean, sd=origin_zone_sharedTNC_wait_time_sd), min_waitTime, max_waitTime)"
+,destSharedTNCWaitTime,"clip(random_lognormal(mean=dest_zone_sharedTNC_wait_time_mean, sd=dest_zone_sharedTNC_wait_time_sd), min_waitTime, max_waitTime)"
+,totalWaitTaxi,origTaxiWaitTime + destTaxiWaitTime
+,totalWaitSingleTNC,origSingleTNCWaitTime + destSingleTNCWaitTime
+,totalWaitSharedTNC,origSharedTNCWaitTime + destSharedTNCWaitTime
+,_free_parking_available,tour.tour_type == 'work' and person.free_parking_at_work if _DF_IS_TOUR else False
+,_dest_hourly_peak_parking_cost,land_use.PRKCST[d]
+,_dest_hourly_offpeak_parking_cost,land_use.OPRKCST[d]
+,_hourly_peak_parking_cost,"where(_free_parking_available, 0, _dest_hourly_peak_parking_cost)"
+,_hourly_offpeak_parking_cost,"where(_free_parking_available, 0, _dest_hourly_offpeak_parking_cost)"
+,daily_parking_cost,"where(is_mandatory, _hourly_peak_parking_cost * tour.duration / 2, _hourly_offpeak_parking_cost * tour.duration / 2)"
+,distance,"skim.DIST[o, d]"
+,sov_available,"skim.SOV_TIME[o, d, out_period] > 0 and skim.SOV_TIME[d, o, in_period] > 0"
+,hov2_available,"skim.HOV2_TIME[o, d, out_period] + skim.HOV2_TIME[d, o, in_period] > 0"
+,hov3_available,"skim.HOV3_TIME[o, d, out_period] > 0 and skim.HOV3_TIME[d, o, in_period] > 0"
+,walk_ab_available,"(walk_transit_available and skim.WK_AB_WK_IVTLB[o, d, out_period] > 0) and skim.WK_AB_WK_IVTLB[d, o, in_period] > 0"
+,walk_bm_available,"(walk_transit_available and skim.WK_BM_WK_IVTMR[o, d, out_period] > 0) and skim.WK_BM_WK_IVTMR[d, o, in_period] > 0"
+,walk_mr_available,"(walk_transit_available and skim.WK_MR_WK_IVTMR[o, d, out_period] > 0) and skim.WK_MR_WK_IVTMR[d, o, in_period] > 0"
+,walk_cr_available,"(walk_transit_available and skim.WK_CR_WK_IVTCR[o, d, out_period] > 0) and skim.WK_CR_WK_IVTCR[d, o, in_period] > 0"
+,pnr_ab_available,"(pnr_transit_available and skim.DR_AB_WK_IVTLB[o, d, out_period] > 0) and skim.WK_AB_DR_IVTLB[d, o, in_period] > 0"
+,pnr_bm_available,"(pnr_transit_available and skim.DR_BM_WK_IVTMR[o, d, out_period] > 0) and skim.WK_BM_DR_IVTMR[d, o, in_period] > 0"
+,pnr_mr_available,"(pnr_transit_available and skim.DR_MR_WK_IVTMR[o, d, out_period] > 0) and skim.WK_MR_DR_IVTMR[d, o, in_period] > 0"
+,pnr_cr_available,"(pnr_transit_available and skim.DR_CR_WK_IVTCR[o, d, out_period] > 0) and skim.WK_CR_DR_IVTCR[d, o, in_period] > 0"
+,knr_ab_available,"(knr_transit_available and skim.KR_AB_WK_IVTLB[o, d, out_period] > 0) and skim.WK_AB_KR_IVTLB[d, o, in_period] > 0"
+,knr_bm_available,"(knr_transit_available and skim.KR_BM_WK_IVTMR[o, d, out_period] > 0) and skim.WK_BM_KR_IVTMR[d, o, in_period] > 0"
+,knr_mr_available,"(knr_transit_available and skim.KR_MR_WK_IVTMR[o, d, out_period] > 0) and skim.WK_MR_KR_IVTMR[d, o, in_period] > 0"
+,knr_cr_available,"(knr_transit_available and skim.KR_CR_WK_IVTCR[o, d, out_period] > 0) and skim.WK_CR_KR_IVTCR[d, o, in_period] > 0"
+destination in central business district,destination_in_cbd,(land_use.AREATYPE[d] < setting('cbd_threshold')) * 1

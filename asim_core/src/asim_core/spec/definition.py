@@ -19,6 +19,7 @@ from typing import Any, Literal, Union
 import numpy as np
 from pydantic import BaseModel, ConfigDict, PrivateAttr, field_validator, model_validator
 
+from .language import RANDOM_CALL, Scope, SkimScope, compile_formula, fold_formula
 from .translate import (
     FormulaError,
     NeedsColumns,
@@ -97,6 +98,70 @@ class NestTree:
     alternatives: list = field(default_factory=list)  # str (alternative) or NestTree
 
 
+Language = Literal["asim1", "asim_core"]
+
+
+class LanguageScope(BaseModel):
+    """
+    The names a model written in asim_core's language can use, besides its
+    constants and coefficients (see language.py). Set by the model's kind.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    roles: list[str] = []          # tables formulas read as role.column
+    derived: list[str] = []        # model values in the rows (c[name])
+    tables: list[str] = []         # tables looked up by ID: table.column[ids]
+    # skim lookups: "o d out_period" (from, to, period or None) -> the step's accessor name
+    skims: dict[str, str] = {}
+    skim_lookup: str | None = None
+    objects: dict[str, list[str]] = {}
+    # parameters set by the step using the model (None: must be set)
+    parameters: dict[str, Any] = {}
+
+    def make(self, constants: dict, coefficients=(), assigned=(), random_index=None, settings=None,
+             roles: dict | None = None, tables: dict | None = None, extra=None) -> Scope:
+        extra = dict(extra or {})
+        params = {k: extra.pop(k) if k in extra else v for k, v in self.parameters.items()}
+        consts = {**constants, **extra}
+        zones = {z: consts[c] for z, c in (("o", "orig_col_name"), ("d", "dest_col_name")) if c in consts}
+        skims = None
+        if self.skims or self.skim_lookup:
+            pats = {}
+            for key, acc in self.skims.items():
+                a, b, p = (key.split() + ["None"])[:3]
+                pats[(a, b, None if p == "None" else p)] = acc
+            skims = SkimScope(pats, self.skim_lookup)
+        role_cols = {r: None for r in self.roles}
+        role_cols.update({r: set(c) for r, c in (roles or {}).items() if r in role_cols})
+        table_cols = {t: None for t in self.tables}
+        table_cols.update({t: set(c) for t, c in (tables or {}).items() if t in table_cols})
+        return Scope(roles=role_cols, derived=set(self.derived), assigned=set(assigned), constants=consts,
+                     coefficients=set(coefficients), parameters=params, tables=table_cols, skims=skims,
+                     objects={k: set(v) for k, v in self.objects.items()}, zones=zones,
+                     settings=dict(settings or {}), random_index=random_index)
+
+
+def check_columns(translated, roles: dict[str, set[str]]) -> list[str]:
+    """
+    For asim_core's language: every role.column read exists in the run's
+    tables (checked once the step knows its columns). Returns problems.
+    """
+    import difflib
+
+    problems = []
+    for tr in translated:
+        for role, col in sorted(getattr(tr, "qualified", ()) or ()):
+            if role not in roles:
+                problems.append(f"{tr.formula!r}: table '{role}' is not available in this step "
+                                f"(available: {sorted(roles)})")
+            elif col not in roles[role]:
+                close = difflib.get_close_matches(col, sorted(roles[role]), n=3, cutoff=0.6)
+                hint = f"; did you mean {' or '.join(close)}?" if close else ""
+                problems.append(f"{tr.formula!r}: {role} has no column '{col}'{hint}")
+    return problems
+
+
 class ChoiceModelDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -116,6 +181,9 @@ class ChoiceModelDefinition(BaseModel):
     formulas_see_coefficients: bool = False
     # names that look up skims in formulas, e.g. odt_skims['SOV_TIME']
     skim_accessors: list[str] = []
+    # the formulas' language: 1.x's (two dialects) or asim_core's
+    language: Language = "asim1"
+    scope: LanguageScope | None = None  # for asim_core's language
     source_files: list[str] = []
 
     _translated: list[Translated] = PrivateAttr(default_factory=list)
@@ -140,11 +208,13 @@ class ChoiceModelDefinition(BaseModel):
                 except FormulaError as err:
                     problems.append(f"{where}, {alt}: {err}")
             try:
-                translated.append(translate(
-                    term.formula, self.constants,
-                    coefficients=names if self.formulas_see_coefficients else frozenset(),
-                    skim_accessors=set(self.skim_accessors),
-                ))
+                coefs = names if self.formulas_see_coefficients else frozenset()
+                if self.language == "asim_core":
+                    translated.append(compile_formula(
+                        term.formula, (self.scope or LanguageScope()).make(self.constants, coefs)))
+                else:
+                    translated.append(translate(term.formula, self.constants, coefficients=coefs,
+                                                skim_accessors=set(self.skim_accessors)))
             except FormulaError as err:
                 problems.append(f"{where}: {err}")
                 translated.append(None)
@@ -343,6 +413,8 @@ class InteractionModelDefinition(BaseModel):
     objects: dict[str, list[str]] = {}
     # names that look up skims, e.g. skims['DIST']
     skim_accessors: list[str] = []
+    language: Language = "asim1"
+    scope: LanguageScope | None = None  # for asim_core's language
     source_files: list[str] = []
 
     _translated: list[Translated] = PrivateAttr(default_factory=list)
@@ -362,11 +434,15 @@ class InteractionModelDefinition(BaseModel):
             except FormulaError as err:
                 problems.append(f"{where}: {err}")
             try:
-                translated.append(translate(
-                    term.formula, self.constants, assigned=assigned, pandas_locals=True,
-                    objects=objects, python_mode=True if term.target else None,
-                    skim_accessors=set(self.skim_accessors),
-                ))
+                if self.language == "asim_core":
+                    translated.append(compile_formula(
+                        term.formula, (self.scope or LanguageScope()).make(self.constants, assigned=assigned)))
+                else:
+                    translated.append(translate(
+                        term.formula, self.constants, assigned=assigned, pandas_locals=True,
+                        objects=objects, python_mode=True if term.target else None,
+                        skim_accessors=set(self.skim_accessors),
+                    ))
             except FormulaError as err:
                 problems.append(f"{where}: {err}")
                 translated.append(None)
@@ -507,6 +583,8 @@ class AssignmentSpec(BaseModel):
     settings: dict[str, Any] = {}
     # other names for the table being annotated (1.x's DF setting), besides df
     df_names: list[str] = []
+    language: Language = "asim1"
+    scope: LanguageScope | None = None  # for asim_core's language
     source_files: list[str] = []
 
     _bound: BoundAssignments | None = PrivateAttr(default=None)
@@ -544,6 +622,8 @@ class AssignmentSpec(BaseModel):
         return bound
 
     def _bind(self, df_columns, tables, problems, extra_constants=None) -> BoundAssignments:
+        if self.language == "asim_core":
+            return self._bind_new(tables, problems, extra_constants)
         table_columns = {t: None for t in self.tables}
         table_columns.update({t: set(c) for t, c in (tables or {}).items() if t in table_columns})
         constants = dict(self.constants)
@@ -578,6 +658,49 @@ class AssignmentSpec(BaseModel):
                 tr = translate(a.formula, constants, python_mode=True, assigned=assigned,
                                random_index=random_index, **kw)
                 items.append((a.target, a.description, tr))
+            except NeedsColumns:
+                raise
+            except FormulaError as err:
+                problems.append(f"row {i + 1} ({a.target}): {err}")
+            if a.target != "_":
+                assigned.add(a.target)
+        func_name = f"{_identifier(self.name)}_assign"
+        doc = (f"Assignments for '{self.name}', generated by asim_core from "
+               f"{', '.join(self.source_files) or 'the definition'}.")
+        if problems:
+            return BoundAssignments(self.name, items, None, "", self.targets, n_random)
+        source = build_assignment_function(func_name, items, doc)
+        func = compile_function(source, func_name, f"<{func_name}>")
+        return BoundAssignments(self.name, items, func, source, self.targets, n_random)
+
+    def _bind_new(self, tables, problems, extra) -> BoundAssignments:
+        """asim_core's language: parameters and the zones' columns come in ``extra``."""
+        scope_def = self.scope or LanguageScope()
+        constants = dict(self.constants)
+        assigned: set[str] = set()
+        items: list[tuple[str, str, object]] = []
+        n_random = 0
+        for i, a in enumerate(self.assignments):
+            random_index = None
+            if RANDOM_CALL in a.formula:
+                random_index = n_random
+                n_random += 1
+            scope = scope_def.make(constants, self.coefficients, assigned, random_index, self.settings,
+                                   tables=tables, extra=extra)
+            if a.target.startswith("_") and a.target.isupper():
+                try:
+                    value, _ = fold_formula(a.formula, scope)
+                except NeedsColumns:
+                    raise
+                except FormulaError:
+                    pass  # computed when the step runs
+                else:
+                    constants[a.target] = value
+                    assigned.discard(a.target)
+                    items.append((a.target, a.description, value))
+                    continue
+            try:
+                items.append((a.target, a.description, compile_formula(a.formula, scope)))
             except NeedsColumns:
                 raise
             except FormulaError as err:

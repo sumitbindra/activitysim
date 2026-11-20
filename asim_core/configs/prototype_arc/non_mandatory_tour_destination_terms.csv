@@ -1,0 +1,18 @@
+Label,Description,Formula,shopping,othmaint,othdiscr,eatout,social,escort
+,Mode choice logsum,mode_choice_logsum,coef_shopping_mode_logsum,coef_othmaint_mode_logsum,1,coef_eatout_mode_logsum,1,1
+,CBD area type,person.is_CBD,coef_shopping_cbd,coef_othmaint_cbd,0,coef_eatout_cbd,coef_social_cbd,0
+,Urban high area type,person.is_urban,coef_shopping_urban,coef_othmaint_urban,coef_othdiscr_urban,coef_eatout_urban,coef_social_urban,0
+,Distance,"skim.SOV_FREE_DISTANCE[o, d, 'MD']",coef_shopping_distance,coef_othmaint_distance,coef_othdiscr_distance,coef_eatout_distance,coef_social_distance,coef_escort_distance
+,Distance squared,"skim.SOV_FREE_DISTANCE[o, d, 'MD'] ** 2",coef_shopping_distance_squared,coef_othmaint_distance_squared,coef_othdiscr_distance_squared,coef_eatout_distance_squared,coef_social_distance_squared,coef_escort_distance_squared
+,Distance cubed,"skim.SOV_FREE_DISTANCE[o, d, 'MD'] ** 3",coef_shopping_distance_cubed,coef_othmaint_distance_cubed,coef_othdiscr_distance_cubed,coef_eatout_distance_cubed,coef_social_distance_cubed,coef_escort_distance_cubed
+,Log of distance,"log(skim.SOV_FREE_DISTANCE[o, d, 'MD'])",coef_shopping_log_distance,coef_othmaint_log_distance,coef_othdiscr_log_distance,coef_eatout_log_distance,coef_social_log_distance,coef_escort_log_distance
+,Distance - high income,"(household.income_in_thousands > 50) * skim.SOV_FREE_DISTANCE[o, d, 'MD']",0,0,0,coef_eatout_distance_high_income,0,0
+,Distance - non-driving age student in hh,"where(household.num_nondriving_age_children > 0, skim.SOV_FREE_DISTANCE[o, d, 'MD'], 0)",coef_shopping_distance_nondrive,0,coef_othdiscr_distance_nondrive,0,coef_social_distance_nondrive,coef_escort_distance_nondrive
+,Distance bin 0 to 1,"skim.SOV_FREE_DISTANCE[o, d, 'MD'] >= 0 and skim.SOV_FREE_DISTANCE[o, d, 'MD'] < 1",coef_shopping_dist_0_1,coef_othmaint_dist_0_1,coef_othdiscr_dist_0_1,coef_eatout_dist_0_1,0,0
+,Distance bin 1 to 2,"skim.SOV_FREE_DISTANCE[o, d, 'MD'] >= 1 and skim.SOV_FREE_DISTANCE[o, d, 'MD'] < 2",coef_shopping_dist_1_2,coef_othmaint_dist_1_2,coef_othdiscr_dist_1_2,coef_eatout_dist_1_2,0,0
+,Distance bin 2 to 3,"skim.SOV_FREE_DISTANCE[o, d, 'MD'] >= 2 and skim.SOV_FREE_DISTANCE[o, d, 'MD'] < 3",coef_shopping_dist_2_3,coef_othmaint_dist_2_3,coef_othdiscr_dist_2_3,coef_eatout_dist_2_3,0,0
+,Distance bin 3 to 4,"skim.SOV_FREE_DISTANCE[o, d, 'MD'] >= 3 and skim.SOV_FREE_DISTANCE[o, d, 'MD'] < 4",coef_shopping_dist_3_4,0,coef_othdiscr_dist_3_4,coef_eatout_dist_3_4,0,0
+,Distance bin 4 to 5,"skim.SOV_FREE_DISTANCE[o, d, 'MD'] >= 4 and skim.SOV_FREE_DISTANCE[o, d, 'MD'] < 5",0,0,coef_othdiscr_dist_4_5,coef_eatout_dist_4_5,0,0
+,Size variable,log1p(size_term),1,1,1,1,1,1
+,No attractions,size_term == 0,-999,-999,-999,-999,-999,-999
+,Sample of alternatives correction factor,"min(log(pick_count / prob), 60)",1,1,1,1,1,1

@@ -97,6 +97,8 @@ class Translated:
     coefficients: set[str] = field(default_factory=set)  # used as k['name']
     tables: set[tuple[str, str]] = field(default_factory=set)  # (table, column) looked up by ID
     random_draws: bool = False
+    # asim_core's language: (table role, column) for each column read, e.g. ('person', 'age')
+    qualified: set[tuple[str, str]] = field(default_factory=set)
 
 
 def _literal(value) -> str:

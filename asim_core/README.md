@@ -41,6 +41,13 @@ household sizes that don't match their persons, missing skim values,
 segments with no size) stops the run with one report. 6.7 million
 persons are read and checked in about 2 s.
 
+Models can also be written in asim_core's own model files
+([docs/model_files.md](docs/model_files.md)): one YAML file per model, CSV
+tables, and one formula language in which every column names its table
+(`person.age`, `land_use.TOPOLOGY[d]`, `skim.SOV_TIME[o, d, out_period]`).
+A converter writes them from today's files; all six ported steps,
+converted, give exactly 1.x's results on all three regions.
+
 The harness can also test changes to 1.x itself
 ([docs/scheduling.md](docs/scheduling.md)): a run-time patch that computes
 tour scheduling's mode choice logsums once per distinct input leaves every
@@ -82,7 +89,10 @@ written so they can be reported to the ActivitySim project:
 | `src/asim_core/logit.py` | Reference implementations of utilities, probabilities (multinomial and nested logit) and choices, with 1.x's arithmetic. |
 | `src/asim_core/alternatives.py` | Alternative implementations for experiments (e.g. `accumulate` utilities). |
 | `src/asim_core/inputs/` | Input tables: definitions (`standard_tables.yaml`, checked by Pydantic), the reader (PyArrow, following `input_table_list`), and the checks before the run. `python -m asim_core.inputs` checks a region. |
-| `configs/<example>/` | asim_core's additions to the 1.x examples' configs: each region's `input_tables.yaml`. |
+| `src/asim_core/spec/language.py` | asim_core's formula language: checked and compiled to NumPy code. |
+| `src/asim_core/spec/convert.py`, `src/asim_core/converter.py` | Converting 1.x's formulas and files to asim_core's language and model files (`python -m asim_core.converter`). |
+| `src/asim_core/spec/model_file.py` | Reading model files (YAML with `extends`, CSV term, coefficient and derived-value tables). |
+| `configs/<example>/` | asim_core's additions to the 1.x examples' configs: each region's `input_tables.yaml`, and the six ported steps converted to model files. |
 | `src/asim_core/spec/` | Model definitions (Pydantic): choice models and assignment specs; the loader for today's YAML/CSV files; the formula translator. |
 | `src/asim_core/components/` | Components. `simple_choice.py` runs any simple choice model from its definition; `auto_ownership.py`, `accessibility.py`, `tour_mode_choice.py`, `tour_scheduling.py` and `tour_destination.py` are ported models. |
 | `harness/` | Scripts that run 1.x and compare (these import 1.x). |
@@ -136,6 +146,14 @@ To check a region's inputs on their own:
 
 ```bash
 python -m asim_core.inputs -c asim_core/configs/prototype_mtc -c activitysim/examples/prototype_mtc/configs -d activitysim/examples/prototype_mtc/data
+```
+
+To run the ported steps from the converted model files instead, add
+`--model-files`. To convert an example's ported steps and compare each with
+today's files and 1.x:
+
+```bash
+python asim_core/harness/check_model_files.py --example prototype_mtc
 ```
 
 Results land in `asim_core/work/milestone1/` (`summary.md`, `comparisons.csv`,

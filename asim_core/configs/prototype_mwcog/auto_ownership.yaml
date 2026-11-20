@@ -1,0 +1,19 @@
+# asim_core model file (formulas in asim_core's language; see docs/model_files.md)
+
+kind: auto_ownership
+description: How many cars each household owns (converted from auto_ownership.yaml, auto_ownership.csv,
+  auto_ownership_coeffs.csv).
+alternatives:
+- cars0
+- cars1
+- cars2
+- cars3
+- cars4
+logit: multinomial
+terms: auto_ownership_terms.csv
+coefficients: auto_ownership_coefficients.csv
+output: auto_ownership
+random_stream: households
+options:
+  utility_shift: false
+  drop_zero_terms: true

@@ -40,9 +40,22 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+import ast
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict
+
 from ..component import SKIMS, Component, MissingInputError, Needs, StepContext
 from ..skims import time_periods_from_settings
-from ..spec.definition import BoundAssignments
+from ..spec.definition import (
+    AssignmentSpec,
+    BoundAssignments,
+    ChoiceModelDefinition,
+    LanguageScope,
+    Nest,
+    Term,
+)
+from ..spec.language import compile_formula
 from ..spec.legacy import (
     find_config_file,
     load_assignment_spec,
@@ -51,6 +64,17 @@ from ..spec.legacy import (
     load_top_settings,
     read_yaml,
 )
+from ..spec.model_file import (
+    ModelFile,
+    is_model_file,
+    read_coefficients_table,
+    read_derived,
+    read_model_yaml,
+    read_terms,
+    validate,
+)
+from ..spec.translate import build_function, compile_function
+from .roles import TOUR_ROLES, check_roles
 from .runtime import TableLookup, plain
 from .simple_choice import ChooserView
 
@@ -88,6 +112,66 @@ _UNSUPPORTED = {
 }
 
 
+# asim_core's language: skim.NAME[from, to(, period)] -> the lookups above
+SKIM_PATTERNS = {"o d out_period": "odt_skims", "d o in_period": "dot_skims",
+                 "o d in_period": "odr_skims", "d o out_period": "dor_skims",
+                 "o d": "od_skims", "d o": "do_skims"}
+PURPOSE_1X = "where(tour.tour_type == 'school' and person.is_university, 'univ', tour.tour_type)"
+
+
+class Outputs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    choice: str = "tour_mode"
+    logsum: str | None = None
+
+
+class Options(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # 1.x skips terms whose coefficients are all zero (per segment)
+    drop_zero_terms: Literal[True] = True
+    # random draws in derived values come from each chooser's stream, in the
+    # order the rows are listed, before the choice's draw (1.x)
+    random_draws: Literal["chooser_stream"] = "chooser_stream"
+
+
+class TourModeChoiceFile(ModelFile):
+    kind: Literal["tour_mode_choice"]
+    alternatives: list[str]
+    nests: Nest
+    terms: str
+    coefficients: str  # one column per segment (tour purpose)
+    derived: str | None = None
+    # tables derived values may look up by ID (table.column[ids])
+    derived_tables: list[str] = []
+    # formulas may use coefficient values by name (1.x allows it in mode choice)
+    formulas_see_coefficients: bool = True
+    # values when this model runs as its own step; steps using it for
+    # logsums set their own (in their logsums: parameters:)
+    parameters: dict[str, Any] = {}
+    # each tour's purpose, which picks its coefficients (segment)
+    tour_purpose: str = PURPOSE_1X
+    # the times whose skim time periods out_period and in_period hold
+    time_periods: dict[Literal["out_period", "in_period"], str] = {"out_period": "tour.start",
+                                                                   "in_period": "tour.end"}
+    outputs: Outputs = Outputs()
+    options: Options = Options()
+
+
+def _uses_zone_values(formula: str) -> bool:
+    """True if o or d are used as values (not only to look skims up, which follow the step's zones)."""
+    def walk(node):
+        if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute)
+                and isinstance(node.value.value, ast.Name) and node.value.value.id == "skim"):
+            keys = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+            return any(walk(k) for k in keys if not (isinstance(k, ast.Name) and k.id in ("o", "d")))
+        if isinstance(node, ast.Name):
+            return node.id in ("o", "d")
+        return any(walk(child) for child in ast.iter_child_nodes(node))
+    return walk(ast.parse(formula, mode="eval"))
+
+
 def skim_locals(dest: str, orig: str = ORIG) -> dict[str, str]:
     """Names 1.x's skims dict makes available to formulas."""
     return {"orig_col_name": orig, "dest_col_name": dest,
@@ -110,7 +194,82 @@ class BoundModel:
 class TourModeChoiceModel:
     def __init__(self, configs_dirs: Sequence[str | Path], settings_file: str = "tour_mode_choice.yaml"):
         configs_dirs = [Path(d) for d in configs_dirs]
+        path = find_config_file(configs_dirs, settings_file)
+        self.language = "asim1"
+        self.parameters: dict = {}  # this step's parameter values (model files)
+        self.purpose = None         # (function, columns) for model files
+        self.time_columns = {"out_period": OUT_TIME, "in_period": IN_TIME}
+        self.bind_log: list[tuple] = []  # (df_columns, dest, orig) of each bind, for the converter
+        if is_model_file(path):
+            self._load_model_file(path, configs_dirs)
+        else:
+            self._load_legacy(configs_dirs, settings_file)
+        self._prepare_segments()
+
+    def _load_model_file(self, path, configs_dirs):
+        f = validate(TourModeChoiceFile, read_model_yaml(path), path)
+        self.language = "asim_core"
+        self.settings_file = Path(path).name
+        self.file = f
+        self.parameters = dict(f.parameters)
+        constants = dict(load_global_constants(configs_dirs))
+        constants.update(f.constants)
+        self.constants = constants
+        rows, value_cols = read_terms(f.terms)
+        extra = [c for c in value_cols if c not in f.alternatives]
+        if extra:
+            raise ValueError(f"{f.terms}: columns {extra} are not alternatives")
+        _, by_seg = read_coefficients_table(f.coefficients, f.coefficient_values)
+        if by_seg is None:
+            raise ValueError(f"{f.coefficients}: tour mode choice needs one column per tour purpose")
+        generic = list(next(iter(by_seg.values())))
+        template = {g: {seg: f"{g}@{seg}" for seg in by_seg} for g in generic}
+        coefficients = {f"{g}@{seg}": c for seg, cs in by_seg.items() for g, c in cs.items()}
+        self.preprocessor = None
+        self.preprocessor_tables = list(f.derived_tables)
+        targets = []
+        if f.derived:
+            scope = LanguageScope(roles=list(TOUR_ROLES), derived=list(ADDED), tables=f.derived_tables,
+                                  skims=SKIM_PATTERNS, parameters={k: None for k in f.parameters})
+            self.preprocessor = AssignmentSpec(
+                name="tour_mode_choice_derived", assignments=read_derived(f.derived),
+                constants={**constants, **skim_locals(DEST)}, coefficients=sorted(generic),
+                settings=load_top_settings(configs_dirs), language="asim_core", scope=scope,
+                source_files=[Path(f.derived).name])
+            targets = self.preprocessor.targets
+        terms = []
+        for label, _, formula, target, cells in rows:
+            if target:
+                raise ValueError(f"{f.terms}: '{target} = ...' rows are not supported in this model")
+            terms.append(Term(label=label, formula=formula, coefficients=cells))
+        term_scope = LanguageScope(roles=list(TOUR_ROLES), derived=list(ADDED) + list(targets),
+                                   skims=SKIM_PATTERNS, parameters=self.parameters)
+        self.definition = ChoiceModelDefinition(
+            name="tour_mode_choice", logit_type="NL", nests=f.nests, alternatives=f.alternatives,
+            constants={**constants, **skim_locals(DEST)}, terms=terms, coefficients=coefficients,
+            coefficient_template=template, formulas_see_coefficients=f.formulas_see_coefficients,
+            language="asim_core", scope=term_scope,
+            source_files=[Path(p).name for p in f.source_files] + [Path(f.terms).name, Path(f.coefficients).name],
+        )
+        self._spec_uses_dest_name = any(_uses_zone_values(t.formula) for t in terms)
+        self.logsum_column = f.outputs.logsum
+        self.choice_column = f.outputs.choice
+        self.alternatives = self.definition.alternatives
+        self.periods = time_periods_from_settings(configs_dirs)
+        role_scope = LanguageScope(roles=list(TOUR_ROLES)).make(constants)
+        purpose = compile_formula(f.tour_purpose, role_scope)
+        src = build_function("tour_purpose", [("tour_purpose", purpose)])
+        self.purpose = (compile_function(src, "tour_purpose"), purpose)
+        for name, text in f.time_periods.items():
+            node = ast.parse(text, mode="eval").body
+            if not (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                    and node.value.id in TOUR_ROLES):
+                raise ValueError(f"{path}: time_periods.{name} must be a column, e.g. tour.start")
+            self.time_columns[name] = node.attr
+
+    def _load_legacy(self, configs_dirs, settings_file):
         settings = read_yaml(find_config_file(configs_dirs, settings_file))
+        self.choice_column = "tour_mode"
         unsupported = [f"{k} ({why})" for k, why in _UNSUPPORTED.items() if settings.get(k)]
         if unsupported:
             raise NotImplementedError(f"{settings_file}: not supported yet: {', '.join(unsupported)}")
@@ -151,6 +310,7 @@ class TourModeChoiceModel:
                 settings=load_top_settings(configs_dirs),
             )
 
+    def _prepare_segments(self):
         # per segment: coefficients, which terms are computed (1.x skips terms
         # whose coefficients are all zero), and the compiled terms
         self.segments: dict[str, dict] = {}
@@ -174,13 +334,17 @@ class TourModeChoiceModel:
     # --- binding ------------------------------------------------------------------
 
     def bind(self, df_columns: set[str], tables: Mapping[str, set[str]], dest: str = DEST,
-             orig: str = ORIG) -> BoundModel:
+             orig: str = ORIG, parameters: Mapping | None = None,
+             roles: Mapping[str, set[str]] | None = None) -> BoundModel:
         """
         Work out, for choosers with ``df_columns`` and skims from ``orig`` to
         ``dest`` (column names), what the model reads: chooser columns, other
         tables' columns and skims. Raises if something is missing or
-        unsupported.
+        unsupported. For model files, ``parameters`` are the using step's
+        values (default: this model's own step's) and ``roles`` the columns
+        each table name offers in that step (checked if given).
         """
+        self.bind_log.append((set(df_columns), dest, orig))
         if (dest, orig) != (DEST, ORIG) and self._spec_uses_dest_name:
             raise NotImplementedError("the mode choice spec uses dest_col_name or orig_col_name; "
                                       "only the default origin and destination are supported")
@@ -190,14 +354,25 @@ class TourModeChoiceModel:
         skim_uses = set(self._spec_skims)
         table_cols: set[tuple[str, str]] = set()
         if self.preprocessor is not None:
+            extra = dict(skim_locals(dest, orig))
+            if self.language == "asim_core":
+                values = dict(self.parameters if parameters is None else parameters)
+                missing = sorted(set(self.parameters) - set(values))
+                if missing:
+                    raise ValueError(f"tour mode choice: the step using it must set parameters {missing}")
+                extra.update(values)
             bound = self.preprocessor.bind(
                 df_columns, {t: tables.get(t, set()) for t in self.preprocessor_tables},
-                constants=skim_locals(dest, orig),
+                constants=extra,
             )
+            if roles is not None and self.language == "asim_core":
+                check_roles("tour mode choice derived values", bound.translated, roles)
             pre_targets = set(bound.targets)
             pre_columns = bound.columns_used()  # read from the choosers as they are
             skim_uses |= bound.skim_uses()
             table_cols = bound.tables_used()
+        if roles is not None and self.language == "asim_core":
+            check_roles("tour mode choice terms", self.definition.translated, roles)
         # the model's formulas also see the preprocessor's results
         columns = (set(self._spec_columns) - pre_targets) | pre_columns | {orig, dest}
         skims: set[str] = set()
@@ -212,6 +387,26 @@ class TourModeChoiceModel:
                 skims.update(f"{key}__{p}" for p in self.periods.unique_labels)
                 period_columns.add(period_col)
         return BoundModel(dest, bound, columns, table_cols, skims, period_columns, orig)
+
+    # --- the tour purpose and time periods ---------------------------------------------
+
+    def chooser_inputs(self, view_cols: set[str]) -> set[str]:
+        """Columns the tour purpose and time periods are worked out from."""
+        if self.purpose is None:  # 1.x's rule
+            return {"tour_type", OUT_TIME, IN_TIME} | ({"is_university"} & set(view_cols))
+        return set(self.purpose[1].columns) | set(self.time_columns.values())
+
+    def chooser_columns(self, cols: Mapping[str, np.ndarray]) -> dict[str, np.ndarray]:
+        """tour_purpose, out_period and in_period for the choosers (1.x adds them)."""
+        if self.purpose is None:
+            return chooser_columns(cols, self.periods)
+        fn = self.purpose[0]
+        with np.errstate(all="ignore"):
+            purpose = next(iter(fn(cols)))
+        n = len(next(iter(cols.values())))
+        purpose = np.broadcast_to(np.asarray(purpose, dtype=object), (n,)).copy()
+        return {"tour_purpose": purpose,
+                **{k: self.periods.labels_for(cols[c]) for k, c in self.time_columns.items()}}
 
     # --- evaluating -----------------------------------------------------------------
 
@@ -264,11 +459,15 @@ def tour_mode_choice(configs_dirs: Sequence[str | Path],
         view_cols = VIEW.columns(available)
         if "pnr_zone_id" in view_cols:
             raise MissingInputError("park-and-ride (pnr_zone_id) is not supported yet")
-        bound = model.bind(view_cols | set(ADDED), available, DEST)
+        roles = None
+        if model.language == "asim_core":
+            from .roles import role_columns
+
+            roles = role_columns(VIEW, TOUR_ROLES, available)
+            check_roles("tour mode choice: tour_purpose", [model.purpose[1]], roles)
+        bound = model.bind(view_cols | set(ADDED), available, DEST, roles=roles)
         columns = bound.columns - set(ADDED) - {"tour_id"}
-        columns |= {"tour_type", OUT_TIME, IN_TIME}
-        if "is_university" in view_cols:
-            columns.add("is_university")
+        columns |= model.chooser_inputs(view_cols)
         needs = {t: set(c) for t, c in VIEW.resolve(columns, available).items()}
         for t, c in bound.tables:
             needs.setdefault(t, set()).add(c)
@@ -282,7 +481,7 @@ def tour_mode_choice(configs_dirs: Sequence[str | Path],
         ids = ctx.ids("tours")
         view_needs = {t: c for t, c in needs.items() if t != SKIMS}
         cols = {c: plain(v) for c, v in VIEW.gather(ctx, view_needs).items()}
-        cols.update(chooser_columns(cols, periods))
+        cols.update(model.chooser_columns(cols))
 
         choices = np.empty(len(ids), dtype=np.int64)
         logsums = np.empty(len(ids), dtype=np.float64)
@@ -307,7 +506,7 @@ def tour_mode_choice(configs_dirs: Sequence[str | Path],
                        seg_logsums, rands, seg_choices, alternatives)
 
         modes = pd.Categorical(np.asarray(alternatives, dtype=object)[choices], categories=categories)
-        out = {"tour_mode": modes}
+        out = {model.choice_column: modes}
         if model.logsum_column:
             out[model.logsum_column] = logsums
         return {"tours": out}
@@ -315,7 +514,7 @@ def tour_mode_choice(configs_dirs: Sequence[str | Path],
     return Component(
         name=STEP,
         run=run,
-        provides={"tours": ["tour_mode"] + ([model.logsum_column] if model.logsum_column else [])},
+        provides={"tours": [model.choice_column] + ([model.logsum_column] if model.logsum_column else [])},
         resolve_needs=resolve_needs,
         description=f"tour mode choice: nested logit over {len(alternatives)} modes, "
                     f"{len(model.segments)} purpose segments",
@@ -416,3 +615,128 @@ def _trace(ctx, purpose, seg_ids, local, pre_values, preprocessor, utils, probs,
     rows = [[seg_ids[r]] + list(utils[r]) + list(probs[r]) + [logsums[r], rands[r, 0], alts[choices[r]]]
             for r in local]
     ctx.tracer.write(ctx.step, f"{purpose}.choices", header, rows)
+
+
+# --- converting today's files ------------------------------------------------------------
+
+LEGACY_SKIMS = {acc: (("o" if a == "orig" else "d"), ("o" if b == "orig" else "d"), p)
+                for acc, (a, b, p) in SKIM_WRAPPERS.items()}
+
+
+def legacy_parameters(configs_dirs, settings_file: str = "tour_mode_choice.yaml") -> dict[str, str]:
+    """The parameters converting today's preprocessor creates: has_<column> -> column."""
+    from ..spec.convert import LegacyScope, NewNames, convert_formula
+
+    model = TourModeChoiceModel(configs_dirs, settings_file)
+    params: dict[str, str] = {}
+    if model.preprocessor is None:
+        return params
+    names = NewNames(role_of=lambda c: "tour")
+    assigned: set[str] = set()
+    for a in model.preprocessor.assignments:
+        legacy = LegacyScope(constants=model.preprocessor.constants, python_mode=True, assigned=set(assigned),
+                             tables=set(model.preprocessor_tables), skims=LEGACY_SKIMS,
+                             functions=set(model.preprocessor.functions),
+                             coefficients=set(model.definition.coefficient_names))
+        try:
+            params.update(convert_formula(a.formula, legacy, names).parameters)
+        except Exception:  # noqa: BLE001 - only the column tests matter here
+            pass
+        assigned.add(a.target)
+    return params
+
+
+def convert(configs_dirs: Sequence[str | Path], contexts: list[dict], out_dir: str | Path,
+            settings_file: str = "tour_mode_choice.yaml") -> list[Path]:
+    """
+    asim_core's model files for today's tour mode choice files. ``contexts``
+    are the places the model runs (this step first, then steps using it for
+    logsums): each with ``role_of`` (column -> table name) and
+    ``df_columns`` (the chooser columns 1.x's tests of which columns exist see).
+    """
+    from ..spec.convert import LegacyScope, NewNames, convert_formula
+    from ..spec.model_file import write_coefficients, write_derived, write_terms, write_yaml
+
+    configs_dirs = [Path(d) for d in configs_dirs]
+    out_dir = Path(out_dir)
+    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    model = TourModeChoiceModel(configs_dirs, settings_file)
+    d = model.definition
+
+    def role_of(col):
+        for ctx in contexts:
+            r = ctx["role_of"](col)
+            if r is not None:
+                return r
+        # not in any step that uses the model (e.g. in a branch none of them
+        # takes): the chooser rows are tours. Checked when a step uses it.
+        return "tour"
+
+    params: dict[str, str] = {}
+    derived_rows, targets = [], []
+    if model.preprocessor is not None:
+        names = NewNames(role_of=role_of, derived=set(ADDED))
+        assigned: set[str] = set()
+        for a in model.preprocessor.assignments:
+            legacy = LegacyScope(constants=model.preprocessor.constants, python_mode=True,
+                                 assigned=set(assigned), tables=set(model.preprocessor_tables),
+                                 skims=LEGACY_SKIMS, functions=set(model.preprocessor.functions),
+                                 coefficients=set(d.coefficient_names),
+                                 table_columns=contexts[0].get("tables", {}))
+            conv = convert_formula(a.formula, legacy, names)
+            params.update(conv.parameters)
+            derived_rows.append((a.description, a.target, conv.text))
+            assigned.add(a.target)
+        targets = model.preprocessor.targets
+
+    names = NewNames(role_of=role_of, derived=set(ADDED) | set(targets))
+    legacy = LegacyScope(constants=d.constants, skims=LEGACY_SKIMS, coefficients=set(d.coefficient_names))
+    spec_file = str(settings["SPEC"])
+    spec = pd.read_csv(find_config_file(configs_dirs, spec_file if spec_file.endswith(".csv") else spec_file + ".csv"),
+                       comment="#").dropna(subset=["Expression"])
+    descriptions = (["" if pd.isna(x) else str(x).strip() for x in spec["Description"]]
+                    if "Description" in spec.columns else [""] * len(spec))
+    rows = []
+    for i, term in enumerate(d.terms):
+        conv = convert_formula(term.formula, legacy, names)
+        if conv.parameters:
+            raise NotImplementedError(f"term {term.label}: tests of which columns exist in a term")
+        rows.append({"label": term.label, "description": descriptions[i], "formula": conv.text,
+                     "cells": term.coefficients})
+
+    stem = Path(settings_file).stem
+    paths = {k: out_dir / f"{stem}_{k}.csv" for k in ("terms", "coefficients", "derived")}
+    write_terms(paths["terms"], rows, d.alternatives)
+    write_coefficients(paths["coefficients"], by_segment={seg: d.coefficient_values(seg) for seg in d.segments})
+    if derived_rows:
+        write_derived(paths["derived"], derived_rows)
+
+    own = contexts[0]["df_columns"]
+    has_university = contexts[0]["role_of"]("is_university") is not None
+    data = {
+        "kind": "tour_mode_choice",
+        "description": "A mode for every tour, and the tour's mode choice logsum (converted from "
+                       f"{settings_file}, {', '.join(d.source_files[1:])}"
+                       f"{', ' + model.preprocessor.source_files[0] if model.preprocessor else ''}).",
+        "alternatives": d.alternatives,
+        "nests": d.nests.model_dump(),
+        "terms": paths["terms"].name,
+        "coefficients": paths["coefficients"].name,
+    }
+    if derived_rows:
+        data["derived"] = paths["derived"].name
+        data["derived_tables"] = list(model.preprocessor_tables)
+    data["formulas_see_coefficients"] = True
+    if params:
+        data["parameters"] = {p: col in own for p, col in sorted(params.items())}
+    data["tour_purpose"] = PURPOSE_1X if has_university else "tour.tour_type"
+    data["time_periods"] = {"out_period": f"tour.{OUT_TIME}", "in_period": f"tour.{IN_TIME}"}
+    data["outputs"] = {"choice": "tour_mode", "logsum": model.logsum_column}
+    if settings.get("CONSTANTS"):
+        data["constants"] = settings["CONSTANTS"]
+    data["options"] = {"drop_zero_terms": True, "random_draws": "chooser_stream"}
+    yaml_path = out_dir / Path(settings_file).name
+    write_yaml(yaml_path, data, "# asim_core model file (formulas in asim_core's language; see docs/model_files.md)\n"
+                                "# parameters: 1.x tested which columns the choosers have; each step using\n"
+                                "# this model now says so (these values are for this model's own step).")
+    return [p for p in [yaml_path] + list(paths.values()) if p.exists()]

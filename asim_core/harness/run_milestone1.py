@@ -378,10 +378,15 @@ def main(argv=None) -> int:
                    help="cached (default): reuse earlier measurements when the code, configs, "
                         "1.x run and machine are unchanged; all: measure everything again; "
                         "none: skip profiling (the quick correctness check)")
+    p.add_argument("--model-files", action="store_true",
+                   help="run the ported steps from asim_core's model files (asim_core/configs/<example>, "
+                        "made by harness/check_model_files.py) instead of today's files")
     args = p.parse_args(argv)
 
     example = Path(args.example_dir).resolve()
     configs = [example / c for c in args.configs]
+    if args.model_files:
+        configs = [REPO / "asim_core/configs" / example.name] + configs
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     st = Asim1State(args.asim1_out)
@@ -445,6 +450,7 @@ def main(argv=None) -> int:
         "not_ported": dict(NOT_BUILT),
         "profiles": args.profiles,
         "input_checks": inputs.summary(),
+        "model_files": args.model_files,
     }
     (out / "run_info.json").write_text(json.dumps(info, indent=2))
     summary = write_summary(out, info, step_cmp, util_rows, e2e_cmp, e2e_report, prof_cmp, full_prof, shares)

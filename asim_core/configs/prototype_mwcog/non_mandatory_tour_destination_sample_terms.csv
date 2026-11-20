@@ -1,0 +1,19 @@
+Label,Description,Formula,shopping,othmaint,othdiscr,eatout,social,escort
+,local_dist,"_DIST = skim.DIST[o, d]",1,1,1,1,1,1
+,util_dist,_DIST,coef_dist_shopping,coef_dist_othmaint,coef_dist_othdiscr,0,0,coef_dist_escort
+,util_dist_squared,"clip(_DIST, 0, 20) ** 2",coef_dist_squared_shopping,0,coef_dist_squared_othdiscr,0,0,0
+,util_dist_cubed,"clip(_DIST, 0, 20) ** 3",coef_dist_cubed_shopping,0,coef_dist_cubed_othdiscr,0,0,0
+,util_dist_squared,"clip(_DIST, 0, 15) ** 2",0,coef_dist_squared_othmaint,0,0,0,0
+,util_dist_logged,log1p(_DIST),coef_dist_logged_shopping,coef_dist_logged_othmaint,coef_dist_logged_othdiscr,coef_dist_logged_eatout,coef_dist_logged_social,coef_dist_logged_escort
+,util_dist_young,(person.young == True) * _DIST,coef_dist_young_shopping,coef_dist_young_othmaint,coef_dist_young_othdiscr,coef_dist_young_eatout,0,0
+,util_dist_old,(person.old == True) * _DIST,0,0,0,0,0,0
+,util_dist_female,(person.female == True) * _DIST,coef_dist_female_shopping,0,coef_dist_female_othdiscr,0,coef_dist_female_social,0
+,util_dist_part_time,(person.pemploy == 2) * _DIST,0,coef_dist_part_time_othmaint,0,coef_dist_part_time_eatout,0,0
+,util_dist_student,(person.is_student == True) * _DIST,0,0,0,0,0,0
+,util_dist_hh_child,(person.hh_child > 0) * _DIST,0,0,coef_dist_hh_child_othdiscr,coef_dist_hh_child_eatout,0,coef_dist_hh_child_escort
+,util_dist_zero_auto,(household.auto_ownership == 0) * _DIST,0,0,coef_dist_zero_auto_othdiscr,0,0,0
+,util_dist_low,(person.income_segment == WORK_LOW_SEGMENT_ID) * _DIST,0,0,0,0,0,0
+,util_dist_med,(person.income_segment == WORK_MED_SEGMENT_ID) * _DIST,0,0,0,0,0,0
+,util_dist_very_high,(person.income_segment == WORK_VERYHIGH_SEGMENT_ID) * _DIST,0,0,coef_dist_veryhigh_inc_othdiscr,coef_dist_veryhigh_inc_eatout,coef_dist_veryhigh_inc_social,0
+,Size variable,log1p(size_term),1,1,1,1,1,1
+,No attractions,size_term == 0,-999,-999,-999,-999,-999,-999

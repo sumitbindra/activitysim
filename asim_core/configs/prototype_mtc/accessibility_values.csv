@@ -1,0 +1,36 @@
+Description,Name,Formula
+peak round trip distance,_auPkTime,"skim.SOVTOLL_TIME[o, d, 'AM'] + skim.SOVTOLL_TIME[d, o, 'PM']"
+decay function,_decay,exp(_auPkTime * dispersion_parameter_automobile)
+auto peak retail,auPkRetail,dest_zone.RETEMPN * _decay
+auto peak total,auPkTotal,dest_zone.TOTEMP * _decay
+off-peak round trip distance,_auOpTime,"skim.SOVTOLL_TIME[o, d, 'MD'] + skim.SOVTOLL_TIME[d, o, 'MD']"
+decay function,_decay,exp(_auOpTime * dispersion_parameter_automobile)
+auto off-peak retail,auOpRetail,dest_zone.RETEMPN * _decay
+auto off-peak total,auOpTotal,dest_zone.TOTEMP * _decay
+o-d peak transit ivt,_inVehicleTime,"skim.WLK_TRN_WLK_IVT[o, d, 'AM']"
+o-d peak transit ovt,_outOfVehicleTime,"skim.WLK_TRN_WLK_IWAIT[o, d, 'AM'] + skim.WLK_TRN_WLK_XWAIT[o, d, 'AM'] + skim.WLK_TRN_WLK_WACC[o, d, 'AM'] + skim.WLK_TRN_WLK_WAUX[o, d, 'AM'] + skim.WLK_TRN_WLK_WEGR[o, d, 'AM']"
+o-d peak transit time,_trPkTime_od,(_inVehicleTime + out_of_vehicle_time_weight * _outOfVehicleTime) / TRANSIT_SCALE_FACTOR
+d-o peak transit ivt,_inVehicleTime,"skim.WLK_TRN_WLK_IVT[d, o, 'PM']"
+d-o peak transit ovt,_outOfVehicleTime,"skim.WLK_TRN_WLK_IWAIT[d, o, 'PM'] + skim.WLK_TRN_WLK_XWAIT[d, o, 'PM'] + skim.WLK_TRN_WLK_WACC[d, o, 'PM'] + skim.WLK_TRN_WLK_WAUX[d, o, 'PM'] + skim.WLK_TRN_WLK_WEGR[d, o, 'PM']"
+d-o peak transit time,_trPkTime_do,(_inVehicleTime + out_of_vehicle_time_weight * _outOfVehicleTime) / TRANSIT_SCALE_FACTOR
+peak transit time,_trPkTime,"clip(_trPkTime_od + _trPkTime_do, 0)"
+round trip path is available,_rt_available,_trPkTime_od > 0 and _trPkTime_do > 0
+decay function,_decay,_rt_available * exp(_trPkTime * dispersion_parameter_transit)
+transit peak retail,trPkRetail,dest_zone.RETEMPN * _decay
+transit peak total,trPkTotal,dest_zone.TOTEMP * _decay
+o-d off-peak transit ivt,_inVehicleTime,"skim.WLK_TRN_WLK_IVT[o, d, 'MD']"
+o-d off-peak transit ovt,_outOfVehicleTime,"skim.WLK_TRN_WLK_IWAIT[o, d, 'MD'] + skim.WLK_TRN_WLK_XWAIT[o, d, 'MD'] + skim.WLK_TRN_WLK_WACC[o, d, 'MD'] + skim.WLK_TRN_WLK_WAUX[o, d, 'MD'] + skim.WLK_TRN_WLK_WEGR[o, d, 'MD']"
+o-d off-peak transit time,_trOpTime_od,(_inVehicleTime + out_of_vehicle_time_weight * _outOfVehicleTime) / TRANSIT_SCALE_FACTOR
+d-o off-peak transit ivt,_inVehicleTime,"skim.WLK_TRN_WLK_IVT[d, o, 'MD']"
+d-o off-peak transit ovt,_outOfVehicleTime,"skim.WLK_TRN_WLK_IWAIT[d, o, 'MD'] + skim.WLK_TRN_WLK_XWAIT[d, o, 'MD'] + skim.WLK_TRN_WLK_WACC[d, o, 'MD'] + skim.WLK_TRN_WLK_WAUX[d, o, 'MD'] + skim.WLK_TRN_WLK_WEGR[d, o, 'MD']"
+d-o off-peak transit time,_trOpTime_do,(_inVehicleTime + out_of_vehicle_time_weight * _outOfVehicleTime) / TRANSIT_SCALE_FACTOR
+peak transit time,_trOpTime,"clip(_trOpTime_od + _trOpTime_do, 0)"
+round trip path is available,_rt_available,_trOpTime_od > 0 and _trOpTime_do > 0
+decay function,_decay,_rt_available * exp(_trOpTime * dispersion_parameter_transit)
+transit off-peak retail,trOpRetail,dest_zone.RETEMPN * _decay
+transit off-peak total,trOpTotal,dest_zone.TOTEMP * _decay
+non-motorized round trip distance,_nmDist,"skim.DISTWALK[o, d] + skim.DISTWALK[d, o]"
+round trip path is available,_rt_available,_nmDist <= maximum_walk_distance
+decay function,_decay,_rt_available * exp(_nmDist * dispersion_parameter_walk)
+retail accessibility,nmRetail,dest_zone.RETEMPN * _decay
+total accessibility,nmTotal,dest_zone.TOTEMP * _decay

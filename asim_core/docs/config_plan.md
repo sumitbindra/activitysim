@@ -61,7 +61,13 @@ Left for later: `log()` inputs worked out from formulas (needs Part 2),
 a "same as the household's" rule, and tables none of the examples have
 (park-and-ride lots, MAZ/TAP).
 
-## Part 2: model file format, and a converter
+## Part 2: model file format, and a converter (done)
+
+Results: [model_files.md](model_files.md). All six ported steps convert on
+all three regions and give exactly 1.x's results from the converted files;
+the explicit names exposed a model problem in ARC's example (1.x findings,
+#12). Left for later: declared random streams, `log()` input checks, a
+generated page of every variable, estimation settings.
 
 1. **One YAML file per model**, checked by its Pydantic class: kind of
    model, choosers, alternatives, term table, coefficients, and every option

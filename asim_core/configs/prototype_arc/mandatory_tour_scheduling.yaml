@@ -1,0 +1,39 @@
+# asim_core model file (formulas in asim_core's language; see docs/model_files.md)
+# alt.<column>: the departure-return option; mode_choice_logsum, out_period,
+# in_period, start_previous, end_previous: worked out by the step
+
+kind: tour_scheduling
+description: Departure and return times for mandatory tours (converted from mandatory_tour_scheduling.yaml
+  and the files it names).
+tours: mandatory
+segment: where(tour.tour_type == 'school' and person.is_university, 'univ', tour.tour_type)
+option_derived:
+  work: mandatory_tour_scheduling_annotate_alts_option_derived.csv
+specs:
+  work:
+    terms: tour_scheduling_work_terms.csv
+    coefficients: tour_scheduling_work_coefficients.csv
+  school:
+    terms: tour_scheduling_school_terms.csv
+    coefficients: tour_scheduling_school_coefficients.csv
+  univ:
+    terms: tour_scheduling_university_terms.csv
+    coefficients: tour_scheduling_university_coefficients.csv
+alternatives: tour_departure_and_duration_alternatives.csv
+logsums:
+  model: tour_mode_choice.yaml
+  destination:
+    work: workplace_zone_id
+    school: school_zone_id
+    univ: school_zone_id
+  parameters:
+    has_destination: true
+    has_end: false
+    has_parent_tour_id: false
+    has_start: false
+    has_tour_category: true
+    has_tour_type: true
+options:
+  utility_shift: false
+  max_rows: null
+  tours_without_spec: error

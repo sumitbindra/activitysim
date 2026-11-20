@@ -32,6 +32,7 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 9 | Smaller items (5) | Various | From reading the code, one measured | Not reported |
 | 10 | Bad input data runs silently: negative employment changed results across the model with no error or warning | Data checking | Reproduced (MTC) | Not reported |
 | 11 | Numbers in CSV files are read inexactly (pandas' default parser): up to 1e-12 relative error, in inputs and in coefficients | Accuracy | Measured (all three examples) | Not reported |
+| 12 | ARC's destination terms for CBD and urban area read the person's home zone, not the destination, so they never change a choice | Model specification | Reproduced (ARC, all households) | Not reported |
 
 ---
 
@@ -382,6 +383,50 @@ database) reading the same inputs starts from slightly different numbers.
 **Suggested change.** Pass `float_precision="round_trip"` wherever 1.x
 reads CSV (inputs, specs, coefficients, probability tables). Results
 would change in the last bits once, on adoption.
+
+---
+
+## 12. ARC's CBD and urban destination terms never change a choice
+
+**Evidence: reproduced** (ARC, all 24,061 households, 30,851 non-mandatory tours).
+
+**What happens.** `prototype_arc/configs/non_mandatory_tour_destination.csv`
+has two terms meant to describe the candidate destination:
+
+```
+CBD area type,@df['is_CBD'],0,0,0,coef_shopping_cbd,coef_eatout_cbd,coef_othmaint_cbd,coef_social_cbd,0
+Urban high area type,@df['is_urban'],0,0,0,coef_shopping_urban,...
+```
+
+The rows this spec sees hold the sampled zone (`alt_dest`), its sampling
+probability and logsum, plus the tour's own columns: the tour, the person,
+the household and the *home* zone. Land use columns of the candidate zone
+are not there. `is_CBD` and `is_urban` exist on the persons table
+(`annotate_persons_after_hh.csv`: the household's home zone area type), so
+`df['is_CBD']` silently reads the person's home zone. That value is the
+same for every candidate zone of a tour, so it adds the same amount to
+every alternative's utility and cancels out of the choice.
+
+Setting the nine CBD and urban coefficients to zero (asim_core, ARC
+saved state of all households): **every tour gets the same destination**;
+only the destination logsums of 7,056 tours change (by up to 0.714, the
+urban coefficient for social tours). The coefficients (e.g. −0.57 for
+shopping in the CBD) suggest a destination effect was intended.
+
+Found while converting the models to asim_core's model files, where every
+column is written with its table: the converted term reads
+`person.is_CBD`, which makes the problem visible.
+
+**To reproduce:** run non-mandatory tour destination twice on the same
+saved state, once with those coefficients set to 0, and compare the
+destinations (or, in 1.x, add a column test: the term's value is constant
+within each tour).
+
+**Suggested change.** In the example: use the destination zone's land use
+(e.g. a size-term-like column joined to the alternatives, or a skim-based
+measure). In 1.x: warn when an interaction term doesn't vary across a
+chooser's alternatives, and/or make the alternatives' columns and the
+chooser's columns distinguishable in formulas.
 
 ---
 

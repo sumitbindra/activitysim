@@ -126,6 +126,7 @@ def simple_choice_component(
     random_channel: str | None = None,
     shift_utilities: bool = False,
     drop_zero_terms: bool = True,
+    roles: Mapping[str, list[str]] | None = None,
 ) -> Component:
     """
     Build a component that writes the chosen alternative's position
@@ -146,6 +147,11 @@ def simple_choice_component(
     resolved: dict[str, Needs] = {}
 
     def resolve_needs(available: Mapping[str, set[str]]) -> Needs:
+        if roles is not None:  # asim_core's language: role.column names checked
+            from .roles import check_roles, role_columns
+
+            translated = [t for i, t in enumerate(definition.translated) if keep[i]]
+            check_roles(step, translated, role_columns(view, roles, available))
         resolved["needs"] = view.resolve(columns, available)
         return resolved["needs"]
 

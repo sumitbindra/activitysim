@@ -1,0 +1,113 @@
+# asim_core model file (formulas in asim_core's language; see docs/model_files.md)
+# parameters: 1.x tested which columns the choosers have; each step using
+# this model now says so (these values are for this model's own step).
+
+kind: tour_mode_choice
+description: A mode for every tour, and the tour's mode choice logsum (converted from tour_mode_choice.yaml,
+  tour_mode_choice.csv, tour_mode_choice_coeffs.csv, tour_mode_choice_coeffs_template.csv, tour_mode_choice_annotate_choosers_preprocessor.csv).
+alternatives:
+- DRIVEALONEFREE
+- DRIVEALONEPAY
+- SHARED2FREE
+- SHARED2PAY
+- SHARED3FREE
+- SHARED3PAY
+- WALK
+- BIKE
+- WALK_ALLTRN
+- WALK_PRMTRN
+- PNR_ALLTRN
+- PNR_PRMTRN
+- KNR_ALLTRN
+- KNR_PRMTRN
+- SCHOOL_BUS
+nests:
+  name: root
+  coefficient: 1.0
+  alternatives:
+  - name: AUTO
+    coefficient: 0.6
+    alternatives:
+    - name: DRIVEALONE
+      coefficient: 0.4
+      alternatives:
+      - DRIVEALONEFREE
+      - DRIVEALONEPAY
+    - name: SHAREDRIDE2
+      coefficient: 0.4
+      alternatives:
+      - SHARED2FREE
+      - SHARED2PAY
+    - name: SHAREDRIDE3
+      coefficient: 0.4
+      alternatives:
+      - SHARED3FREE
+      - SHARED3PAY
+  - name: NONMOTORIZED
+    coefficient: 0.6
+    alternatives:
+    - WALK
+    - BIKE
+  - name: TRANSIT
+    coefficient: 0.6
+    alternatives:
+    - name: WALKACCESS
+      coefficient: 0.4
+      alternatives:
+      - WALK_ALLTRN
+      - WALK_PRMTRN
+    - name: PNRACCESS
+      coefficient: 0.4
+      alternatives:
+      - PNR_ALLTRN
+      - PNR_PRMTRN
+    - name: KNRACCESS
+      coefficient: 0.4
+      alternatives:
+      - KNR_ALLTRN
+      - KNR_PRMTRN
+  - name: SCHOOL
+    coefficient: 1.0
+    alternatives:
+    - SCHOOL_BUS
+terms: tour_mode_choice_terms.csv
+coefficients: tour_mode_choice_coefficients.csv
+derived: tour_mode_choice_derived.csv
+derived_tables:
+- land_use
+- tours
+formulas_see_coefficients: true
+parameters:
+  has_destination: true
+  has_end: true
+  has_parent_tour_id: false
+  has_start: true
+  has_tour_category: true
+  has_tour_type: true
+tour_purpose: where(tour.tour_type == 'school' and person.is_university, 'univ', tour.tour_type)
+time_periods:
+  out_period: tour.start
+  in_period: tour.end
+outputs:
+  choice: tour_mode
+  logsum: null
+constants:
+  costPerMile: 17.29
+  costShareSr2: 1.75
+  costShareSr3: 2.5
+  waitThresh: 10.0
+  walkThresh: 0.6667
+  shortWalk: 0.333
+  longWalk: 0.667
+  walkSpeed: 3.0
+  bikeThresh: 6.0
+  bikeSpeed: 12.0
+  maxCbdAreaTypeThresh: 2
+  indivTour: 1.0
+  upperEA: 12
+  upperAM: 22
+  upperMD: 32
+  upperPM: 40
+options:
+  drop_zero_terms: true
+  random_draws: chooser_stream

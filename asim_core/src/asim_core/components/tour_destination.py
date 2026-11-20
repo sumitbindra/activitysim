@@ -39,7 +39,23 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from dataclasses import dataclass
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict
+
 from ..component import SKIMS, Component, MissingInputError, Needs, StepContext
+from ..spec.definition import InteractionModelDefinition, InteractionTerm, LanguageScope
+from ..spec.model_file import (
+    ModelFile,
+    is_model_file,
+    locate,
+    read_coefficients_table,
+    read_model_yaml,
+    read_terms,
+    validate,
+)
+from .roles import TOUR_ROLES, PERSON_ROLES, check_roles, context_roles, role_columns
 from ..spec.legacy import (
     find_config_file,
     load_global_constants,
@@ -86,61 +102,15 @@ def non_mandatory_tour_destination(
     max_rows: int = 1_000_000,
 ) -> Component:
     configs_dirs = [Path(d) for d in configs_dirs]
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
-    top = load_top_settings(configs_dirs)
-    unsupported = [f"{k} ({why})" for k, why in _UNSUPPORTED.items() if settings.get(k)]
-    method = (settings.get("compute_settings") or {}).get("sample_method") or top.get("sample_method")
-    if method not in (None, "inverse_cdf"):
-        unsupported.append(f"sample_method: {method}")
-    for key in ("use_explicit_error_terms", "disable_destination_sampling"):
-        if top.get(key):
-            unsupported.append(key)
-    if top.get("want_dest_choice_sample_tables") and settings.get("DEST_CHOICE_SAMPLE_TABLE_NAME"):
-        unsupported.append("saving the destination sample table")
-    if unsupported:
-        raise NotImplementedError(f"{settings_file}: not supported yet: {', '.join(unsupported)}")
-    shift = not top.get("skip_failed_choices", True)  # as 1.x's utils_to_probs
-
-    constants = dict(load_global_constants(configs_dirs))
-    constants.update(settings.get("CONSTANTS") or {})
-    segments = list(settings["SEGMENTS"])
-    segment_col = settings.get("CHOOSER_SEGMENT_COLUMN_NAME")
-    if segment_col is None and len(segments) != 1:
-        raise ValueError(f"{settings_file}: several SEGMENTS need CHOOSER_SEGMENT_COLUMN_NAME")
-    orig_col = settings["CHOOSER_ORIG_COL_NAME"]
-    alt_col = settings["ALT_DEST_COL_NAME"]
-    chooser_id = settings.get("CHOOSER_ID_COLUMN", "person_id")
-    sample_size = int(settings["SAMPLE_SIZE"])
-    logsum_column = settings.get("DEST_CHOICE_LOGSUM_COLUMN_NAME")
-
-    # size terms: segment -> {land use column: weight}
-    st = pd.read_csv(find_config_file(configs_dirs, "destination_choice_size_terms.csv"),
-                     comment="#", index_col="segment")
-    st = st[st.model_selector == settings["SIZE_TERM_SELECTOR"]].drop(columns="model_selector")
-    missing_segments = [s for s in segments if s not in st.index]
-    if missing_segments:
-        raise ValueError(f"no size terms for segments {missing_segments}")
-    size_weights = {seg: st.loc[seg] for seg in segments}
-    size_columns = sorted(st.columns)
-
-    def load(spec_key, seg):
-        return load_interaction_model(configs_dirs, settings[spec_key], settings["COEFFICIENTS"],
-                                      constants, name=f"{STEP}_{spec_key.lower()}_{seg}",
-                                      value_column=seg, skim_accessors=[SKIM_ACCESSOR])
-
-    sample_defs = {seg: load("SAMPLE_SPEC", seg) for seg in segments}
-    choice_defs = {seg: load("SPEC", seg) for seg in segments}
-    sample_fns = {seg: d.utility_terms() for seg, d in sample_defs.items()}
-    choice_fns = {seg: d.utility_terms() for seg, d in choice_defs.items()}
-
-    model = TourModeChoiceModel(configs_dirs, str(settings["LOGSUM_SETTINGS"])) \
-        if settings.get("LOGSUM_SETTINGS") else None
-
-    def periods_for(seg):
-        out_p, in_p = settings.get("OUT_PERIOD"), settings.get("IN_PERIOD")
-        if isinstance(out_p, dict):
-            out_p, in_p = out_p[seg], in_p[seg]
-        return int(out_p), int(in_p)
+    path = find_config_file(configs_dirs, settings_file)
+    cfg = _load_model_file(path, configs_dirs) if is_model_file(path) else _load_legacy(configs_dirs, settings_file)
+    segments, segment_col, orig_col, alt_col = cfg.segments, cfg.segment_col, cfg.orig_col, cfg.alt_col
+    chooser_id, sample_size, logsum_column = cfg.chooser_id, cfg.sample_size, cfg.logsum_column
+    size_weights, size_columns, shift = cfg.size_weights, cfg.size_columns, cfg.shift
+    sample_defs, choice_defs, sample_fns, choice_fns = cfg.sample_defs, cfg.choice_defs, cfg.sample_fns, cfg.choice_fns
+    model, periods_for = cfg.model, cfg.periods_for
+    new_format = cfg.language == "asim_core"
+    max_rows = cfg.max_rows or max_rows
 
     sample_cols = {alt_col, "prob", "pick_count", chooser_id}
     ls_added = {"in_period", "out_period", "duration"}
@@ -169,13 +139,25 @@ def non_mandatory_tour_destination(
             columns |= d.columns_used() - sample_cols - {"mode_choice_logsum", "size_term"}
             skims |= {k for _, k, _ in d.skim_uses()}
         columns -= temps
+        if new_format:
+            for d in sample_defs.values():
+                check_roles(f"{STEP} sample terms", d.translated,
+                            role_columns(TOURS_VIEW, TOUR_ROLES, available, extra={"alt": {zone_key}}))
+            for d in choice_defs.values():
+                check_roles(f"{STEP} terms", d.translated,
+                            role_columns(TOURS_VIEW, TOUR_ROLES, available, extra={"alt": {alt_col}}))
         tours_view = TOURS_VIEW.resolve(columns, available)
         bound = {}
         persons_columns: set[str] = set()
         if model is not None:
             df_cols = sample_cols | ls_added | PERSONS_VIEW.columns(available)
             for seg in segments:
-                b = model.bind(df_cols, available, dest=alt_col, orig=orig_col)
+                if new_format:
+                    roles = context_roles(PERSONS_VIEW, PERSON_ROLES, available, df_cols)
+                    b = model.bind(df_cols, available, dest=alt_col, orig=orig_col,
+                                   parameters=cfg.logsum_parameters, roles=roles)
+                else:
+                    b = model.bind(df_cols, available, dest=alt_col, orig=orig_col)
                 bound[seg] = b
                 persons_columns |= b.columns - sample_cols - ls_added
                 for t, c in b.tables:
@@ -283,6 +265,222 @@ class _ZoneSkims:
         if how == "max":
             return np.maximum(self.ctx.skim(key, self.dest, self.orig), self.ctx.skim(key, self.orig, self.dest))
         return self.ctx.skim(key, self.orig, self.dest)
+
+
+@dataclass
+class _Config:
+    """What the step runs, from either today's files or a model file."""
+
+    segments: list
+    segment_col: str | None
+    orig_col: str
+    alt_col: str
+    chooser_id: str
+    sample_size: int
+    logsum_column: str | None
+    size_weights: dict
+    size_columns: list
+    shift: bool
+    sample_defs: dict
+    choice_defs: dict
+    sample_fns: dict
+    choice_fns: dict
+    model: object
+    periods_for: object
+    language: str = "asim1"
+    logsum_parameters: dict | None = None
+    max_rows: int | None = None
+
+
+def _load_legacy(configs_dirs, settings_file) -> _Config:
+    """Today's settings, specs and coefficients."""
+    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    top = load_top_settings(configs_dirs)
+    unsupported = [f"{k} ({why})" for k, why in _UNSUPPORTED.items() if settings.get(k)]
+    method = (settings.get("compute_settings") or {}).get("sample_method") or top.get("sample_method")
+    if method not in (None, "inverse_cdf"):
+        unsupported.append(f"sample_method: {method}")
+    for key in ("use_explicit_error_terms", "disable_destination_sampling"):
+        if top.get(key):
+            unsupported.append(key)
+    if top.get("want_dest_choice_sample_tables") and settings.get("DEST_CHOICE_SAMPLE_TABLE_NAME"):
+        unsupported.append("saving the destination sample table")
+    if unsupported:
+        raise NotImplementedError(f"{settings_file}: not supported yet: {', '.join(unsupported)}")
+    shift = not top.get("skip_failed_choices", True)  # as 1.x's utils_to_probs
+
+    constants = dict(load_global_constants(configs_dirs))
+    constants.update(settings.get("CONSTANTS") or {})
+    segments = list(settings["SEGMENTS"])
+    segment_col = settings.get("CHOOSER_SEGMENT_COLUMN_NAME")
+    if segment_col is None and len(segments) != 1:
+        raise ValueError(f"{settings_file}: several SEGMENTS need CHOOSER_SEGMENT_COLUMN_NAME")
+    orig_col = settings["CHOOSER_ORIG_COL_NAME"]
+    alt_col = settings["ALT_DEST_COL_NAME"]
+    chooser_id = settings.get("CHOOSER_ID_COLUMN", "person_id")
+    sample_size = int(settings["SAMPLE_SIZE"])
+    logsum_column = settings.get("DEST_CHOICE_LOGSUM_COLUMN_NAME")
+
+    # size terms: segment -> {land use column: weight}
+    st = pd.read_csv(find_config_file(configs_dirs, "destination_choice_size_terms.csv"),
+                     comment="#", index_col="segment")
+    st = st[st.model_selector == settings["SIZE_TERM_SELECTOR"]].drop(columns="model_selector")
+    missing_segments = [s for s in segments if s not in st.index]
+    if missing_segments:
+        raise ValueError(f"no size terms for segments {missing_segments}")
+    size_weights = {seg: st.loc[seg] for seg in segments}
+    size_columns = sorted(st.columns)
+
+    def load(spec_key, seg):
+        return load_interaction_model(configs_dirs, settings[spec_key], settings["COEFFICIENTS"],
+                                      constants, name=f"{STEP}_{spec_key.lower()}_{seg}",
+                                      value_column=seg, skim_accessors=[SKIM_ACCESSOR])
+
+    sample_defs = {seg: load("SAMPLE_SPEC", seg) for seg in segments}
+    choice_defs = {seg: load("SPEC", seg) for seg in segments}
+    sample_fns = {seg: d.utility_terms() for seg, d in sample_defs.items()}
+    choice_fns = {seg: d.utility_terms() for seg, d in choice_defs.items()}
+
+    model = TourModeChoiceModel(configs_dirs, str(settings["LOGSUM_SETTINGS"])) \
+        if settings.get("LOGSUM_SETTINGS") else None
+
+    def periods_for(seg):
+        out_p, in_p = settings.get("OUT_PERIOD"), settings.get("IN_PERIOD")
+        if isinstance(out_p, dict):
+            out_p, in_p = out_p[seg], in_p[seg]
+        return int(out_p), int(in_p)
+    return _Config(segments, segment_col, orig_col, alt_col, chooser_id, sample_size, logsum_column,
+                   size_weights, size_columns, shift, sample_defs, choice_defs, sample_fns, choice_fns, model,
+                   periods_for)
+
+
+def _size_weights(path, selector, segments):
+    st = pd.read_csv(path, comment="#", index_col="segment")
+    st = st[st.model_selector == selector].drop(columns="model_selector")
+    missing_segments = [s for s in segments if s not in st.index]
+    if missing_segments:
+        raise ValueError(f"no size terms for segments {missing_segments}")
+    return {seg: st.loc[seg] for seg in segments}, sorted(st.columns)
+
+
+# --- model files ------------------------------------------------------------------------
+
+SAMPLE_VALUES = ["size_term"]
+CHOICE_VALUES = ["size_term", "prob", "pick_count", "mode_choice_logsum"]
+
+
+class SizeTerms(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    file: str = "destination_choice_size_terms.csv"
+    selector: str  # the rows of the file (model_selector) for this model
+
+
+class Logsums(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model: str  # a tour mode choice model file
+    # the time periods (departure, return) logsums are worked out for: one pair, or one per segment
+    periods: tuple[int, int] | dict[str, tuple[int, int]]
+    parameters: dict[str, Any] = {}
+
+
+class Outputs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    destination: str = "destination"
+    logsum: str | None = None
+
+
+class Options(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    utility_shift: bool = False  # 1.x: only when skip_failed_choices is off
+    max_rows: int | None = None  # tour x zone rows evaluated at once (results don't depend on it)
+    # how 1.x samples: draws by inverse CDF; at most as many draws as zones with a size;
+    # the sample sorted by zone within each tour; its probabilities kept as 32-bit floats
+    sample_method: Literal["inverse_cdf"] = "inverse_cdf"
+    sample_size_cap: Literal["zones_with_size"] = "zones_with_size"
+    sample_order: Literal["by_zone"] = "by_zone"
+    sample_probabilities: Literal["float32"] = "float32"
+
+
+class TourDestinationFile(ModelFile):
+    kind: Literal["tour_destination"]
+    tours: Literal["non_mandatory"]
+    segment: str | None = None  # the tours' column picking the segment, e.g. tour.tour_type
+    segments: list[str]
+    size_terms: SizeTerms
+    sample_size: int
+    sample_terms: str  # one coefficient column per segment
+    terms: str         # one coefficient column per segment
+    coefficients: str
+    origin: str        # the column holding each tour's origin zone, e.g. household.home_zone_id
+    alternative_zone: str = "alt_dest"  # name of the candidate zone in the choice rows (alt.<name>)
+    chooser_id: str = "person_id"
+    logsums: Logsums | None = None
+    outputs: Outputs = Outputs()
+    options: Options = Options()
+
+
+def _column_name(text: str, path) -> str:
+    import ast as _ast
+
+    node = _ast.parse(text, mode="eval").body
+    if isinstance(node, _ast.Attribute) and isinstance(node.value, _ast.Name):
+        return node.attr
+    raise ValueError(f"{path}: '{text}' must be a column, e.g. household.home_zone_id")
+
+
+def _load_model_file(path, configs_dirs) -> _Config:
+    f = validate(TourDestinationFile, read_model_yaml(path), path)
+    constants = dict(load_global_constants(configs_dirs))
+    constants.update(f.constants)
+    coefficients, by_seg = read_coefficients_table(f.coefficients, f.coefficient_values)
+    if by_seg is not None:
+        raise ValueError(f"{f.coefficients}: one value per coefficient (segments are columns of the term tables)")
+    roles = list(TOUR_ROLES) + ["alt"]
+    skims = {"o d": SKIM_ACCESSOR}
+
+    def load(terms_path, values, kind):
+        rows, value_cols = read_terms(terms_path)
+        missing = [seg for seg in f.segments if seg not in value_cols]
+        if missing:
+            raise ValueError(f"{terms_path}: no coefficient column for segments {missing}")
+        scope = LanguageScope(roles=roles, derived=values, skims=skims)
+        out = {}
+        for seg in f.segments:
+            terms = [InteractionTerm(label=label, formula=formula, coefficient=cells.get(seg, "0"), target=target)
+                     for label, _, formula, target, cells in rows]
+            out[seg] = InteractionModelDefinition(
+                name=f"{STEP}_{kind}_{seg}", terms=terms, coefficients=coefficients, constants=constants,
+                language="asim_core", scope=scope,
+                source_files=[Path(terms_path).name, Path(f.coefficients).name])
+        return out
+
+    sample_defs = load(f.sample_terms, SAMPLE_VALUES, "sample")
+    choice_defs = load(f.terms, CHOICE_VALUES, "spec")
+    size_weights, size_columns = _size_weights(locate(f.size_terms.file, configs_dirs), f.size_terms.selector,
+                                               f.segments)
+    model = None
+    periods = None
+    if f.logsums is not None:
+        model_path = Path(locate(f.logsums.model, configs_dirs))
+        model = TourModeChoiceModel([model_path.parent] + list(configs_dirs), model_path.name)
+        periods = f.logsums.periods
+
+    def periods_for(seg):
+        p = periods[seg] if isinstance(periods, dict) else periods
+        return int(p[0]), int(p[1])
+
+    return _Config(
+        list(f.segments), _column_name(f.segment, path) if f.segment else None, _column_name(f.origin, path),
+        f.alternative_zone, f.chooser_id, f.sample_size, f.outputs.logsum, size_weights, size_columns,
+        f.options.utility_shift, sample_defs, choice_defs,
+        {seg: d.utility_terms() for seg, d in sample_defs.items()},
+        {seg: d.utility_terms() for seg, d in choice_defs.items()},
+        model, periods_for, language="asim_core",
+        logsum_parameters=dict(f.logsums.parameters) if f.logsums else None, max_rows=f.options.max_rows)
 
 
 def _sample(ctx, sel, tour_ids, cols, orig_pos, alt_zones, alt_size, terms, sample_size, shift, max_rows):
@@ -416,3 +614,95 @@ def _choose(ctx, sel, tour_ids, cols, orig_pos, sample, zone_size, terms, shift,
         chosen[b:b + len(batch_tours)] = sample["zone"][rows][offsets + positions]
         logsums[b:b + len(batch_tours)] = ls
     return chosen, logsums
+
+
+# --- converting today's files ------------------------------------------------------------
+
+
+def convert(configs_dirs: Sequence[str | Path], available: Mapping[str, set[str]], out_dir: str | Path,
+            settings_file: str = "non_mandatory_tour_destination.yaml") -> list[Path]:
+    """asim_core's model files for today's destination files; ``available``: columns when the step runs."""
+    from ..spec.convert import LegacyScope, NewNames, convert_formula
+    from ..spec.model_file import write_coefficients, write_terms, write_yaml
+    from .roles import role_finder
+    from .tour_mode_choice import legacy_parameters
+
+    configs_dirs = [Path(d) for d in configs_dirs]
+    out_dir = Path(out_dir)
+    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    cfg = _load_legacy(configs_dirs, settings_file)
+    comp = non_mandatory_tour_destination(configs_dirs, settings_file)
+    if cfg.model is not None:
+        comp.info["logsum_model"].bind_log.clear()
+    comp.resolve_needs(available)
+    written = []
+
+    def convert_spec(defs, spec_key, alt_cols, values, name):
+        first = defs[cfg.segments[0]]
+        names = NewNames(role_of=role_finder(role_columns(TOURS_VIEW, TOUR_ROLES, available,
+                                                          extra={"alt": set(alt_cols)})),
+                         derived=set(values))
+        spec = pd.read_csv(find_config_file(configs_dirs, settings[spec_key]), comment="#").dropna(
+            subset=["Expression"])
+        descriptions = ["" if pd.isna(x) else str(x).strip() for x in spec.get("Description", [""] * len(spec))]
+        rows, assigned = [], set()
+        for i, t in enumerate(first.terms):
+            legacy = LegacyScope(constants=first.constants, pandas_locals=True, assigned=set(assigned),
+                                 python_mode=True if t.target else None, skims={SKIM_ACCESSOR: ("o", "d", None)})
+            cells = {seg: defs[seg].terms[i].coefficient for seg in cfg.segments}
+            rows.append({"label": t.label, "description": descriptions[i] if i < len(descriptions) else "",
+                         "target": t.target, "formula": convert_formula(t.formula, legacy, names).text,
+                         "cells": cells})
+            if t.target:
+                assigned.add(t.target)
+        path = out_dir / f"{name}_terms.csv"
+        write_terms(path, rows, list(cfg.segments))
+        written.append(path)
+        return path
+
+    sample_path = convert_spec(cfg.sample_defs, "SAMPLE_SPEC", ["zone_id"], SAMPLE_VALUES,
+                               Path(settings["SAMPLE_SPEC"]).stem)
+    terms_path = convert_spec(cfg.choice_defs, "SPEC", [cfg.alt_col], CHOICE_VALUES, Path(settings["SPEC"]).stem)
+    coef_path = out_dir / f"{Path(settings['COEFFICIENTS']).stem}.csv"
+    first = cfg.choice_defs[cfg.segments[0]]
+    write_coefficients(coef_path, {n: c.value for n, c in first.coefficients.items()})
+    written.append(coef_path)
+
+    find_role = role_finder(role_columns(TOURS_VIEW, TOUR_ROLES, available))
+    data = {"kind": "tour_destination",
+            "description": f"A destination for every non-mandatory tour (converted from {settings_file} "
+                           "and the files it names).",
+            "tours": "non_mandatory"}
+    if cfg.segment_col:
+        data["segment"] = f"{find_role(cfg.segment_col) or 'tour'}.{cfg.segment_col}"
+    data.update({
+        "segments": list(cfg.segments),
+        "size_terms": {"file": "destination_choice_size_terms.csv", "selector": settings["SIZE_TERM_SELECTOR"]},
+        "sample_size": cfg.sample_size,
+        "sample_terms": sample_path.name,
+        "terms": terms_path.name,
+        "coefficients": coef_path.name,
+        "origin": f"{find_role(cfg.orig_col) or 'tour'}.{cfg.orig_col}",
+        "alternative_zone": cfg.alt_col,
+        "chooser_id": cfg.chooser_id,
+    })
+    if cfg.model is not None:
+        model = comp.info["logsum_model"]
+        params = legacy_parameters(configs_dirs, str(settings["LOGSUM_SETTINGS"]))
+        df_cols = model.bind_log[0][0]
+        pairs = {seg: list(cfg.periods_for(seg)) for seg in cfg.segments}
+        periods = next(iter(pairs.values())) if len({tuple(p) for p in pairs.values()}) == 1 else pairs
+        data["logsums"] = {"model": str(settings["LOGSUM_SETTINGS"]), "periods": periods}
+        if params:
+            data["logsums"]["parameters"] = {p: col in df_cols for p, col in sorted(params.items())}
+    data["outputs"] = {"destination": "destination", "logsum": cfg.logsum_column}
+    if settings.get("CONSTANTS"):
+        data["constants"] = settings["CONSTANTS"]
+    data["options"] = {"utility_shift": cfg.shift, "max_rows": None, "sample_method": "inverse_cdf",
+                       "sample_size_cap": "zones_with_size", "sample_order": "by_zone",
+                       "sample_probabilities": "float32"}
+    yaml_path = out_dir / Path(settings_file).name
+    write_yaml(yaml_path, data, "# asim_core model file (formulas in asim_core's language; see docs/model_files.md)\n"
+                                "# alt.<column>: the candidate zone; size_term, prob, pick_count and\n"
+                                "# mode_choice_logsum: worked out by the step")
+    return [yaml_path] + written
