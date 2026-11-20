@@ -11,7 +11,9 @@ Experiments are listed in ``experiments.yaml`` (or ``--config``). For each:
   rows taking any value (with the sampling error expected by chance), and the
   largest utility difference from the reference implementation.
 * **Profile:** run the step in fresh processes, ``repeat`` times
-  (``profile_step.py``), the same way as the 1.x baselines.
+  (``profile_step.py``), the same way as the 1.x baselines; with
+  ``--page-cache cold warm``, once for each state of the skim file in the
+  operating system's page cache (see page_cache.py).
 * **Seam benchmarks:** time each implementation of a piece on its own with
   synthetic data at larger row counts, to show how costs grow.
 
@@ -101,7 +103,7 @@ def match_check(comp, st: Asim1State, engine: Engine, base_seed: int, out: Path,
 
 
 def profile(step, label, engine_kind, configs, run_dir, seams, repeat, out: Path,
-            example: Path, read_skim_cache: str = "settings") -> pd.DataFrame:
+            example: Path, read_skim_cache: str = "settings", page_cache: str = "as_is") -> pd.DataFrame:
     rows_csv = out / "runs" / f"{label}.csv"
     rows_csv.parent.mkdir(parents=True, exist_ok=True)
     if rows_csv.exists():
@@ -115,6 +117,7 @@ def profile(step, label, engine_kind, configs, run_dir, seams, repeat, out: Path
             "--scratch", str(out / "scratch" / label), "--out", str(rows_csv),
             "--seams", json.dumps(seams),
             "--read-skim-cache", read_skim_cache if engine_kind == "asim_core" else "settings",
+            "--page-cache", page_cache if engine_kind == "asim_core" else "as_is",
         ]
         subprocess.run(cmd, check=True, capture_output=True)
     return pd.read_csv(rows_csv)
@@ -126,6 +129,13 @@ def summarize_runs(runs: pd.DataFrame) -> dict:
         "min_s": float(runs["wall_s"].min()),
         "max_s": float(runs["wall_s"].max()),
         "median_extra_mb": float(runs["step_extra_mb"].median()),
+        "median_peak_mb": float(runs["peak_mb"].median()),
+        "median_own_extra_mb": (float(runs["own_extra_mb"].median())
+                                if "own_extra_mb" in runs else np.nan),
+        "median_file_peak_mb": (float(runs["file_peak_mb"].median())
+                                if "file_peak_mb" in runs else np.nan),
+        "skims_resident": (float(runs["skims_resident_share"].median())
+                           if "skims_resident_share" in runs else np.nan),
         "runs": len(runs),
     }
 
@@ -174,18 +184,26 @@ def write_report(out: Path, step: str, exp: pd.DataFrame, bench: pd.DataFrame) -
              "compared with 1.x. Timing: fresh processes from the same saved state "
              "(see profile_step.py), alongside the 1.x baselines.")
     s += ["", "## Match and timing", ""]
-    cols = ["experiment", "pieces_changed", "result_vs_1x", "rows_different", "rows",
-            "largest_share_diff_pp", "sampling_error_2se_pp", "max_utility_diff",
-            "median_s", "min_s", "max_s", "median_extra_mb", "runs"]
+    cols = ["experiment", "pieces_changed", "page_cache", "skims_resident", "result_vs_1x",
+            "rows_different", "rows", "largest_share_diff_pp", "sampling_error_2se_pp",
+            "max_utility_diff", "median_s", "min_s", "max_s", "median_extra_mb",
+            "median_own_extra_mb", "median_file_peak_mb", "runs"]
     table = exp[cols].copy()
     table["max_utility_diff"] = table["max_utility_diff"].map(
         lambda v: "" if pd.isna(v) else f"{v:.1e}")
     for c in ["rows_different", "rows", "runs"]:
         table[c] = table[c].map(lambda v: "" if pd.isna(v) else str(int(v)))
-    for c in ["largest_share_diff_pp", "sampling_error_2se_pp"]:
+    for c in ["largest_share_diff_pp", "sampling_error_2se_pp", "skims_resident"]:
         table[c] = table[c].map(lambda v: "" if pd.isna(v) else f"{v:.2f}")
     s.append(md_table(table, "{:.3f}"))
-    s += ["", "`largest_share_diff_pp`: largest difference, in percentage points, in the share "
+    s += ["", "`page_cache`: the skim file's state in the operating system's page cache when "
+          "each run starts (`cold`: dropped, `warm`: read once before; 1.x holds its skims in "
+          "memory, loaded before timing). `skims_resident`: the share of the file in the cache "
+          "then (median of the runs). `median_extra_mb`: the step's peak memory above where it "
+          "started, counting pages of memory-mapped skims it read; `median_own_extra_mb`: the "
+          "same for the process's own memory only; `median_file_peak_mb`: the most pages of "
+          "mapped files it held (sampled; see profile_step.py).", "",
+          "`largest_share_diff_pp`: largest difference, in percentage points, in the share "
           "of rows taking any one value. `sampling_error_2se_pp`: two standard errors of that "
           "difference if both runs drew independently, a rough line for \"within chance\"."]
     if len(bench):
@@ -211,6 +229,11 @@ def main(argv=None) -> int:
     p.add_argument("--match-run", default=None,
                    help="1.x run to compare results with (default: --asim1-out); e.g. a run with "
                         "numexpr off, which asim_core matches exactly on large zone systems")
+    p.add_argument("--page-cache", nargs="+", choices=["as_is", "cold", "warm"], default=["as_is"],
+                   help="for asim_core: profile with the skim file in each of these states in the "
+                        "OS page cache (cold: dropped first; warm: read once first)")
+    p.add_argument("--no-baselines", action="store_true",
+                   help="don't profile the 1.x baselines (e.g. when they were profiled already)")
     p.add_argument("--read-skim-cache", choices=["settings", "true", "false"], default="settings",
                    help="for asim_core: reuse an unchanged skim cache (preparing skims isn't timed)")
     args = p.parse_args(argv)
@@ -234,27 +257,38 @@ def main(argv=None) -> int:
     rsc = {"settings": None, "true": True, "false": False}[args.read_skim_cache]
     skims = skim_store(example, configs, read_skim_cache=rsc)
 
-    rows = []
-    for name, seams in (cfg.get("experiments") or {"reference": {}}).items():
-        engine = Engine(seams or {})
-        print(f"experiment {name}: {engine.changed or 'reference'}", flush=True)
-        row = {"experiment": name,
-               "pieces_changed": ", ".join(f"{k}={v}" for k, v in engine.changed.items()) or "none",
-               "agreement": engine.agreement}
-        row.update(match_check(comp, st, engine, base_seed, out / "match" / name, skims))
-        runs = profile(step, name, "asim_core", args.configs, Path(args.asim1_out),
-                       engine.changed, repeat, out, example, args.read_skim_cache)
-        row.update(summarize_runs(runs))
-        rows.append(row)
+    experiments = {n: Engine(s or {}) for n, s in (cfg.get("experiments") or {"reference": {}}).items()}
+    # profiles first: the match checks map skim pages into this process, and pages a
+    # process has mapped can't be dropped from the page cache for a cold run
+    timed = {}
+    for state in args.page_cache:
+        for name, engine in experiments.items():
+            print(f"profile {name} ({state}): {engine.changed or 'reference'}", flush=True)
+            label = name if len(args.page_cache) == 1 else f"{name}_{state}"
+            timed[name, state] = summarize_runs(profile(
+                step, label, "asim_core", args.configs, Path(args.asim1_out), engine.changed,
+                repeat, out, example, args.read_skim_cache, state))
 
-    baselines = [("1.x legacy (baseline)", args.configs, Path(args.asim1_out))]
-    if (Path(args.asim1_sharrow_out) / "pipeline.parquetpipeline").exists():
+    rows = []
+    for name, engine in experiments.items():
+        print(f"match {name}", flush=True)
+        match = match_check(comp, st, engine, base_seed, out / "match" / name, skims)
+        for state in args.page_cache:
+            rows.append({"experiment": name,
+                         "pieces_changed": ", ".join(f"{k}={v}" for k, v in engine.changed.items())
+                         or "none",
+                         "agreement": engine.agreement, "page_cache": state,
+                         **match, **timed[name, state]})
+
+    baselines = [] if args.no_baselines else [("1.x legacy (baseline)", args.configs, Path(args.asim1_out))]
+    if not args.no_baselines and (Path(args.asim1_sharrow_out) / "pipeline.parquetpipeline").exists():
         baselines.append(("1.x sharrow (baseline)", args.sharrow_configs, Path(args.asim1_sharrow_out)))
     for label, cfgs, run_dir in baselines:
         print(f"baseline {label}", flush=True)
         safe = label.split(" (")[0].replace(" ", "_").replace(".", "")
         runs = profile(step, safe, "asim1", cfgs, run_dir, {}, repeat, out, example)
-        rows.append({"experiment": label, "pieces_changed": "", "result_vs_1x": "",
+        rows.append({"experiment": label, "pieces_changed": "", "page_cache": "in memory",
+                     "result_vs_1x": "",
                      "rows_different": np.nan, "rows": np.nan, "largest_share_diff_pp": np.nan,
                      "sampling_error_2se_pp": np.nan, "max_utility_diff": np.nan,
                      **summarize_runs(runs)})

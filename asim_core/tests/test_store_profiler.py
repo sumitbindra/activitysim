@@ -1,4 +1,5 @@
 import sys
+import time
 
 import numpy as np
 import pandas as pd
@@ -40,3 +41,19 @@ def test_profiler_records_time_and_memory():
     assert r.wall_s > 0
     if sys.platform.startswith("linux"):
         assert r.step_extra_mb > 100
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads /proc")
+def test_profiler_splits_own_memory_from_mapped_file_pages(tmp_path):
+    path = tmp_path / "m.npy"
+    np.save(path, np.ones(10_000_000))  # 80 MB file
+    m = np.load(path, mmap_mode="r")
+    p = Profiler(split_memory=True)
+    with p.step("touch"):
+        x = np.ones(20_000_000)  # 160 MB of the process's own memory
+        assert m.sum() == 10_000_000  # maps every page of the file
+        time.sleep(0.05)
+        del x
+    (r,) = p.records
+    assert r.anon_peak_mb - r.anon_before_mb > 120
+    assert r.file_peak_mb > 60

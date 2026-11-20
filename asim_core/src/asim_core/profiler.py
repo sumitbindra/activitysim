@@ -15,6 +15,18 @@ For each step it records:
                   step needed on top of what was already held
 * ``rss_after_mb`` memory still held when the step finished
 
+With ``split_memory=True``, also (Linux), splitting what the process holds
+into its own memory and pages of files it has mapped (such as memory-mapped
+skims, which the operating system can drop and read again, and which several
+processes can share):
+
+* ``anon_before_mb``  the process's own memory when the step started
+* ``anon_peak_mb``    its highest own memory during the step
+* ``file_peak_mb``    the most pages of mapped files it held during the step
+
+The last two are sampled every few milliseconds by a thread, so a very short
+peak can be missed.
+
 Exact per-step peaks use Linux's ``/proc`` interface (the peak counter is reset
 before each step). On other systems the memory columns are left empty for now.
 Only the Python standard library is used.
@@ -26,6 +38,7 @@ import csv
 import gc
 import os
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, fields
@@ -56,6 +69,54 @@ def peak_rss_mb() -> float | None:
     return _read_status_mb("VmHWM")
 
 
+def _read_status_many_mb(keys) -> dict:
+    out = {}
+    try:
+        with open(_PROC_STATUS) as f:
+            for line in f:
+                key = line.split(":", 1)[0]
+                if key in keys:
+                    out[key] = int(line.split()[1]) / 1024.0
+    except OSError:
+        pass
+    return out
+
+
+class _MemorySampler:
+    """Highest own (anonymous) and mapped-file memory while running, sampled."""
+
+    KEYS = ("RssAnon", "RssFile", "RssShmem")
+
+    def __init__(self, interval_s: float = 0.005):
+        self.interval_s = interval_s
+        self.anon_peak = self.file_peak = None
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def _sample(self):
+        v = _read_status_many_mb(self.KEYS)
+        if "RssAnon" not in v:
+            return
+        anon = v["RssAnon"] + v.get("RssShmem", 0.0)
+        file = v.get("RssFile", 0.0)
+        self.anon_peak = anon if self.anon_peak is None else max(self.anon_peak, anon)
+        self.file_peak = file if self.file_peak is None else max(self.file_peak, file)
+
+    def _run(self):
+        while not self._stop.wait(self.interval_s):
+            self._sample()
+
+    def __enter__(self):
+        self._sample()
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._stop.set()
+        self._thread.join()
+        self._sample()
+
+
 def reset_peak() -> bool:
     """Reset the peak-memory counter. Returns False if not supported."""
     if not sys.platform.startswith("linux"):
@@ -78,6 +139,9 @@ class StepProfile:
     peak_mb: float | None
     step_extra_mb: float | None
     rss_after_mb: float | None
+    anon_before_mb: float | None = None
+    anon_peak_mb: float | None = None
+    file_peak_mb: float | None = None
 
 
 class Profiler:
@@ -87,9 +151,11 @@ class Profiler:
     stopped (e.g. killed for running out of memory) keeps its profile.
     """
 
-    def __init__(self, collect_garbage: bool = True, live_csv: str | os.PathLike | None = None):
+    def __init__(self, collect_garbage: bool = True, live_csv: str | os.PathLike | None = None,
+                 split_memory: bool = False):
         self.records: list[StepProfile] = []
         self.collect_garbage = collect_garbage
+        self.split_memory = split_memory and sys.platform.startswith("linux")
         self.live_csv = Path(live_csv) if live_csv else None
         if self.live_csv:
             self.live_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -101,6 +167,13 @@ class Profiler:
         if self.collect_garbage:
             gc.collect()  # outside the timed region, so steps start from a clean slate
         rss_before = current_rss_mb()
+        anon_before = None
+        sampler = None
+        if self.split_memory:
+            v = _read_status_many_mb(_MemorySampler.KEYS)
+            if "RssAnon" in v:
+                anon_before = v["RssAnon"] + v.get("RssShmem", 0.0)
+            sampler = _MemorySampler().__enter__()
         peak_ok = reset_peak()
         c0 = time.process_time()
         t0 = time.perf_counter()
@@ -109,6 +182,8 @@ class Profiler:
         finally:
             wall = time.perf_counter() - t0
             cpu = time.process_time() - c0
+            if sampler is not None:
+                sampler.__exit__(None, None, None)
             peak = peak_rss_mb() if peak_ok else None
             rss_after = current_rss_mb()
             extra = None
@@ -123,6 +198,9 @@ class Profiler:
                 peak_mb=peak,
                 step_extra_mb=extra,
                 rss_after_mb=rss_after,
+                anon_before_mb=anon_before,
+                anon_peak_mb=None if sampler is None else sampler.anon_peak,
+                file_peak_mb=None if sampler is None else sampler.file_peak,
             )
             self.records.append(rec)
             if self.live_csv:

@@ -11,6 +11,17 @@ Each call appends one row to ``--out``. Loading the saved state, getting skims
 ready and one-time Numba compiling happen before timing starts (the time to
 get skims ready is recorded separately, as ``skims_ready_s``); the step
 itself, including saving its results, is timed.
+
+For asim_core, ``--page-cache`` puts the skim file in a known state in the
+operating system's page cache before the step (``cold``: dropped, ``warm``:
+read once; see page_cache.py), and the share of it there when the step starts
+is recorded (``skims_resident_share``).
+
+Memory: ``peak_mb`` and ``step_extra_mb`` count everything the process holds,
+including pages of memory-mapped skims it has read. ``own_extra_mb`` counts
+only the process's own memory (its peak during the step above where it
+started), and ``file_peak_mb`` the most pages of mapped files it held; both
+are sampled (see the profiler's ``split_memory``).
 Harness code: the asim1 engine imports ActivitySim 1.x.
 """
 
@@ -25,6 +36,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO / "asim_core" / "src"))
+
+import numpy as np  # noqa: E402
 
 from asim_core.profiler import Profiler  # noqa: E402
 
@@ -152,7 +165,7 @@ def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler, rea
 
 
 def profile_asim_core(step, prev, example, configs, pipeline, scratch, profiler, seams,
-                      read_skim_cache=None):
+                      read_skim_cache=None, page_cache="as_is"):
     from run_milestone1 import build_components, skim_store
 
     from asim_core.asim1 import Asim1State
@@ -167,8 +180,13 @@ def profile_asim_core(step, prev, example, configs, pipeline, scratch, profiler,
     # as 1.x would: import from OMX every run, or reuse an unchanged cache (read_skim_cache)
     skims = skim_store(example, configs, read_skim_cache=read_skim_cache)
     skims_ready_s = time.perf_counter() - t0
+    resident = np.nan
+    if skims is not None:
+        import page_cache as pc
+
+        resident = pc.set_state(skims.path / "skims.npy", page_cache)
     Runner([comps[step]], scratch, engine=Engine(seams), skims=skims).run([step], store, profiler)
-    return skims_ready_s
+    return skims_ready_s, resident
 
 
 def main(argv=None) -> int:
@@ -185,6 +203,8 @@ def main(argv=None) -> int:
                    help="override network_los.yaml's read_skim_cache for either engine")
     p.add_argument("--patch", nargs="*", default=[],
                    help="asim1 only: run-time patches to apply (see asim1_patches.py)")
+    p.add_argument("--page-cache", choices=["as_is", "cold", "warm"], default="as_is",
+                   help="asim_core only: the skim file's state in the OS page cache before the step")
     p.add_argument("--seams", default="{}",
                    help='asim_core only: implementations to use, as JSON, e.g. \'{"random": "counter"}\'')
     args = p.parse_args(argv)
@@ -196,31 +216,38 @@ def main(argv=None) -> int:
     configs = [example / c for c in args.configs]
     st = Asim1State(args.asim1_out)
     prev = st.previous_step(args.step)
-    profiler = Profiler()
+    profiler = Profiler(split_memory=True)
     scratch = Path(args.scratch).resolve()
     rsc = {"settings": None, "true": True, "false": False}[args.read_skim_cache]
     if args.engine == "asim1":
         skims_ready_s = profile_asim1(args.step, prev, example, configs, st.path, scratch, profiler, rsc,
                                       args.patch)
+        resident = np.nan
     else:
         import json
 
-        skims_ready_s = profile_asim_core(args.step, prev, example, configs, st.path, scratch,
-                                          profiler, json.loads(args.seams), rsc)
+        skims_ready_s, resident = profile_asim_core(args.step, prev, example, configs, st.path, scratch,
+                                                    profiler, json.loads(args.seams), rsc, args.page_cache)
 
     rec = [r for r in profiler.records if r.step == args.step][-1]
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    new = not out.exists()
+    row = {"label": args.label or args.engine, "step": rec.step, "wall_s": f"{rec.wall_s:.6f}",
+           "cpu_s": f"{rec.cpu_s:.6f}", "rss_before_mb": rec.rss_before_mb, "peak_mb": rec.peak_mb,
+           "step_extra_mb": rec.step_extra_mb, "rss_after_mb": rec.rss_after_mb,
+           "skims_ready_s": f"{skims_ready_s:.6f}", "skims_resident_share": f"{resident:.4f}",
+           # the process's own memory, apart from pages of mapped files (memory-mapped skims)
+           "anon_before_mb": rec.anon_before_mb, "anon_peak_mb": rec.anon_peak_mb,
+           "own_extra_mb": (None if rec.anon_peak_mb is None
+                            else max(rec.anon_peak_mb - rec.anon_before_mb, 0.0)),
+           "file_peak_mb": rec.file_peak_mb}
+    # append in the file's own columns (files written before a column was added keep their shape)
+    columns = (out.read_text().splitlines()[0].split(",") if out.exists() and out.stat().st_size
+               else list(row))
     with open(out, "a") as f:
-        if new:
-            f.write("label,step,wall_s,cpu_s,rss_before_mb,peak_mb,step_extra_mb,rss_after_mb,"
-                    "skims_ready_s\n")
-        f.write(
-            f"{args.label or args.engine},{rec.step},{rec.wall_s:.6f},{rec.cpu_s:.6f},"
-            f"{rec.rss_before_mb},{rec.peak_mb},{rec.step_extra_mb},{rec.rss_after_mb},"
-            f"{skims_ready_s:.6f}\n"
-        )
+        if not (out.exists() and out.stat().st_size):
+            f.write(",".join(columns) + "\n")
+        f.write(",".join(str(row.get(c, "")) for c in columns) + "\n")
     return 0
 
 
