@@ -16,6 +16,7 @@ mandatory tour scheduling spends most of its time on (as logsums; see
   | Region | 1.x run used | Tours | Same mode | Logsums bit-identical |
   |---|---|---|---|---|
   | MTC | full example | 9,103 | 9,103 | 9,103 |
+  | MWCOG | 10,000 households | 15,817 | 15,817 | 15,817 |
   | MWCOG | 100-household sample | 133 | 133 | 133 |
   | ARC | all 24,061 households | 68,934 | 68,934 | (ARC doesn't save logsums) |
 
@@ -91,6 +92,18 @@ mandatory tour scheduling spends most of its time on (as logsums; see
   each tour's draws come from its own random stream.
 - **The output column keeps 1.x's categories,** sorted, with an empty
   category first, as 1.x's tours table ends up with them.
+
+MWCOG's run stops after tour mode choice: with all households, 1.x stops
+earlier, in `mandatory_tour_frequency` (the bug noted in [mwcog.md](mwcog.md)).
+It ran with 10,000 households. To reproduce it:
+
+```bash
+python asim_core/harness/run_asim1.py --example-dir activitysim/examples/prototype_mwcog --households 10000 --stop-after tour_mode_choice_simulate --out asim_core/work/mwcog/to_tmc_10000
+```
+
+MTC is checked by `run_milestone1.py` (step check and end to end, see
+[milestone1.md](milestone1.md)) and by the test
+`test_tour_mode_choice_matches_1x_exactly`.
 
 ## Found along the way
 
