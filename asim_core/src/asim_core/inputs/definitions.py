@@ -12,11 +12,17 @@ columns every region has and the core relies on. A region adds its own
 columns, or changes a rule, in an ``input_tables.yaml`` in its configs
 folders. A column given in both keeps the standard rules the region file
 doesn't mention.
+
+The same file can describe the region's skims (``skims:``): what each
+measure is and its units, the values it typically takes (to catch a skim in
+the wrong units), and land use columns related to distances (to catch skims
+whose zones are in another order than the land use's).
 """
 
 from __future__ import annotations
 
 import copy
+import fnmatch
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Literal
@@ -88,12 +94,87 @@ class Table(BaseModel):
         return self
 
 
+class SkimMeasure(BaseModel):
+    """
+    What a group of skims measures. Skims are matched by their name without the
+    time period (``SOV_TIME`` for ``SOV_TIME__AM``), against the patterns of
+    ``skims.measures`` in file order (``*`` matches anything); the first match
+    applies.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    description: str = ""
+    unit: str | None = None
+    typical: tuple[float, float] | None = Field(
+        None, description="the range the median of the skim's positive values should be in: "
+                          "outside it, the skim is probably in other units (warning)")
+    per_distance: tuple[float, float] | None = Field(
+        None, description="the range the median of the skim's value divided by the distance skim's "
+                          "(skims.distance), for zone pairs where both are positive, should be in: e.g. "
+                          "minutes per mile for a time skim, whatever the size of the region (warning)")
+    max: float | None = Field(
+        None, description="values above it are reported (warning), e.g. a placeholder for 'no path'")
+    no_path: float | None = Field(
+        None, description="the value the skim uses for 'no path' (left out of the other rules)")
+    intrazonal: Literal["positive"] | None = Field(
+        None, description="'positive': each land use zone's value to itself should be above 0 (warning)")
+
+    @model_validator(mode="after")
+    def _range(self):
+        for key in ("typical", "per_distance"):
+            r = getattr(self, key)
+            if r is not None and not 0 <= r[0] <= r[1]:
+                raise ValueError(f"{key} must be [low, high] with 0 <= low <= high, got {list(r)}")
+        return self
+
+
+class ZoneOrder(BaseModel):
+    """
+    Land use columns that distances (``skims.distance``) should follow, to check
+    that the skims' rows are the land use zones in the order the model assumes. Each one given is
+    one test; a test that is given but can't be run (a column or skim missing)
+    is an error. With none, the order isn't checked from the data.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    area: str | None = Field(None, description="land use column: the zone's area")
+    x: str | None = Field(None, description="land use column: the zone's x coordinate (with y)")
+    y: str | None = Field(None, description="land use column: the zone's y coordinate (with x)")
+    district: str | None = Field(None, description="land use column: a district or county")
+
+    @model_validator(mode="after")
+    def _xy(self):
+        if (self.x is None) != (self.y is None):
+            raise ValueError("x and y go together")
+        return self
+
+
+class SkimDefinitions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    distance: str | None = Field(
+        "DIST", description="the region's distance skim, with its period if it has one (e.g. DIST__MD): "
+                            "used by zone_order and per_distance")
+    zone_order: ZoneOrder | None = None
+    measures: dict[str, SkimMeasure] = {}
+
+    def measure(self, base_name: str) -> SkimMeasure | None:
+        """The first measure whose pattern matches a skim name without its period."""
+        for pattern, m in self.measures.items():
+            if fnmatch.fnmatchcase(base_name, pattern):
+                return m
+        return None
+
+
 class Definitions(BaseModel):
     """All input tables, standard and regional, as one checked set."""
 
     model_config = ConfigDict(extra="forbid")
 
     tables: dict[str, Table] = {}
+    skims: SkimDefinitions = SkimDefinitions()
     source_files: list[str] = []
 
     @model_validator(mode="after")
@@ -122,8 +203,11 @@ class DefinitionError(ValueError):
 
 
 def _merge(base: dict, region: dict) -> dict:
-    """Region tables and columns added to (or changing) the base ones."""
+    """Region tables and columns added to (or changing) the base ones; the region's
+    skim settings replace the base's, setting by setting."""
     out = copy.deepcopy(base)
+    for key, value in (region.get("skims") or {}).items():
+        out.setdefault("skims", {})[key] = value
     for tname, tdef in (region.get("tables") or {}).items():
         tdef = tdef or {}
         target = out.setdefault("tables", {}).setdefault(tname, {})
@@ -166,7 +250,10 @@ def load_definitions(configs_dirs: Sequence[str | Path] = (), standard: bool = T
             loc = [str(x) for x in err["loc"]]
             msg = err["msg"]
             if err["type"] == "extra_forbidden":
-                known = Column.model_fields if "columns" in loc[:-1] else Table.model_fields
+                known = (Column.model_fields if "columns" in loc[:-1] else
+                         SkimMeasure.model_fields if "measures" in loc[:-1] else
+                         ZoneOrder.model_fields if "zone_order" in loc[:-1] else
+                         SkimDefinitions.model_fields if loc[:1] == ["skims"] else Table.model_fields)
                 msg = f"'{loc[-1]}' is not a setting (settings: {', '.join(k for k in known)})"
                 if " " in loc[-1]:
                     msg += "; text with a comma inside { } needs quotes"

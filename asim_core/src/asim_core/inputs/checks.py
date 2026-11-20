@@ -11,7 +11,10 @@ millions takes seconds. Three sources of rules:
    there, never negative, and each size segment must be positive somewhere
    (otherwise nothing can be chosen); the land use zones must match the skims.
 3. The skims: no missing or infinite values (errors); negative values are
-   reported as warnings.
+   reported as warnings. Then, against the model files and the land use
+   (skim_checks.py): the skims the models use exist for every period they
+   are used with, skims in more than one file, the zone order, and the
+   region's descriptions of its skims (units, placeholders).
 
 Errors stop the run; warnings are reported and the run goes on. The report
 lists every problem once, with how many rows, the first few examples, and
@@ -35,6 +38,7 @@ import pyarrow as pa
 
 from .definitions import Column, Definitions, load_definitions
 from .reader import InputTable, file_info, read_tables
+from .skim_checks import PLACEHOLDER_RATIO, ZONE_ORDER_Z, matrix_stats, reference_problems, skim_references, zone_order_tests
 
 ERROR = "error"
 WARNING = "warning"
@@ -435,26 +439,49 @@ class _Checker:
                          f"so no destination can be chosen for it (size terms: {', '.join(cols_k)})",
                          used_by=src)
 
-    def check_skims(self, omx_paths: Sequence[Path], zones_recoded: bool = False) -> int:
+    def check_skims(self, omx_paths: Sequence[Path], zones_recoded: bool = False,
+                    labels: Sequence[str] | None = None, refs=None) -> int:
         """
         Checks every skim value, and that the land use zones can be found in the
         skims as 1.x finds them: through the file's zone lookup if it has one;
         otherwise, with zones renumbered from 0 (``zones_recoded``), row i is the
         i-th smallest zone number, and without renumbering, zone z is row z
-        counting from 1.
+        counting from 1. Then (skim_checks.py): the skims the model files use
+        (``refs``) against the skims there are and the time periods (``labels``);
+        skims in more than one file; the zone order, from land use columns; and
+        the region's descriptions of its skims.
         """
         try:
             import tables as pytables
         except ImportError:  # optional dependency
             self.add(WARNING, "skims", None, "skims not checked: PyTables is not installed", used_by=[])
             return 0
-        zones = None
+        from ..skims import ZoneRows, skim_zone_ids
+
+        zones = ids = None
         if "land_use" in self.tables:
             spec = self.specs.get("land_use")
             if spec and spec.id_column in self.tables["land_use"].column_names:
-                zones = np.sort(self.values("land_use", spec.id_column))
+                ids = self.values("land_use", spec.id_column)
+                zones = np.sort(ids)
+        skim_defs = self.defs.skims
+        order = skim_defs.zone_order
+        # the distance skim first: zone order, and measures given per distance
+        distance = self._read_skim(pytables, omx_paths, files_of_name=skim_defs.distance)
+
+        # names first: a skim in more than one file is compared between them
+        files_of: dict[str, list[Path]] = {}
+        for path in omx_paths:
+            with pytables.open_file(path, "r") as h:
+                for node in h.list_nodes("/data"):
+                    files_of.setdefault(node.name, []).append(path)
+        dups = {n for n, f in files_of.items() if len(f) > 1}
+        digests: dict[str, list[tuple[Path, str]]] = {}
+
         n_checked = 0
         shape = None
+        own_rows = None
+        stats = []
         for path in omx_paths:
             with pytables.open_file(path, "r") as h:
                 lookup = None
@@ -471,9 +498,14 @@ class _Checker:
                     if shape is None:
                         shape = a.shape
                         self._check_skim_zones(path, shape, lookup, zones, zones_recoded)
+                        own_rows = self._own_rows(ids, lookup, shape[0], zones_recoded,
+                                                  ZoneRows, skim_zone_ids)
                     elif a.shape != shape:
                         self.add(ERROR, "skims", node_name, f"is {a.shape}, other skims are {shape}", used_by=[])
                         continue
+                    if node_name in dups:
+                        digests.setdefault(node_name, []).append(
+                            (path, hashlib.blake2b(np.ascontiguousarray(a).tobytes(), digest_size=16).hexdigest()))
                     names = lookup if lookup is not None else (
                         np.arange(1, a.shape[0] + 1) if not zones_recoded else
                         zones if zones is not None and len(zones) == a.shape[0] else None)
@@ -491,7 +523,141 @@ class _Checker:
                         self.add(WARNING, "skims", node_name, "negative values", len(cells),
                                  [_cell(names, i, j, a[i, j]) for i, j in cells[:EXAMPLES]],
                                  used_by=self.used_by(base))
+                    if finite.all():
+                        stats.append(matrix_stats(node_name, a, skim_defs.measure(base), own_rows,
+                                                  None if ids is None else ids, distance))
+                    del a, finite, neg
+
+        self._check_duplicates(files_of, digests)
+        if refs is not None:
+            for f in reference_problems(files_of, labels, refs):
+                self.add(f.severity, "skims", f.column, f.message, f.rows, f.examples, used_by=f.used_by)
+        if skim_defs.distance is not None and distance is None and (
+                order is not None or any(m.per_distance for m in skim_defs.measures.values())):
+            self.add(ERROR, "skims", skim_defs.distance, "is the distance skim (skims.distance in the "
+                     "definitions), but is not in the skims", used_by=[])
+        elif order is not None:
+            self._check_zone_order(skim_defs.distance, order, distance, own_rows)
+        self._check_measures(stats)
         return n_checked
+
+    def _own_rows(self, ids, lookup, rows, zones_recoded, ZoneRows, skim_zone_ids):
+        """Each land use zone's skim row, found by the same code the model uses."""
+        if ids is None:
+            return None
+        if zones_recoded:  # 1.x: zone_id renumbered 0, 1, ... in ascending order
+            model_ids = np.searchsorted(np.unique(ids), ids)
+            find = ZoneRows(skim_zone_ids(None, lookup, rows))
+        else:
+            model_ids = ids
+            find = ZoneRows(skim_zone_ids("omx", lookup, rows))
+        try:
+            return find(model_ids)
+        except KeyError:
+            return None  # reported by _check_skim_zones
+
+    def _check_duplicates(self, files_of, digests) -> None:
+        for name, found in sorted(digests.items()):
+            paths = [p.name for p, _ in found]
+            same = len({d for _, d in found}) == 1
+            last = files_of[name][-1].name
+            if same:
+                self.add(WARNING, "skims", name, f"is in {len(paths)} files ({', '.join(paths)}), with the "
+                         "same values", used_by=self.used_by(name.split("__")[0]))
+            else:
+                self.add(ERROR, "skims", name, f"is in {len(paths)} files ({', '.join(paths)}) with "
+                         f"different values: 1.x uses the last one ({last}) without an error",
+                         used_by=self.used_by(name.split("__")[0]))
+
+    @staticmethod
+    def _read_skim(pytables, omx_paths, files_of_name):
+        """One skim, from the last file that has it (as 1.x), or None."""
+        found = None
+        if files_of_name is None:
+            return None
+        for path in omx_paths:
+            with pytables.open_file(path, "r") as h:
+                if f"/data/{files_of_name}" in h:
+                    node = h.get_node(f"/data/{files_of_name}")
+                    found = node[:]
+                    node._f_close()
+        return found
+
+    def _check_zone_order(self, distance_name, order, distance, own_rows) -> None:
+        if own_rows is None:
+            return
+        lu = {}
+        for key in ("area", "x", "y", "district"):
+            col = getattr(order, key)
+            if col is None:
+                continue
+            if col not in self.tables["land_use"].column_names:
+                self.add(ERROR, "land_use", col, f"is the zones' {key} for checking the skims' zone order "
+                         "(skims.zone_order), but is not in the land use table", used_by=[])
+                return
+            lu[key] = self.values("land_use", col)
+        if not lu or len(own_rows) < 10:
+            return
+        d = np.asarray(distance)[np.ix_(own_rows, own_rows)]
+        tests = zone_order_tests(d, **lu)
+        if tests and max(t.z for t in tests) < ZONE_ORDER_Z:
+            self.add(ERROR, "skims", distance_name,
+                     "doesn't follow the land use: its zones look like they are in another order than "
+                     "the land use's (is the skim file in another zone order, without a zone lookup?). "
+                     "If the order is right, these land use columns are just weakly related to "
+                     "distances: remove them from skims.zone_order", 0,
+                     [t.text() for t in tests], used_by=[])
+
+    def _check_measures(self, stats) -> None:
+        """One problem per skim name (without period) and kind, listing its periods."""
+        defs = self.defs.skims
+        grouped: dict[tuple[str, str], list] = {}
+        for st in stats:
+            base = st.name.split("__")[0]
+            m = defs.measure(base)
+            unit = f" {m.unit}" if m is not None and m.unit else ""
+            if st.placeholder_cells:
+                grouped.setdefault((base, "placeholder"), []).append(
+                    (st, f"{st.name}: {st.placeholder_cells:,} cells, e.g. "
+                         f"{', '.join(_fmt(v) for v in st.placeholder_examples)} (typical {_fmt(st.typical)})"))
+            if m is None:
+                continue
+            if m.typical is not None and st.typical > 0 and not m.typical[0] <= st.typical <= m.typical[1]:
+                grouped.setdefault((base, "typical"), []).append(
+                    (st, f"{st.name}: typical value {_fmt(st.typical)}{unit}"))
+            if m.per_distance is not None and st.per_distance is not None and \
+                    not m.per_distance[0] <= st.per_distance <= m.per_distance[1]:
+                grouped.setdefault((base, "per_distance"), []).append(
+                    (st, f"{st.name}: {_fmt(st.per_distance)} per unit of distance"))
+            if st.above_max:
+                grouped.setdefault((base, "max"), []).append(
+                    (st, f"{st.name}: {st.above_max:,} cells, e.g. "
+                         f"{', '.join(_fmt(v) for v in st.above_max_examples)}"))
+            if st.zero_within:
+                grouped.setdefault((base, "within"), []).append(
+                    (st, f"{st.name}: {st.zero_within:,} zones, e.g. {', '.join(st.zero_within_examples[:2])}"))
+        for (base, kind), found in grouped.items():
+            m = defs.measure(base)
+            unit = f" {m.unit}" if m is not None and m.unit else ""
+            # the report counts skim problems in cells
+            cells = sum(st.placeholder_cells if kind == "placeholder" else st.above_max if kind == "max"
+                        else 0 for st, _ in found)
+            if kind == "placeholder":
+                msg = (f"values more than {PLACEHOLDER_RATIO:,} times the skim's typical value (the median "
+                       "of its positive values): a placeholder for 'no path'? The models use it as a number")
+            elif kind == "typical":
+                msg = (f"typical value (the median of its positive values) outside {_fmt(m.typical[0])} to "
+                       f"{_fmt(m.typical[1])}{unit}, the range given for it: is it in other units?")
+            elif kind == "per_distance":
+                msg = (f"typical value per unit of distance (the median of the skim divided by "
+                       f"{defs.distance}) outside {_fmt(m.per_distance[0])} to {_fmt(m.per_distance[1])}, "
+                       "the range given for it: is it in other units?")
+            elif kind == "max":
+                msg = f"values above {_fmt(m.max)}{unit}, the largest given for it (a placeholder?)"
+            else:
+                msg = "is 0 or less within a zone (from a zone to itself), where it should be above 0"
+            self.add(WARNING, "skims", base, msg, cells, [t for _, t in found[:EXAMPLES]],
+                     used_by=self.used_by(base))
 
     def _check_skim_zones(self, path, shape, lookup, zones, zones_recoded=False) -> None:
         if zones is None:
@@ -640,9 +806,10 @@ def check_inputs(
     checker = _Checker(defs, tables, specs, _ConfigIndex(configs_dirs))
     checker.run()
     checker.check_size_terms(size_terms)
-    from ..skims import land_use_zones_recoded
+    from ..skims import land_use_zones_recoded, skim_period_labels
 
-    n_skims = checker.check_skims(omx, land_use_zones_recoded(configs_dirs)) if omx else 0
+    n_skims = checker.check_skims(omx, land_use_zones_recoded(configs_dirs), skim_period_labels(configs_dirs),
+                                  skim_references(configs_dirs, skip=NOT_MODEL_FILES)) if omx else 0
 
     undefined = {}
     for tname, table in tables.items():

@@ -141,3 +141,35 @@ def test_location_choice_matches_1x_exactly(step, tmp_path):
             assert result.status == "exact", result
             n += 1
     assert n >= 7
+
+
+@pytest.mark.skipif(not BASELINE.exists(), reason="no ActivitySim 1.x baseline run")
+@pytest.mark.parametrize("step", ["school_location", "non_mandatory_tour_destination"])
+def test_choosers_without_a_segment_stop_the_step(step, tmp_path):
+    """1.x leaves choosers whose segment value has no segment without a choice; asim_core stops."""
+    pytest.importorskip("tables")
+    import numpy as np
+
+    from asim_core.components import non_mandatory_tour_destination, school_location
+    from asim_core.components.segments import SegmentError
+    from asim_core.skims import import_omx
+
+    skims = import_omx(REPO / "activitysim/examples/prototype_mtc/data/skims.omx", tmp_path / "skims")
+    st = Asim1State(BASELINE)
+    store = st.load_store(st.previous_step(step))
+    if step == "school_location":
+        comp = school_location(CONFIGS)
+        persons = store["persons"]
+        seg = np.asarray(persons["school_segment"]).copy()
+        seg[np.flatnonzero(np.asarray(persons["is_student"]).astype(bool))[0]] = 9
+        persons.set_column("school_segment", seg)
+        expect = "school_segment"
+    else:
+        comp = non_mandatory_tour_destination(CONFIGS)
+        tours = store["tours"]
+        kind = np.asarray(tours["tour_type"]).astype(object).copy()
+        kind[np.flatnonzero(np.asarray(tours["tour_category"]) == "non_mandatory")[0]] = "unknown"
+        tours.set_column("tour_type", kind)
+        expect = "'unknown': 1"
+    with pytest.raises(SegmentError, match=expect):
+        Runner([comp], tmp_path / "run", skims=skims).run([step], store)

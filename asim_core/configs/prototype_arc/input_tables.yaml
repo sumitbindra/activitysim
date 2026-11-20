@@ -78,3 +78,24 @@ tables:
       I_PCTGT40: {type: float64, unit: percent, description: Households with income over $40k., min: 0, max: 100}
       RetailEmp30: {type: float64, unit: jobs, min: 0}
       PARKING_ZONE: {type: int64, min: 0}
+
+# The skims. Times are in minutes, distances in miles, fares in dollars.
+# "typical" is the range a skim's median positive value should be in (a skim
+# in other units falls outside it). Names are matched without the time
+# period, first pattern first.
+skims:
+  distance: SOV_FREE_DISTANCE__MD
+  zone_order:
+    area: acres
+    district: county
+  measures:
+    "*_TOLLDISTANCE": {unit: miles, description: Distance on toll roads.}
+    "*_DISTANCE": {unit: miles, description: Highway distance., typical: [0.1, 300], max: 1000, intrazonal: positive}
+    "*_FREE_TIME": {unit: minutes, description: Highway time., typical: [0.5, 300], per_distance: [0.3, 30],
+                    max: 1440, intrazonal: positive}
+    "*_TOLL_TIME": {unit: minutes, description: Highway time., typical: [0.5, 300], per_distance: [0.3, 30],
+                    max: 1440, intrazonal: positive}
+    "*TRN_*_IVT": {unit: minutes, description: In-vehicle time., typical: [0.05, 300]}
+    "*TRN_*_AUTO": {unit: minutes, description: Drive access or egress time., typical: [0.05, 300]}
+    "*TRN_*WAIT": {unit: minutes, description: Wait time., typical: [0.05, 300]}
+    "*TRN_*_FARE": {unit: dollars, description: Fare., typical: [0.25, 50]}

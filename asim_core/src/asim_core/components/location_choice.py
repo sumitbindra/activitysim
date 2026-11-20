@@ -53,6 +53,7 @@ from ..spec.legacy import (
 from ..store import Table
 from . import annotate
 from .runtime import plain
+from .segments import check_segment_values
 from .tour_destination import (
     PERSONS_VIEW,
     SKIM_ACCESSOR,
@@ -277,6 +278,7 @@ def location_choice_component(configs_dirs: Sequence[str | Path], step: str, set
         person_ids = ids[chooser_rows]
         cols["person_id"] = person_ids
         seg_values = np.asarray(cols[cfg.segment_col])
+        check_segment_values(step, "choosers", cfg.segment_col, seg_values, cfg.segments.values())
         zones, sizes = _size_terms(ctx, size_weights, size_columns)
         orig_pos = ctx.skim_positions(np.asarray(cols[cfg.orig_col]))
         chosen = np.full(len(person_ids), np.nan)

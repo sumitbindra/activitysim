@@ -288,6 +288,117 @@ def test_injected_errors_are_caught(example, injection, tmp_path):
         assert "destination_choice_size_terms" in " ".join(r.problems[0].used_by + r.problems[1].used_by)
 
 
+# --- skim problems the models would use without an error -----------------------------
+
+# example: (a highway time skim used with each tour's period, the distance skim for the zone order)
+SKIM_REGIONS = {
+    "prototype_mtc": ("SOV_TIME", "DIST"),
+    "prototype_mwcog": ("SOV_TIME", "DIST"),
+    "prototype_arc": ("SOV_FREE_TIME", "SOV_FREE_DISTANCE__MD"),
+}
+# injection: (expected problems as (severity, column), words in the message)
+SKIM_INJECTIONS = {
+    "skims_in_another_order": ("error", "distance", "doesn't follow the land use"),
+    "missing_period": ("error", "time", "has no skim for period"),
+    "skim_not_in_files": ("error", "time", "not in the skims"),
+    "unknown_period": ("warning", None, "isn't in network_los.yaml"),
+    "duplicate_skim": ("error", "time__AM", "different values"),
+    "time_in_seconds": ("warning", "time", "per unit of distance"),
+    "no_path_placeholder": ("warning", "time", "placeholder"),
+    "zero_within_zone": ("warning", "time", "within a zone"),
+}
+
+
+def _write_omx(path: Path, mats: dict) -> None:
+    import tables
+
+    with tables.open_file(str(path), "w") as f:
+        f.root._v_attrs["OMX_VERSION"] = b"0.2"
+        shape = next(iter(mats.values())).shape
+        f.root._v_attrs["SHAPE"] = np.array(shape, dtype=np.int32)
+        f.create_group("/", "data")
+        for name, m in mats.items():
+            f.create_carray("/data", name, obj=np.asarray(m))
+
+
+@pytest.mark.parametrize("injection", SKIM_INJECTIONS)
+@pytest.mark.parametrize("example", SKIM_REGIONS)
+def test_injected_skim_problems_are_caught(example, injection, tmp_path):
+    tables = pytest.importorskip("tables")
+    from asim_core.skims import omx_files_from_settings, skim_period_labels
+
+    configs, _ = _example_paths(example)
+    data = _copy_data(example, tmp_path)
+    time, distance = SKIM_REGIONS[example]
+    labels = skim_period_labels(configs)
+    src = omx_files_from_settings(configs, [EXAMPLES / example / "data"])[0]
+    dst = data / src.name
+    dst.unlink()
+    shutil.copy(src, dst)
+
+    with tables.open_file(dst, "a") as h:
+        def matrix(name):
+            return h.get_node("/data/" + name)
+
+        if injection == "skims_in_another_order":
+            # the same skims, rows and columns in another zone order, the zone list unchanged
+            n = matrix(f"{time}__AM").shape[0]
+            p = np.random.default_rng(1).permutation(n)
+            for node in h.list_nodes("/data"):
+                node[:] = node[:][np.ix_(p, p)]
+        elif injection == "missing_period":
+            h.remove_node("/data", f"{time}__{labels[-1]}")
+        elif injection == "skim_not_in_files":
+            for label in labels:
+                h.remove_node("/data", f"{time}__{label}")
+        elif injection == "unknown_period":
+            h.create_carray("/data", "EXTRA__XX", obj=matrix(f"{time}__AM")[:])
+        elif injection == "duplicate_skim":
+            other = matrix(f"{time}__AM")[:] * 2
+        elif injection == "time_in_seconds":
+            node = matrix(f"{time}__AM")
+            node[:] = node[:] * 60
+        elif injection == "no_path_placeholder":
+            node = matrix(f"{time}__AM")
+            a = node[:]
+            a[0, 1:4] = 999_999
+            node[:] = a
+        elif injection == "zero_within_zone":
+            node = matrix(f"{time}__AM")
+            a = node[:]
+            a[0, 0] = 0
+            node[:] = a
+
+    if injection == "duplicate_skim":
+        _write_omx(data / "skims_extra.omx", {f"{time}__AM": other})
+        if "*" not in str(yaml.safe_load((EXAMPLES / example / "configs/network_los.yaml").read_text())
+                          ["taz_skims"]["omx"]):
+            # this region names one file: list both
+            overlay = tmp_path / "configs"
+            overlay.mkdir()
+            los = yaml.safe_load((EXAMPLES / example / "configs/network_los.yaml").read_text())
+            los["taz_skims"]["omx"] = [src.name, "skims_extra.omx"]
+            (overlay / "network_los.yaml").write_text(yaml.safe_dump(los))
+            configs = [overlay] + configs
+
+    r = check_inputs(configs, [data])
+    severity, which, words = SKIM_INJECTIONS[injection]
+    column = {"time": time, "distance": distance, "time__AM": f"{time}__AM", None: None}[which]
+    assert set(_messages(r)) == {(severity, "skims", column)}, r.text()
+    assert any(words in p.message for p in r.problems), r.text()
+    assert r.ok == (severity == "warning")
+
+
+def test_skim_definitions_are_checked_when_loaded(tmp_path):
+    (tmp_path / "input_tables.yaml").write_text(
+        "skims:\n  measures:\n    '*_TIME': {unit: minutes, typical: [300, 1]}\n")
+    with pytest.raises(DefinitionError, match="typical"):
+        load_definitions([tmp_path])
+    (tmp_path / "input_tables.yaml").write_text("skims:\n  zone_order: {x: X}\n")
+    with pytest.raises(DefinitionError, match="x and y"):
+        load_definitions([tmp_path])
+
+
 # --- the reader against 1.x's -----------------------------------------------------
 
 

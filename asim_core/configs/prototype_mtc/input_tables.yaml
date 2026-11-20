@@ -79,3 +79,29 @@ tables:
       COLLPTE: {type: float64, unit: students, description: "College enrollment, part-time.", min: 0}
       TOPOLOGY: {type: int64, description: "Terrain: 1 flat, 2 rolling, 3 hilly.", values: [1, 2, 3]}
       TERMINAL: {type: float64, unit: minutes, description: Terminal time., min: 0}
+
+# The skims (MTC Travel Model One). Units from ActivitySim's description of
+# these skims; "typical" is the range a skim's median positive value should be
+# in (a skim in other units falls outside it). Names are matched without the
+# time period, first pattern first.
+skims:
+  distance: DIST
+  zone_order:
+    area: TOTACRE
+    district: DISTRICT
+  measures:
+    DIST: {unit: miles, typical: [0.1, 300], max: 1000, intrazonal: positive}
+    DISTWALK: {unit: miles, typical: [0.1, 300], no_path: 1000000, intrazonal: positive}
+    DISTBIKE: {unit: miles, typical: [0.1, 300], no_path: 1000000, intrazonal: positive}
+    "*_DDIST": {unit: miles x 100, description: Drive access or egress distance., typical: [5, 100000]}
+    "*_DIST": {unit: miles, description: Highway distance., typical: [0.1, 300], max: 1000, intrazonal: positive}
+    "*_TIME": {unit: minutes, description: Highway time., typical: [0.5, 300], per_distance: [0.3, 30],
+               max: 1440, intrazonal: positive}
+    "*_DTIM": {unit: minutes x 100, description: Drive access or egress time., typical: [50, 100000]}
+    "*IVT": {unit: minutes x 100, description: In-vehicle time., typical: [50, 100000]}
+    "*WAIT": {unit: minutes x 100, description: Wait time., typical: [50, 100000]}
+    "*_WACC": {unit: minutes x 100, description: Walk access time., typical: [50, 100000]}
+    "*_WAUX": {unit: minutes x 100, description: Auxiliary walk time., typical: [5, 100000]}
+    "*_WEGR": {unit: minutes x 100, description: Walk egress time., typical: [50, 100000]}
+    "*_FAR": {unit: cents, description: Fare., typical: [20, 5000]}
+    "*_BOARDS": {unit: boardings, typical: [0.5, 10]}

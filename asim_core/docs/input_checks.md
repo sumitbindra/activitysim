@@ -174,6 +174,100 @@ exactly that). A single zone or lot with zero capacity is allowed but
 worth a warning; a region writes it as `warn_below: 1` on the column
 (tested on a small made-up table).
 
+## Skims the model would use wrongly, without an error
+
+These checks look for the kind of problem that gives wrong results with no
+error at all: the right numbers read for the wrong zone, period or units.
+The rule behind them: wherever two inputs are matched by position or by a
+code, check the match. Each was tested by injecting the problem into a copy
+of each region's data (8 cases × 3 regions, `tests/test_input_checks.py`):
+the report names it, by the right rule, and nothing else; the clean data of
+all three regions passes with no problems.
+
+| Check | Catches | Kind | Needs |
+|---|---|---|---|
+| Zone rows | each zone reads the skim row 1.x would read it from: through the file's zone lookup, or by 1.x's numbering rules (table above) | error | nothing |
+| Zone order | a skim file whose zones are in another order than the model assumes (e.g. not ascending, and no zone lookup to say so): its distances don't follow the land use better than a random order would | error | `skims.zone_order` |
+| Skims the models use | a skim named in a spec, preprocessor or model file that isn't in the skim files; a period it's used with that has no skim | error | nothing |
+| Time periods | a skim used with each row's time period that lacks some period of network_los.yaml (`SOV_TIME__EV` missing) | error | nothing |
+| | skims for a period network_los.yaml doesn't list (1.x skips them) | warning | nothing |
+| Duplicates | a skim in two files: with different values (1.x uses the last file, silently) | error | nothing |
+| | with the same values | warning | nothing |
+| Units | a skim's typical value (median of its positive values) outside its measure's range: e.g. fares in dollars instead of cents | warning | `skims.measures` |
+| | a time's typical minutes per mile outside its range: e.g. seconds or hours instead of minutes, whatever the size of the region | warning | `skims.measures` |
+| Placeholders | values more than 1,000 times the skim's typical value (999999 for "no path"), which the models use as numbers | warning | nothing |
+| | values above a measure's `max` | warning | `skims.measures` |
+| Within a zone | a time or distance of 0 from a zone to itself | warning | `skims.measures` |
+
+**Which skims the models use** comes from the config files: 1.x's specs and
+settings (`odt_skims['SOV_TIME']`, `skim_od[('SOV_TIME', 'AM')]`,
+`skim_dict.lookup(..., 'DIST')`) and asim_core's model files
+(`skim.SOV_TIME[o, d, out_period]`). Commented-out rows are skipped, as 1.x
+skips them (commented-out rows of MWCOG's and ARC's trip specs name three
+skims that don't exist). A skim used without a named period and without a
+period-free version needs every period.
+
+**The zone order** can only be checked against something else that knows
+where zones are. Three tests, each run when the region names the land use
+columns, compare the distances with them, and with the same zones in 30
+random orders:
+
+| Region | Test | As the data is | Random orders | z |
+|---|---|---|---|---|
+| MTC, 25 zones | distance within a zone against √area | 0.76 | 0.05 ± 0.22 | 3.3 |
+| MTC, 1,454 zones | distance within a zone against √area | 0.81 | 0.01 ± 0.03 | 28 |
+| | nearest zone in the same district | 95% | 4% ± 1% | 128 |
+| MWCOG, 53 zones | distance within a zone against √area | 0.29 | 0.01 ± 0.14 | 2.0 |
+| | distances against straight-line distances | 0.96 | 0.01 ± 0.05 | 18 |
+| ARC, 36 zones | distance within a zone against √area | 0.60 | 0.07 ± 0.15 | 3.5 |
+
+(Rank correlations; z: standard deviations above the random orders.) The
+check is an error when no test is 2 above random. It catches a file in
+another order (tested: rows and columns in a random order). It can't catch
+a shift by a few zones (zone z read as z + 1): neighbouring zone numbers
+are neighbouring places, so the tests barely move (MTC full: 0.81 to 0.71
+for a shift of one). Shifts come from numbering rules, and those are
+checked directly (zone rows, above).
+
+**Within the steps,** some columns only exist once earlier steps have run,
+so one check runs when the step starts: every chooser's segment value
+(income segment, school type, tour purpose) must have a segment in the
+model. 1.x leaves choosers without a segment without a choice, with no
+error (1.x findings, #8, for scheduling); asim_core stops, naming the values
+and how many choosers have them. Scheduling and tour mode choice already
+did; location choice and destination choice do now.
+
+### Describing a region's skims
+
+In the region's `input_tables.yaml`, next to its tables. MTC's (excerpt):
+
+```yaml
+skims:
+  distance: DIST              # the region's distance skim (ARC: SOV_FREE_DISTANCE__MD)
+  zone_order:                 # land use columns distances should follow
+    area: TOTACRE
+    district: DISTRICT        # MWCOG also has x: TAZXCRD, y: TAZYCRD
+  measures:                   # matched by name without the period, first pattern first
+    DISTWALK: {unit: miles, typical: [0.1, 300], no_path: 1000000, intrazonal: positive}
+    "*_TIME": {unit: minutes, description: Highway time., typical: [0.5, 300], per_distance: [0.3, 30],
+               max: 1440, intrazonal: positive}
+    "*IVT": {unit: minutes x 100, description: In-vehicle time., typical: [50, 100000]}
+    "*_FAR": {unit: cents, description: Fare., typical: [20, 5000]}
+```
+
+Units are mixed within one region's file (MTC: highway times in minutes,
+transit times in minutes × 100, fares in cents; ARC: fares in dollars), so
+ranges are given per measure; the three regions' files describe their main
+measures. `no_path` declares a region's value for "no path" (MTC's walk and
+bike distances use 1,000,000 where the models' availability rules expect
+it), so it isn't reported. Times per mile are given for highway times only:
+transit trips in a small area can take 30 to 60 minutes per mile (driving
+away from the destination to a station).
+
+On full MTC (2.9 million households, 826 skims) the checks take 22 s (21 s
+before these), with the same two warnings as before (85 households above 20
+persons; 21 external stations without land use).
+
 ## How the checks run
 
 Each table is read with PyArrow (only the columns kept), then checked a

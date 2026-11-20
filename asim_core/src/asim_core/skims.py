@@ -59,6 +59,48 @@ DATA = "skims.npy"
 FORMAT_VERSION = 1
 
 
+def skim_zone_ids(zone_ids, lookup_values, rows: int) -> np.ndarray:
+    """
+    The zone ID of each skim row, by 1.x's rules (used by the import and by the
+    input checks, so both find a zone's row the same way):
+
+    * ``zone_ids=None``: zones renumbered from 0 (``recode_columns``): row i is
+      zone i, the i-th smallest original zone number;
+    * ``zone_ids="omx"``: original zone numbers: the OMX file's zone lookup, in
+      matrix order (any order); without one, 1.x takes the skims as numbered
+      from 1, zone z is row z - 1 (``SkimDict._offset_mapper``, "assume this is
+      a one-based skim map");
+    * an array: those IDs.
+    """
+    if isinstance(zone_ids, str) and zone_ids == "omx":
+        ids = np.arange(1, rows + 1) if lookup_values is None else np.asarray(lookup_values)
+    else:
+        ids = np.arange(rows) if zone_ids is None else np.asarray(zone_ids)
+    if len(ids) != rows:
+        raise ValueError(f"{len(ids)} zone IDs given for {rows} zones")
+    return ids
+
+
+class ZoneRows:
+    """Finds the skim row of zone IDs; unknown zones are an error."""
+
+    def __init__(self, zone_ids):
+        self.zone_ids = np.asarray(zone_ids)
+        self._identity = np.array_equal(self.zone_ids, np.arange(len(self.zone_ids)))
+        self._lookup = None if self._identity else pd.Index(self.zone_ids)
+
+    def __call__(self, zone_ids) -> np.ndarray:
+        ids = np.asarray(zone_ids)
+        if self._identity:
+            if len(ids) and (ids.min() < 0 or ids.max() >= len(self.zone_ids)):
+                raise KeyError(f"zone IDs outside 0..{len(self.zone_ids) - 1}")
+            return ids.astype(np.intp, copy=False)
+        pos = self._lookup.get_indexer(ids)
+        if (pos < 0).any():
+            raise KeyError(f"zone IDs not in skims: {ids[pos < 0][:5].tolist()}")
+        return pos
+
+
 class SkimStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -74,8 +116,7 @@ class SkimStore:
         self.omx_zone_numbers = None if lookup is None else np.asarray(lookup["values"])
         self._index = {n: i for i, n in enumerate(self.names)}
         self._data = np.load(self.path / DATA, mmap_mode="r")
-        self._identity = np.array_equal(self.zone_ids, np.arange(len(self.zone_ids)))
-        self._lookup = None if self._identity else pd.Index(self.zone_ids)
+        self._rows = ZoneRows(self.zone_ids)
 
     def __contains__(self, name: str) -> bool:
         return name in self._index
@@ -97,15 +138,7 @@ class SkimStore:
 
     def positions(self, zone_ids) -> np.ndarray:
         """Row/column positions in the matrices for the given zone IDs."""
-        ids = np.asarray(zone_ids)
-        if self._identity:
-            if len(ids) and (ids.min() < 0 or ids.max() >= len(self.zone_ids)):
-                raise KeyError(f"zone IDs outside 0..{len(self.zone_ids) - 1}")
-            return ids.astype(np.intp, copy=False)
-        pos = self._lookup.get_indexer(ids)
-        if (pos < 0).any():
-            raise KeyError(f"zone IDs not in skims: {ids[pos < 0][:5].tolist()}")
-        return pos
+        return self._rows(zone_ids)
 
     def __repr__(self) -> str:
         n, z, _ = self.shape
@@ -240,16 +273,7 @@ def import_omx(
             for f in handles:
                 f.close()
 
-        if isinstance(zone_ids, str) and zone_ids == "omx":
-            # original zone numbers: the file's zone lookup, in matrix order (any
-            # order); without one, 1.x takes the skims as numbered from 1: zone z is
-            # row z - 1 (``SkimDict._offset_mapper``, "assume this is a one-based
-            # skim map")
-            ids = np.arange(1, rows + 1) if lookup is None else lookup["values"]
-        else:
-            ids = np.arange(rows) if zone_ids is None else np.asarray(zone_ids)
-        if len(ids) != rows:
-            raise ValueError(f"{len(ids)} zone IDs given for {rows} zones")
+        ids = skim_zone_ids(zone_ids, None if lookup is None else lookup["values"], rows)
         manifest = {
             "format": FORMAT_VERSION,
             "names": names,
@@ -411,6 +435,18 @@ def prepare_skims_from_settings(
     # Otherwise the original zone numbers are used, matched through the OMX lookup.
     zone_ids = None if land_use_zones_recoded(configs_dirs) else "omx"
     return prepare_skims(paths, cache_dir, reuse=reuse, zone_ids=zone_ids, periods=periods, tag=tag)
+
+
+def skim_period_labels(configs_dirs: Sequence[str | Path]) -> list[str] | None:
+    """The time period labels of network_los.yaml (``skim_time_periods``), each once."""
+    from .spec.legacy import find_config_file, read_yaml
+
+    try:
+        los = read_yaml(find_config_file(configs_dirs, "network_los.yaml"))
+    except FileNotFoundError:
+        return None
+    labels = (los.get("skim_time_periods") or {}).get("labels")
+    return None if labels is None else list(dict.fromkeys(labels))
 
 
 def land_use_zones_recoded(configs_dirs: Sequence[str | Path]) -> bool:
