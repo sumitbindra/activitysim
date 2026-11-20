@@ -62,5 +62,5 @@ def test_todays_auto_ownership_files_load():
 
 @pytest.mark.skipif(not MTC_CONFIGS.exists(), reason="example configs not present")
 def test_unsupported_settings_are_named():
-    with pytest.raises(NotImplementedError, match="NESTS"):
+    with pytest.raises(NotImplementedError, match="COEFFICIENT_TEMPLATE"):
         load_choice_model([MTC_CONFIGS], "tour_mode_choice.yaml")

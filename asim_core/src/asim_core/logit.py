@@ -12,6 +12,7 @@ matching needs the same order.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -93,3 +94,106 @@ def choose(probs: np.ndarray, rands: np.ndarray) -> np.ndarray:
     bad = np.abs(probs.sum(axis=1) - 1.0) > BAD_PROB_THRESHOLD
     out[bad] = BAD_CHOICE
     return out
+
+
+# --- nested logit ---------------------------------------------------------------------
+
+
+@dataclass
+class _Node:
+    name: str
+    is_leaf: bool
+    coefficient: float
+    product: float  # product of nesting coefficients from the root down
+    alternatives: list[str] = field(default_factory=list)
+    ancestors: list[str] = field(default_factory=list)
+
+
+def walk_nests(tree, post_order: bool = False) -> list[_Node]:
+    """
+    Every nest and alternative in the tree, as ActivitySim 1.x walks it
+    (logit.each_nest): pre-order or post-order, carrying the product of
+    nesting coefficients and the list of ancestors.
+    """
+    out: list[_Node] = []
+
+    def visit(spec, parent: _Node):
+        if isinstance(spec, str):  # an alternative (leaf)
+            out.append(_Node(spec, True, parent.coefficient, parent.product,
+                             ancestors=parent.ancestors + [spec]))
+            return
+        node = _Node(spec.name, False, spec.coefficient, parent.product * spec.coefficient,
+                     [a if isinstance(a, str) else a.name for a in spec.alternatives],
+                     parent.ancestors + [spec.name])
+        if not post_order:
+            out.append(node)
+        for a in spec.alternatives:
+            visit(a, node)
+        if post_order:
+            out.append(node)
+
+    visit(tree, _Node("", False, 0, 1))
+    return out
+
+
+def _sum_columns(columns: list[np.ndarray]) -> np.ndarray:
+    """Add columns left to right (the order 1.x's row sums use for nests)."""
+    total = np.array(columns[0], dtype=np.float64, copy=True)
+    for c in columns[1:]:
+        total += c
+    return total
+
+
+@register("nested_probabilities", "asim1", reference=True,
+          description="nested logit as ActivitySim 1.x computes it: exponentiated nest "
+                      "utilities, conditional probabilities per nest, multiplied down the tree")
+def nested_probabilities(utils: np.ndarray, alternatives: list[str], nests) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Probabilities of each alternative (columns in ``alternatives`` order),
+    and a mask of rows that cannot be used. Follows 1.x's
+    compute_nested_exp_utilities, compute_nested_probabilities and
+    compute_base_probabilities (activitysim/core/simulate.py) operation by
+    operation.
+    """
+    n = utils.shape[0]
+    col = {a: j for j, a in enumerate(alternatives)}
+    bad = np.zeros(n, dtype=bool)
+
+    # exponentiated utilities of alternatives and nests, from the leaves up
+    exp_u: dict[str, np.ndarray] = {}
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        for node in walk_nests(nests, post_order=True):
+            if node.is_leaf:
+                x = utils[:, col[node.name]].astype(float) / node.product
+            else:
+                kids = [np.where(np.isnan(exp_u[c]), 0.0, exp_u[c]) for c in node.alternatives]
+                x = node.coefficient * np.log(_sum_columns(kids))  # pandas sum skips NaN
+            exp_u[node.name] = np.exp(x)
+
+        # probability of each child within its nest, from the root down
+        cond: dict[str, np.ndarray] = {}
+        for node in walk_nests(nests, post_order=False):
+            if node.is_leaf:
+                continue
+            arr = np.column_stack([exp_u[c] for c in node.alternatives]).astype(np.float64)
+            np.putmask(arr, arr <= EXP_UTIL_MIN, 0)
+            total = _sum_columns([arr[:, k] for k in range(arr.shape[1])])
+            bad |= np.isinf(total) | np.isnan(total)
+            np.divide(arr, total.reshape(n, 1), out=arr)
+            np.putmask(arr, np.isnan(arr), PROB_MIN)
+            np.clip(arr, PROB_MIN, PROB_MAX, out=arr)
+            for k, c in enumerate(node.alternatives):
+                cond[c] = arr[:, k]
+
+    # each alternative: product of the conditional probabilities on its path
+    probs = np.empty((n, len(alternatives)), dtype=np.float64)
+    for node in walk_nests(nests, post_order=False):
+        if not node.is_leaf:
+            continue
+        path = node.ancestors[1:]  # not the root
+        p = cond[path[0]].copy()
+        for a in path[1:]:
+            p = p * cond[a]
+        probs[:, col[node.name]] = p
+    bad |= np.abs(probs.sum(axis=1) - 1.0) > BAD_PROB_THRESHOLD
+    return probs, bad

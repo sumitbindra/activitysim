@@ -28,7 +28,8 @@ nothing is significantly slower.
 | `lookup` | values of a column at given rows (joins between tables) | `numpy` | |
 | `skim_lookup` | skim values for origin/destination zones | `numpy` | |
 | `utilities` | formula values and coefficients → utilities | `matmul`: one matrix product, as 1.x | `accumulate` |
-| `probabilities` | utilities → probabilities | `asim1` | |
+| `probabilities` | utilities → probabilities (multinomial logit) | `asim1` | |
+| `nested_probabilities` | utilities and a nest tree → probabilities (nested logit) | `asim1` | |
 | `choose` | probabilities and random draws → choices | `sequential`, as 1.x | |
 | `random` | per-row random draws for a step | `asim1`: 1.x's streams, exactly | `counter` |
 

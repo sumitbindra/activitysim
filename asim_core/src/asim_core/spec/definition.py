@@ -13,10 +13,11 @@ Loading runs the checks below, so mistakes surface when the model loads:
 from __future__ import annotations
 
 import ast
-from typing import Any, Literal
+from dataclasses import dataclass, field
+from typing import Any, Literal, Union
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, PrivateAttr, field_validator, model_validator
 
 from .translate import (
     FormulaError,
@@ -48,12 +49,58 @@ class Coefficient(BaseModel):
     constrain: bool = False  # held fixed during estimation
 
 
+class Nest(BaseModel):
+    """
+    One nest of a nested logit model: a name, a nesting coefficient (a number,
+    or the name of a coefficient), and the alternatives or nests inside it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    coefficient: float | str
+    alternatives: list[Union[str, "Nest"]]
+
+    @field_validator("coefficient", mode="before")
+    @classmethod
+    def _numbers_as_floats(cls, v):
+        # as 1.x: a coefficient written as text that reads as a number is a number
+        if isinstance(v, str):
+            try:
+                return float(v)
+            except ValueError:
+                return v.strip()
+        return v
+
+    def walk(self):
+        """Every nest and alternative name below and including this nest."""
+        yield self
+        for a in self.alternatives:
+            if isinstance(a, Nest):
+                yield from a.walk()
+            else:
+                yield a
+
+
+Nest.model_rebuild()
+
+
+@dataclass
+class NestTree:
+    """A nest with its coefficient resolved to a number (used by the arithmetic)."""
+
+    name: str
+    coefficient: float
+    alternatives: list = field(default_factory=list)  # str (alternative) or NestTree
+
+
 class ChoiceModelDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    logit_type: Literal["MNL"] = "MNL"
+    logit_type: Literal["MNL", "NL"] = "MNL"
     alternatives: list[str]
+    nests: Nest | None = None
     constants: dict[str, Any] = {}
     terms: list[Term]
     coefficients: dict[str, Coefficient]
@@ -84,6 +131,7 @@ class ChoiceModelDefinition(BaseModel):
             except FormulaError as err:
                 problems.append(f"{where}: {err}")
                 translated.append(None)
+        problems += self._check_nests()
         if problems:
             raise ValueError(
                 f"model '{self.name}' has {len(problems)} problem(s):\n  " + "\n  ".join(problems)
@@ -91,7 +139,49 @@ class ChoiceModelDefinition(BaseModel):
         self._translated = translated
         return self
 
+    def _check_nests(self) -> list[str]:
+        if self.logit_type == "MNL":
+            return []
+        if self.nests is None:
+            return ["nested logit needs NESTS"]
+        problems = []
+        names, leaves = [], []
+        for node in self.nests.walk():
+            if isinstance(node, Nest):
+                names.append(node.name)
+                if isinstance(node.coefficient, str) and node.coefficient not in self.coefficients:
+                    problems.append(f"nest '{node.name}': unknown coefficient '{node.coefficient}'")
+                if not node.alternatives:
+                    problems.append(f"nest '{node.name}' has no alternatives")
+            else:
+                names.append(node)
+                leaves.append(node)
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            problems.append(f"names used more than once in NESTS: {dupes}")
+        missing = [a for a in self.alternatives if a not in leaves]
+        extra = [a for a in leaves if a not in self.alternatives]
+        if missing:
+            problems.append(f"alternatives not in any nest: {missing}")
+        if extra:
+            problems.append(f"NESTS lists unknown alternatives: {extra}")
+        return problems
+
     # --- derived values -------------------------------------------------------
+
+    def nest_tree(self) -> NestTree | None:
+        """The nests with coefficient names replaced by values (64-bit, as 1.x does)."""
+        if self.logit_type != "NL":
+            return None
+        values = {k: c.value for k, c in self.coefficients.items()}
+
+        def resolve(nest: Nest) -> NestTree:
+            coef = nest.coefficient
+            coef = float(values[coef]) if isinstance(coef, str) else float(coef)
+            kids = [resolve(a) if isinstance(a, Nest) else a for a in nest.alternatives]
+            return NestTree(nest.name, coef, kids)
+
+        return resolve(self.nests)
 
     @property
     def translated(self) -> list[Translated]:

@@ -3,8 +3,10 @@ Utilities and probabilities computed by ActivitySim 1.x itself, for checking
 asim_core below the level of final choices.
 
 Restores 1.x's saved state just before a step, then calls 1.x's own functions
-(``eval_utilities`` and ``utils_to_probs``, legacy engine) on the same
-choosers. Harness code: imports ActivitySim 1.x.
+on the same choosers (legacy engine): ``eval_utilities``, then
+``utils_to_probs`` for multinomial logit, or ``compute_nested_exp_utilities``,
+``compute_nested_probabilities`` and ``compute_base_probabilities`` for nested
+logit. Harness code: imports ActivitySim 1.x.
 """
 
 from __future__ import annotations
@@ -53,5 +55,12 @@ def simple_model_internals(
             )
         )
     utils = pd.concat(parts)
-    probs = asim_logit.utils_to_probs(state, utils.copy(), trace_label="asim1_reference")
+    nest_spec = config.get_logit_model_settings(settings)
+    if nest_spec is None:
+        probs = asim_logit.utils_to_probs(state, utils.copy(), trace_label="asim1_reference")
+    else:
+        nest_spec = simulate.eval_nest_coefficients(nest_spec, coefficients, "asim1_reference")
+        exp_u = simulate.compute_nested_exp_utilities(utils, nest_spec)
+        nested = simulate.compute_nested_probabilities(state, exp_u, nest_spec, "asim1_reference")
+        probs = simulate.compute_base_probabilities(nested, nest_spec, spec)
     return utils, probs

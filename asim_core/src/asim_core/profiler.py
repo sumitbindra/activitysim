@@ -81,11 +81,20 @@ class StepProfile:
 
 
 class Profiler:
-    """Collects one ``StepProfile`` per step."""
+    """
+    Collects one ``StepProfile`` per step. With ``live_csv``, each step is
+    also appended to that file as soon as it finishes, so a run that is
+    stopped (e.g. killed for running out of memory) keeps its profile.
+    """
 
-    def __init__(self, collect_garbage: bool = True):
+    def __init__(self, collect_garbage: bool = True, live_csv: str | os.PathLike | None = None):
         self.records: list[StepProfile] = []
         self.collect_garbage = collect_garbage
+        self.live_csv = Path(live_csv) if live_csv else None
+        if self.live_csv:
+            self.live_csv.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.live_csv, "w", newline="") as f:
+                csv.writer(f).writerow([fld.name for fld in fields(StepProfile)])
 
     @contextmanager
     def step(self, name: str, mode: str = "computed"):
@@ -105,18 +114,22 @@ class Profiler:
             extra = None
             if peak is not None and rss_before is not None:
                 extra = max(peak - rss_before, 0.0)
-            self.records.append(
-                StepProfile(
-                    step=name,
-                    mode=mode,
-                    wall_s=wall,
-                    cpu_s=cpu,
-                    rss_before_mb=rss_before,
-                    peak_mb=peak,
-                    step_extra_mb=extra,
-                    rss_after_mb=rss_after,
-                )
+            rec = StepProfile(
+                step=name,
+                mode=mode,
+                wall_s=wall,
+                cpu_s=cpu,
+                rss_before_mb=rss_before,
+                peak_mb=peak,
+                step_extra_mb=extra,
+                rss_after_mb=rss_after,
             )
+            self.records.append(rec)
+            if self.live_csv:
+                with open(self.live_csv, "a", newline="") as f:
+                    row = asdict(rec)
+                    csv.writer(f).writerow(
+                        [round(v, 4) if isinstance(v, float) else v for v in row.values()])
 
     def write_csv(self, path: str | os.PathLike) -> Path:
         path = Path(path)

@@ -7,8 +7,8 @@ following the same rules as ActivitySim 1.x (activitysim/core/simulate.py:
 existing models load unchanged. Config folders are searched in order and the
 first match wins, as in 1.x.
 
-Supported so far: simple multinomial logit models without preprocessors or
-coefficient templates. Anything else raises ``NotImplementedError`` naming
+Supported so far: simple multinomial and nested logit models without
+preprocessors or coefficient templates. Anything else raises ``NotImplementedError`` naming
 the setting, rather than running a partial model.
 """
 
@@ -31,7 +31,6 @@ _SPEC_META_COLUMNS = {"Label", "Description", "Expression"}
 
 # settings that change how a model runs and are not supported yet
 _NOT_YET_SUPPORTED = {
-    "NESTS": "nested logit",
     "COEFFICIENT_TEMPLATE": "coefficient templates (purpose segments)",
     "preprocessor": "preprocessors",
     "annotate_households": "annotation after the model",
@@ -91,7 +90,7 @@ def load_choice_model(
 
     unsupported = [f"{k} ({why})" for k, why in _NOT_YET_SUPPORTED.items() if settings.get(k)]
     logit_type = settings.get("LOGIT_TYPE", "MNL")
-    if logit_type != "MNL":
+    if logit_type not in ("MNL", "NL"):
         unsupported.append(f"LOGIT_TYPE: {logit_type}")
     if unsupported:
         raise NotImplementedError(
@@ -138,7 +137,9 @@ def load_choice_model(
 
     return ChoiceModelDefinition(
         name=name or Path(settings_file).stem,
-        logit_type="MNL",
+        logit_type=logit_type,
+        # as 1.x: NESTS is only used for nested logit
+        nests=settings.get("NESTS") if logit_type == "NL" else None,
         alternatives=alternatives,
         constants=constants,
         terms=terms,

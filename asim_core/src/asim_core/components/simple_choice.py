@@ -1,7 +1,7 @@
 """
-A component that runs a simple multinomial logit choice model from its
-``ChoiceModelDefinition``: one choice per chooser, among a fixed list of
-alternatives.
+A component that runs a simple choice model (multinomial or nested logit)
+from its ``ChoiceModelDefinition``: one choice per chooser, among a fixed
+list of alternatives.
 
 Choosers are seen through a ``ChooserView``: the chooser table plus other
 tables joined by a key column (e.g. households joined to land_use by
@@ -87,6 +87,7 @@ def simple_choice_component(
     ``drop_zero_terms`` skips terms whose coefficients are all zero, as
     ActivitySim 1.x does with its legacy engine.
     """
+    nests = definition.nest_tree()  # None for multinomial logit
     coef = definition.coefficient_matrix()
     keep = ~(coef == 0).all(axis=1) if drop_zero_terms else np.ones(len(coef), dtype=bool)
     coef = coef[keep]
@@ -105,7 +106,10 @@ def simple_choice_component(
         """Utilities and probabilities for ``n`` choosers, using ``engine``'s pieces."""
         with np.errstate(divide="ignore", invalid="ignore"):
             utils = engine.utilities(terms_fn(cols), coef, n)
-        probs, bad = engine.probabilities(utils, shift=shift_utilities)
+        if nests is None:
+            probs, bad = engine.probabilities(utils, shift=shift_utilities)
+        else:  # 1.x uses no overflow protection for nested logit
+            probs, bad = engine.nested_probabilities(utils, definition.alternatives, nests)
         return utils, probs, bad
 
     def run(ctx: StepContext):
@@ -130,7 +134,8 @@ def simple_choice_component(
         run=run,
         provides={view.table: [output_column]},
         resolve_needs=resolve_needs,
-        description=f"{definition.name}: multinomial logit over {definition.alternatives}",
+        description=f"{definition.name}: {'nested' if nests else 'multinomial'} logit over "
+                    f"{definition.alternatives}",
         info={
             "definition": definition,
             "generated_source": source,

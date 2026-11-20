@@ -65,6 +65,7 @@ def main(argv=None) -> int:
     p.add_argument("--out", required=True, help="output folder")
     p.add_argument("--households", type=int, default=None, help="household sample size")
     p.add_argument("--trace-hh-id", type=int, default=None, help="household to trace")
+    p.add_argument("--stop-after", default=None, help="run the model list only up to this step")
     args = p.parse_args(argv)
 
     import activitysim
@@ -72,7 +73,10 @@ def main(argv=None) -> int:
     from activitysim.cli.run import add_run_args, run
     from activitysim.core.workflow.runner import Runner
 
-    profiler = Profiler()
+    out_early = Path(args.out).resolve()
+    out_early.mkdir(parents=True, exist_ok=True)
+    # written step by step, so a run killed partway (e.g. out of memory) keeps its profile
+    profiler = Profiler(live_csv=out_early / "asim_core_profile.csv")
     original_by_name = Runner.by_name
 
     def profiled_by_name(self, model_name, **kwargs):
@@ -86,8 +90,19 @@ def main(argv=None) -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     config_dirs = [example / c for c in args.configs]
+    overrides = {}
     if args.trace_hh_id is not None:
-        config_dirs.insert(0, _write_overlay(out, {"trace_hh_id": args.trace_hh_id}))
+        overrides["trace_hh_id"] = args.trace_hh_id
+    if args.stop_after:
+        import yaml
+
+        from asim_core.spec.legacy import load_top_settings
+
+        models = load_top_settings(config_dirs)["models"]
+        models = models[: models.index(args.stop_after) + 1]
+        overrides["models"] = yaml.safe_dump(models, default_flow_style=True).strip()
+    if overrides:
+        config_dirs.insert(0, _write_overlay(out, overrides))
 
     cli_args = []
     for c in config_dirs:

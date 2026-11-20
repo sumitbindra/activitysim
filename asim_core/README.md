@@ -51,7 +51,7 @@ pieces and the first experiments: [docs/experiments.md](docs/experiments.md).
 | `src/asim_core/skims.py` | Skims: OMX files imported into a memory-mapped cache shared by every process, following 1.x's `network_los.yaml` settings; reused only while the OMX files are unchanged. |
 | `src/asim_core/lookups.py` | Reference implementations of table and skim lookups. |
 | `src/asim_core/random.py` | Random numbers. Reference: 1.x's per-row streams, reproduced exactly. Alternative: `counter`. |
-| `src/asim_core/logit.py` | Reference implementations of utilities, probabilities and choices, with 1.x's arithmetic. |
+| `src/asim_core/logit.py` | Reference implementations of utilities, probabilities (multinomial and nested logit) and choices, with 1.x's arithmetic. |
 | `src/asim_core/alternatives.py` | Alternative implementations for experiments (e.g. `accumulate` utilities). |
 | `src/asim_core/spec/` | Model definitions (Pydantic): choice models and assignment specs; the loader for today's YAML/CSV files; the formula translator. |
 | `src/asim_core/components/` | Components. `simple_choice.py` runs any simple choice model from its definition; `auto_ownership.py` and `accessibility.py` are ported models. |
@@ -142,13 +142,13 @@ free_parking = Component(
 )
 ```
 
-Simple choice models need no code: build them with
+Simple choice models, multinomial or nested logit, need no code: build them with
 `simple_choice_component(definition, step, view, output_column)`, as
 `components/auto_ownership.py` does.
 
 ## Not supported yet
 
-Nested logit, coefficient templates (purpose segments), preprocessors and
+Coefficient templates (purpose segments), preprocessors and
 annotation (assignment specs work, but joins to other tables like
 `persons.age` and `reindex()` don't yet), skims indexed by each row's time
 period (`odt_skims`), Parquet skim files, two- and three-zone systems (MAZ,
