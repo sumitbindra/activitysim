@@ -66,10 +66,16 @@ def main(argv=None) -> int:
     p.add_argument("--households", type=int, default=None, help="household sample size")
     p.add_argument("--trace-hh-id", type=int, default=None, help="household to trace")
     p.add_argument("--stop-after", default=None, help="run the model list only up to this step")
+    p.add_argument("--patch", nargs="*", default=[], help="optional changes to 1.x (see asim1_patches.py)")
     args = p.parse_args(argv)
 
     import activitysim
     from activitysim import abm  # noqa: F401  (registers the model steps)
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import asim1_patches
+
+    asim1_patches.apply(args.patch)
     from activitysim.cli.run import add_run_args, run
     from activitysim.core.workflow.runner import Runner
 
@@ -131,6 +137,7 @@ def main(argv=None) -> int:
         "configs": args.configs,
         "households_sample_size": args.households,
         "trace_hh_id": args.trace_hh_id,
+        "patches": args.patch,
         "exit_code": rc,
         "error": error,
         "steps_completed": len(profiler.records),

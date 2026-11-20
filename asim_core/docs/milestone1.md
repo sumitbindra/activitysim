@@ -18,8 +18,9 @@
   - Sharrow: 83 seconds, peak 1,010 MB, after about 37 minutes of one-time
     compiling.
   - Trip destination is the slowest step under both engines.
-- **1.x's two engines give identical results on this example**, so "exact"
-  is the right bar for matching.
+- **1.x's two engines make identical choices on this example**, so
+  "exact" is the right bar for choices. Their stored logsums differ by up
+  to 7.5×10⁻⁶, because sharrow computes in 32-bit.
 - **What this does not show yet:** anything about beating sharrow on a
   real-size model. The example is tiny (25 zones, 5,000 households), and
   `auto_ownership` is about 0.1% of the runtime.
@@ -57,13 +58,25 @@ Shares by number of cars (identical in both): 0 cars 62.40%, 1 car 35.96%,
 
 ### How much 1.x differs from itself
 
-The final results of 1.x's legacy and sharrow runs were compared column by
-column: car ownership, daily activity pattern, work and school location,
-tour mode, destination and start time, and trip mode and destination.
-Every value is identical for every row (5,000 households, 8,212 persons,
-9,806 tours, 23,583 trips). On a larger model the two engines may differ
-slightly, and this comparison is the way to find out how much. That
-difference sets a fair tolerance for asim_core.
+The final results of 1.x's legacy and sharrow runs were compared, every
+table and every column (`harness/compare_asim1_runs.py`):
+
+- **Every choice is identical** for every row (5,000 households, 8,212
+  persons, 9,806 tours, 23,583 trips): car ownership, daily activity
+  pattern, work and school location, tour and trip modes, destinations and
+  times.
+- **The stored logsums differ slightly.** Sharrow computes in 32-bit, and
+  stores some logsums as 32-bit numbers. The largest differences are 7.5×10⁻⁶
+  absolute and 1.1×10⁻⁴ relative (trip and tour mode choice logsums,
+  destination logsums, location logsums).
+
+On a larger model the engines' choices may differ too, and this comparison
+is the way to find out. These differences set a fair tolerance for
+asim_core: logsum values within 32-bit precision; choices exact when the
+same random numbers are used.
+
+An earlier version of this section said every value was identical. That
+check covered only the choice columns.
 
 ### What exact matching needed
 
