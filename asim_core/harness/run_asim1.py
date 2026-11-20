@@ -66,6 +66,8 @@ def main(argv=None) -> int:
     p.add_argument("--households", type=int, default=None, help="household sample size")
     p.add_argument("--trace-hh-id", type=int, default=None, help="household to trace")
     p.add_argument("--stop-after", default=None, help="run the model list only up to this step")
+    p.add_argument("--resume-after", default=None,
+                   help="start after this step, from the saved run already in --out (1.x's resume_after)")
     p.add_argument("--patch", nargs="*", default=[], help="optional changes to 1.x (see asim1_patches.py)")
     args = p.parse_args(argv)
 
@@ -99,6 +101,8 @@ def main(argv=None) -> int:
     overrides = {}
     if args.trace_hh_id is not None:
         overrides["trace_hh_id"] = args.trace_hh_id
+    if args.resume_after:
+        overrides["resume_after"] = args.resume_after
     if args.stop_after:
         import yaml
 

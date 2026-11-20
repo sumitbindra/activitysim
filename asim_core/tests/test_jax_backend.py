@@ -83,3 +83,16 @@ def test_rows_are_padded_to_a_few_sizes():
     sizes = {jb.padded_rows(n) for n in range(1025, 2049)}
     assert len(sizes) == jb.PAD_STEPS and max(sizes) == 2048
     assert all(jb.padded_rows(n) >= n for n in range(1, 100_000, 997))
+
+
+def test_pandas_style_formulas_widen_8_bit_integers_as_numexpr_does():
+    """7 tours x start 22 is 154, not 8-bit -102 (asim1 findings, #14)."""
+    src = """def terms(c, n, tt=None, s=None):
+    yield _pandas_eval('num * start', {'num': c['num'], 'start': c['start']})
+"""
+    fn = compile_function(src, "terms")
+    c = {"num": np.full(3, 7, dtype=np.int8), "start": np.array([5, 18, 22], dtype=np.int8)}
+    ref = interaction_utilities(FormulaValues(fn, c, 3, None, None), [1.0], 3)
+    got = jb.interaction_utilities_jax(FormulaValues(fn, c, 3, None, None), [1.0], 3)
+    np.testing.assert_array_equal(ref, [35.0, 126.0, 154.0])
+    np.testing.assert_array_equal(got, ref)

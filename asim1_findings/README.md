@@ -34,6 +34,7 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 11 | Numbers in CSV files are read inexactly (pandas' default parser): up to 1e-12 relative error, in inputs and in coefficients | Accuracy | Measured (all three examples) | Not reported |
 | 12 | ARC's destination terms for CBD and urban area read the person's home zone, not the destination, so they never change a choice | Model specification | Reproduced (ARC, all households) | Not reported |
 | 13 | With zones renumbered, the skims' zone lookup is not used or checked: a lookup in another order gives every zone another zone's skims, silently | Zone numbering | From reading the code | Not reported |
+| 14 | 8-bit integer formulas overflow when evaluated without numexpr (7 tours × start 22 = −102), changing one person's schedule in 50,000 households | Arithmetic | Reproduced (MTC full zones, 50,000 households) | Not reported |
 
 ---
 
@@ -167,17 +168,24 @@ different last bits depending on whether a formula is written with `@`.
 `asim_core/harness/asim1_reference.py` computes a scheduling round's
 utilities with 1.x's functions, whole or in slices (`rows_per_call`).
 
-**Suggested change.** Set `pd.set_option("compute.use_numexpr", False)`
-for 1.x's expression evaluation (tested above: removes the dependence).
-Possible cost: numexpr is multi-threaded, so very large arithmetic may be
-slower; not measured.
+**Suggested change.** Turn off numexpr for pandas' arithmetic only
+(`pandas.core.computation.expressions.set_use_numexpr(False)`), so Series
+arithmetic follows NumPy's rules at any size, while `pandas.eval` keeps
+numexpr. Careful: pandas ties the two together (with numexpr off for
+arithmetic, `pandas.eval` switches to plain pandas too, and the
+`compute.use_numexpr` option does both), and plain pandas lets 8-bit
+integer formulas overflow (#14); the engine for `pandas.eval` has to be kept
+at numexpr explicitly (`harness/asim1_patches.py`, `no_numexpr`). Possible
+cost: numexpr is multi-threaded, so very large arithmetic may be slower; not
+measured.
 
 **Seen on full-size zones.** MTC's full zone system (1,454 zones, 10,000
 sampled households, 1.x run to tour mode choice): arrays pass 1M elements
 everywhere (accessibility evaluates 1,454 × 1,454 zone pairs at once;
 location and destination sampling evaluate choosers × 1,454 zones). 1.x's
 accessibility differs in all 1,454 zones (up to 6e-7) from the same run
-with `pd.set_option("compute.use_numexpr", False)`, and the location and
+with numexpr off (first tested with `pd.set_option("compute.use_numexpr",
+False)`, which has the side effect described in #14), and the location and
 destination choice logsums of 4,749 students, 14,134 workers and 14,670
 tours differ (about 1e-7). No choice changed. asim_core, which uses NumPy's
 rules at any size, matches the numexpr-off run exactly (all 279 compared
@@ -497,6 +505,41 @@ then run with renumbering on: results change.
 **Suggested change.** When renumbering, map the original zone numbers
 through the OMX lookup if there is one (or at least check that it matches
 the renumbering, and stop if not).
+
+---
+
+## 14. 8-bit integer formulas can overflow, depending on how they are evaluated
+
+**Evidence: reproduced** (MTC full zones, 50,000 households, one person).
+
+**What happens.** Some columns are 8-bit integers (values up to 127), such
+as a person's count of non-mandatory tours and a tour option's start hour.
+MTC's non-mandatory scheduling has the plain-style formula
+`num_non_escort_tours * start`. 1.x evaluates plain-style formulas with
+`pandas.eval`; with numexpr (installed with 1.x, through sharrow) the
+integers are widened first, so 7 tours × start 22 = 154. Without numexpr
+(not installed, or turned off with pandas' `compute.use_numexpr` option) the
+product stays 8-bit and wraps around: 7 × 22 = −102. One person in 50,000
+households has 7 non-mandatory tours; the term's coefficient (0.039) then
+adds −4.0 instead of +6.0 to the late options of their first tour, which
+changes its departure and, through the timetable, their six later tours.
+
+Formulas written with `@` are evaluated with NumPy, which never widens
+8-bit integers: the same product written as `@df.num_non_escort_tours *
+df.start` would overflow in every 1.x run. (Not checked whether any of the
+examples' `@` formulas do.)
+
+**Found while** running asim_core against 1.x with numexpr turned off for
+arithmetic (#3): the first version of that patch used pandas' option, which
+also switched `pandas.eval` off numexpr. asim_core matches 1.x as installed
+(154).
+
+**To reproduce:** `pd.eval("a * b")` with `a`, `b` 8-bit Series of 7 and
+22, with and without `pd.set_option("compute.use_numexpr", False)`.
+
+**Suggested change.** Widen 8-bit integer columns before formulas use them
+(or keep counts and hours in at least 16 bits), so results don't depend on
+the evaluation engine.
 
 ---
 

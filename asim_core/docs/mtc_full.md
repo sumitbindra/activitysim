@@ -19,7 +19,12 @@ machine (15 GB of memory, 4 CPUs)?
   pandas hands arithmetic to numexpr, which adds up in a different order
   (1.x findings, #3). With numexpr turned off in 1.x
   (`harness/asim1_patches.py`, `no_numexpr`), 1.x's choices are unchanged
-  and every value matches asim_core's.
+  and every value matches asim_core's. (The patch now turns numexpr off for
+  arithmetic only; its first version also took it away from `pandas.eval`,
+  which lets 8-bit integer formulas overflow in 1.x, 1.x findings #14. That
+  showed at 50,000 households, as one person's schedule; with the corrected
+  patch, asim_core matches 1.x exactly at both 10,000 and 50,000
+  households.)
 - **It fits.** 1.x holds all skims in its own memory: 7.9 GB for the whole
   run, with a peak of 10.2 to 12.6 GB while it loads them (two runs). asim_core
   reads its skims from a memory-mapped file: its own memory grows by 60 to

@@ -26,6 +26,10 @@ They are hypotheses under test.
   to 11 s without), so at 10,000 households each step run on its own is 1.3
   to 8 times slower (2 to 12 times without the disk cache). JAX doesn't pay
   off at this size.
+- **At 50,000 households (below) JAX pays off in one process:** formulas
+  and utilities −33% (−20% at 10,000), the 8 steps −19% once compiled, and
+  a first run with compiled code kept on disk breaks even (94.2 against
+  95.1 s, 23 s of compiling included). Every choice is still 1.x's.
 - **Two findings don't need JAX:**
   - the skim lookup saving comes from looking up each distinct skim once per
     formula set (JAX needs that to work at all); NumPy could do the same;
@@ -151,14 +155,62 @@ scheduling (+60 MB), XLA's runtime.
 - **Exactness:** JAX can't promise 1.x's results bit for bit; here no
   choice changed, and logsums moved by under 1e-6.
 
+## At 50,000 households
+
+To test whether the fixed cost of compiling is paid back on more rows: 1.x
+run on full MTC with 50,000 households (8 minutes, 12.8 GB at its peak),
+and the 8 steps run in one process, twice, by `profile_pieces.py` (other
+steps replayed from 1.x). First, the reference: **asim_core matches 1.x
+exactly at 50,000 households too** (all 279 compared columns), and so does
+JAX's every choice (seven steps; logsums within 7.2e-7).
+
+| 8 steps, one process | Reference | JAX |
+|---|---|---|
+| first run, compiled code from disk (JAX: 23.3 s compiling) | 95.1 s | 94.2 s |
+| first run, compiling from scratch (JAX: 47 s compiling); whole run, other steps replayed | 102.0 s | 126.2 s |
+| second run (compiled) | 88.3 s | **71.4 s (−19%)** |
+| formulas + utilities, second run | 40.1 s | **26.8 s (−33%)** |
+| skim lookups, second run | 18.1 s | 14.1 s (−22%) |
+
+Per step, second run (reference → JAX): mandatory scheduling 21.8 → 15.9 s
+(−27%), non-mandatory scheduling 5.2 → 3.7 s (−29%), school location 9.4
+→ 7.3 s (−22%), workplace location 24.4 → 20.2 s (−17%), non-mandatory
+destination 22.6 → 19.6 s (−13%), tour mode choice 3.4 → 3.3 s (−2%).
+
+**What it shows:** JAX's gain grows with the rows (−20% → −33% on formulas
+and utilities from 10,000 to 50,000 households) while its fixed cost stays
+the same (93 compiles either way). At 50,000 households a single run with
+the compiled code on disk breaks even; any longer run (more households,
+iterations, or a second pass in the same process) comes out ahead. If the
+gains held at the full population (2.9 million households, about 58 times
+more rows), the 8 steps would save on the order of 15 minutes against about
+half a minute of compiling: a projection, not a measurement.
+
+**Two bugs found on the way, both from 8-bit integer arithmetic:**
+
+- In 1.x itself, depending on how it's run (1.x findings, #14):
+  `num_non_escort_tours * start` overflows (7 × 22 = −102) when formulas are
+  evaluated without numexpr. Our harness patch that turns numexpr off for
+  1.x's arithmetic (#3) did that to `pandas.eval` too; it was corrected
+  (`asim1_patches.no_numexpr`), after which asim_core matched 1.x exactly
+  at 50,000 households.
+- In the JAX alternative: pandas-style formulas were evaluated on JAX's
+  8-bit integers as they are, so the same product overflowed, changing 7
+  choices of one person. They are now widened as numexpr does; tested
+  (`tests/test_jax_backend.py`), and every choice matches 1.x.
+
 ## Possible next steps
 
 1. ~~Make `binary_search` the default for sampling~~ (done: the default
    since; the original stays selectable as `inverse_cdf`).
 2. Look up each distinct skim once per formula set in the NumPy path too
    (the −26% on skim lookups, identical results), as a new alternative.
-3. JAX at a larger sample (e.g. 100,000 households), whole run in one
-   process, to test whether the fixed cost is paid back.
+3. ~~JAX at a larger sample~~ (done at 50,000 households: breaks even on a
+   single run with compiled code on disk, −19% once compiled).
+4. Fewer, cheaper compiles: most of JAX's fixed cost is tracing the large
+   formula functions in every new process (23 s here even with compiled
+   code on disk); one compile per formula set and size class instead of 93
+   would cut it.
 
 ## Reproducing
 

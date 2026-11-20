@@ -95,7 +95,14 @@ def _jax_namespace():
         return jnp.where(jnp.isnan(x), value, x) if jnp.issubdtype(x.dtype, jnp.floating) else x
 
     def pandas_eval(expr, names):
-        return eval(expr, {"__builtins__": {}}, dict(names))  # noqa: S307 (generated formulas)
+        # as pandas.eval with numexpr (1.x's and the NumPy path's engine): integers narrower
+        # than 32 bits are widened first, so 8-bit columns don't overflow (asim1 findings, #14)
+        def widen(v):
+            v = jnp.asarray(v)
+            if jnp.issubdtype(v.dtype, jnp.integer) and v.dtype.itemsize < 4:
+                return v.astype(jnp.int32)
+            return v
+        return eval(expr, {"__builtins__": {}}, {k: widen(v) for k, v in names.items()})  # noqa: S307
 
     def as_int8(x):
         x = jnp.asarray(x)

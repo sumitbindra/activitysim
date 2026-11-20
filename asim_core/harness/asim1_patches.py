@@ -84,10 +84,26 @@ def no_numexpr() -> None:
     """
     pandas evaluates Series arithmetic with numexpr above 1M elements, with
     other number rules than NumPy (asim1 findings, #3). Off: NumPy at any size.
-    """
-    import pandas as pd
 
-    pd.set_option("compute.use_numexpr", False)
+    Only for arithmetic: 1.x's formulas evaluated with ``pd.eval`` keep using
+    numexpr, as they do in 1.x by default. (Turning numexpr off with pandas'
+    ``compute.use_numexpr`` option, as this patch first did, also switches
+    ``pd.eval`` to plain pandas, which changes integer arithmetic: 8-bit
+    columns overflow, e.g. 7 * 22 = -102 (asim1 findings, #14).)
+    """
+    from pandas.core.computation import eval as pandas_eval
+    from pandas.core.computation import expressions
+
+    expressions.set_use_numexpr(False)  # arithmetic: NumPy at any size
+    original = pandas_eval._check_engine
+    if getattr(original, "_asim_core_patched", False):
+        return
+
+    def check_engine(engine):  # pd.eval: numexpr unless asked otherwise, as by default
+        return original("numexpr" if engine is None else engine)
+
+    check_engine._asim_core_patched = True
+    pandas_eval._check_engine = check_engine
 
 
 PATCHES = {"logsum_dedupe": logsum_dedupe, "no_numexpr": no_numexpr}
