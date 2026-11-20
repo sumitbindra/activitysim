@@ -17,12 +17,13 @@ from those experiments. Sharrow is not used; 1.x with sharrow is only a
 baseline in the reports.
 
 Status: two components are ported and match 1.x exactly: `compute_accessibility`
-(with skims) and `auto_ownership`, on two regions' example models (MTC and
-MWCOG, the latter with all 29,972 households). Every other step can be
-**replayed** from a 1.x run, so the model runs end to end today. Results:
+(with skims) and `auto_ownership` (multinomial or nested logit), on three
+regions' example models: MTC, MWCOG (all 29,972 households) and ARC (all
+24,061 households, nested logit). Every other step can be **replayed** from a
+1.x run, so the model runs end to end today. Results:
 [docs/milestone1.md](docs/milestone1.md),
 [docs/skims_and_accessibility.md](docs/skims_and_accessibility.md),
-[docs/mwcog.md](docs/mwcog.md). Swappable
+[docs/mwcog.md](docs/mwcog.md), [docs/arc.md](docs/arc.md). Swappable
 pieces and the first experiments: [docs/experiments.md](docs/experiments.md).
 
 ## Rules
