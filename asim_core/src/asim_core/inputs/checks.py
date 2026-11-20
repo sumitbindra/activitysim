@@ -455,29 +455,32 @@ class _Checker:
                     nodes = h.list_nodes("/lookup")
                     if nodes:
                         lookup = np.asarray(nodes[0][:])
-                for node in h.list_nodes("/data"):
+                for node_path in [n._v_pathname for n in h.list_nodes("/data")]:
+                    node = h.get_node(node_path)
                     a = node[:]
+                    node_name = node.name
+                    node._f_close()  # frees its chunk cache (up to 16 MB per open matrix)
                     n_checked += 1
                     if shape is None:
                         shape = a.shape
                         self._check_skim_zones(path, shape, lookup, zones)
                     elif a.shape != shape:
-                        self.add(ERROR, "skims", node.name, f"is {a.shape}, other skims are {shape}", used_by=[])
+                        self.add(ERROR, "skims", node_name, f"is {a.shape}, other skims are {shape}", used_by=[])
                         continue
                     names = lookup if lookup is not None else (
                         zones if zones is not None and len(zones) == a.shape[0] else None)
-                    base = node.name.split("__")[0]
+                    base = node_name.split("__")[0]
                     finite = np.isfinite(a)
                     if not finite.all():
                         cells = np.argwhere(~finite)
-                        self.add(ERROR, "skims", node.name, "missing or infinite values", len(cells),
+                        self.add(ERROR, "skims", node_name, "missing or infinite values", len(cells),
                                  [_cell(names, i, j, a[i, j]) for i, j in cells[:EXAMPLES]],
                                  used_by=self.used_by(base))
                     with np.errstate(invalid="ignore"):
                         neg = a < 0
                     if neg.any():
                         cells = np.argwhere(neg)
-                        self.add(WARNING, "skims", node.name, "negative values", len(cells),
+                        self.add(WARNING, "skims", node_name, "negative values", len(cells),
                                  [_cell(names, i, j, a[i, j]) for i, j in cells[:EXAMPLES]],
                                  used_by=self.used_by(base))
         return n_checked
@@ -490,9 +493,14 @@ class _Checker:
             if len(missing):
                 self.add(ERROR, "land_use", "zone_id", f"zones not in the skims' zone list ({path.name})",
                          len(missing), [f"zone_id {_fmt(z)}" for z in missing[:EXAMPLES]], used_by=[])
-        elif shape[0] != len(zones):
+        elif shape[0] < len(zones):
             self.add(ERROR, "land_use", "zone_id", f"{len(zones):,} zones, but the skims ({path.name}) "
-                     f"have {shape[0]:,}", used_by=[])
+                     f"have only {shape[0]:,}", used_by=[])
+        elif shape[0] > len(zones):
+            # e.g. MTC's full skims: 1,475 zones, the last 21 external stations without land use
+            self.add(WARNING, "land_use", "zone_id", f"{len(zones):,} zones, the skims ({path.name}) "
+                     f"{shape[0]:,}: the last {shape[0] - len(zones):,} skim zones have no land use "
+                     "(e.g. external stations), so they can't be chosen", used_by=[])
 
 
 def _cell(names, i, j, value) -> str:

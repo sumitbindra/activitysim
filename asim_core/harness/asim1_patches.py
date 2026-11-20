@@ -80,7 +80,17 @@ def logsum_dedupe() -> None:
     vts.dedupe_alt_tdd = dedupe_alt_tdd
 
 
-PATCHES = {"logsum_dedupe": logsum_dedupe}
+def no_numexpr() -> None:
+    """
+    pandas evaluates Series arithmetic with numexpr above 1M elements, with
+    other number rules than NumPy (asim1 findings, #3). Off: NumPy at any size.
+    """
+    import pandas as pd
+
+    pd.set_option("compute.use_numexpr", False)
+
+
+PATCHES = {"logsum_dedupe": logsum_dedupe, "no_numexpr": no_numexpr}
 
 
 def apply(names) -> None:

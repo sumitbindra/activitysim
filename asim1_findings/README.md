@@ -171,6 +171,18 @@ for 1.x's expression evaluation (tested above: removes the dependence).
 Possible cost: numexpr is multi-threaded, so very large arithmetic may be
 slower; not measured.
 
+**Seen on full-size zones.** MTC's full zone system (1,454 zones, 10,000
+sampled households, 1.x run to tour mode choice): arrays pass 1M elements
+everywhere (accessibility evaluates 1,454 × 1,454 zone pairs at once;
+location and destination sampling evaluate choosers × 1,454 zones). 1.x's
+accessibility differs in all 1,454 zones (up to 6e-7) from the same run
+with `pd.set_option("compute.use_numexpr", False)`, and the location and
+destination choice logsums of 4,749 students, 14,134 workers and 14,670
+tours differ (about 1e-7). No choice changed. asim_core, which uses NumPy's
+rules at any size, matches the numexpr-off run exactly (all 279 compared
+columns); against the default run, those 36 columns differ. On the small
+example data nothing reaches 1M elements, so this never shows there.
+
 **A second way chunking changes results: the padding width.** When the
 alternatives differ per chooser (sampled destinations, a tour's departure
 options), `interaction_sample_simulate` pads every chooser's utilities to

@@ -212,7 +212,8 @@ def import_omx(
                     if name in chosen:
                         warnings.warn(f"duplicate skim '{name}' in {omx_paths[chosen[name][0]]} "
                                       f"and {path}; using {path}")
-                    chosen[name] = (i, node)
+                    chosen[name] = (i, node._v_pathname)
+                    node._f_close()
             if not chosen:
                 raise ValueError(f"no skims found in {[str(p) for p in omx_paths]}")
             rows, cols = shape
@@ -223,7 +224,13 @@ def import_omx(
                 tmp / DATA, mode="w+", dtype=np.dtype(dtype), shape=(len(names), rows, cols)
             )
             for k, name in enumerate(names):
-                data[k] = chosen[name][1].read().astype(dtype)  # same rounding as 1.x on load
+                i, node_path = chosen[name]
+                node = handles[i].get_node(node_path)
+                data[k] = node.read().astype(dtype)  # same rounding as 1.x on load
+                # an open matrix keeps up to 16 MB of decompressed data cached
+                # (PyTables' chunk cache); closing it frees that, so memory stays
+                # flat however many matrices there are
+                node._f_close()
             data.flush()
             del data
         finally:
