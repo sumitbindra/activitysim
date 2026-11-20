@@ -129,6 +129,9 @@ def fingerprint(omx_paths: Sequence[str | Path], dtype: str = "float32", zone_id
     Identifies the OMX files (path, size, modification time) and the import
     options. Changes whenever a file is rewritten.
     """
+    if isinstance(zone_ids, str) and zone_ids == "omx":
+        # caches made before files without a zone lookup were numbered from 1 are not reused
+        zone_ids = "omx; without a lookup, numbered from 1"
     payload = {
         "format": FORMAT_VERSION,
         "sources": _source_info([Path(p) for p in omx_paths]),
@@ -162,7 +165,7 @@ def import_omx(
     it recodes zone IDs (``recode_columns`` in settings.yaml). ``"omx"`` uses
     the OMX file's zone lookup, for models that keep their original zone
     numbers (as 1.x does with the lookup when zones aren't recoded); without
-    a lookup, positions are used.
+    a lookup, 1, 2, 3, ..., as 1.x.
 
     ``periods``: if given, time-period skims (``NAME__PERIOD``) for other
     periods are skipped with a warning, as in 1.x.
@@ -238,8 +241,11 @@ def import_omx(
                 f.close()
 
         if isinstance(zone_ids, str) and zone_ids == "omx":
-            # no lookup in the file: zone IDs are matrix positions, as in 1.x
-            ids = np.arange(rows) if lookup is None else lookup["values"]
+            # original zone numbers: the file's zone lookup, in matrix order (any
+            # order); without one, 1.x takes the skims as numbered from 1: zone z is
+            # row z - 1 (``SkimDict._offset_mapper``, "assume this is a one-based
+            # skim map")
+            ids = np.arange(1, rows + 1) if lookup is None else lookup["values"]
         else:
             ids = np.arange(rows) if zone_ids is None else np.asarray(zone_ids)
         if len(ids) != rows:

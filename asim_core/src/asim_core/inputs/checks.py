@@ -435,7 +435,14 @@ class _Checker:
                          f"so no destination can be chosen for it (size terms: {', '.join(cols_k)})",
                          used_by=src)
 
-    def check_skims(self, omx_paths: Sequence[Path]) -> int:
+    def check_skims(self, omx_paths: Sequence[Path], zones_recoded: bool = False) -> int:
+        """
+        Checks every skim value, and that the land use zones can be found in the
+        skims as 1.x finds them: through the file's zone lookup if it has one;
+        otherwise, with zones renumbered from 0 (``zones_recoded``), row i is the
+        i-th smallest zone number, and without renumbering, zone z is row z
+        counting from 1.
+        """
         try:
             import tables as pytables
         except ImportError:  # optional dependency
@@ -463,11 +470,12 @@ class _Checker:
                     n_checked += 1
                     if shape is None:
                         shape = a.shape
-                        self._check_skim_zones(path, shape, lookup, zones)
+                        self._check_skim_zones(path, shape, lookup, zones, zones_recoded)
                     elif a.shape != shape:
                         self.add(ERROR, "skims", node_name, f"is {a.shape}, other skims are {shape}", used_by=[])
                         continue
                     names = lookup if lookup is not None else (
+                        np.arange(1, a.shape[0] + 1) if not zones_recoded else
                         zones if zones is not None and len(zones) == a.shape[0] else None)
                     base = node_name.split("__")[0]
                     finite = np.isfinite(a)
@@ -485,15 +493,49 @@ class _Checker:
                                  used_by=self.used_by(base))
         return n_checked
 
-    def _check_skim_zones(self, path, shape, lookup, zones) -> None:
+    def _check_skim_zones(self, path, shape, lookup, zones, zones_recoded=False) -> None:
         if zones is None:
             return
         if lookup is not None:
+            # without renumbering, any order: zones are matched by number
             missing = zones[~np.isin(zones, lookup)]
             if len(missing):
                 self.add(ERROR, "land_use", "zone_id", f"zones not in the skims' zone list ({path.name})",
                          len(missing), [f"zone_id {_fmt(z)}" for z in missing[:EXAMPLES]], used_by=[])
-        elif shape[0] < len(zones):
+            elif zones_recoded:
+                # renumbered from 0: zone i is row i, whatever the lookup says (1.x findings, #13)
+                rows = lookup[: len(zones)]
+                wrong = np.flatnonzero(rows != zones)
+                if len(wrong):
+                    self.add(ERROR, "land_use", "zone_id", f"the skims' zone lookup ({path.name}) isn't in "
+                             "ascending zone order: with zones renumbered from 0, the i-th smallest zone "
+                             "is read from row i, so these zones would get another zone's skims",
+                             len(wrong), [f"zone_id {_fmt(zones[i])} would read row {i + 1}, zone "
+                                          f"{_fmt(rows[i])} in the lookup" for i in wrong[:EXAMPLES]],
+                             used_by=[])
+            return
+        if not zones_recoded:
+            # no lookup, original numbers: 1.x reads zone z from row z (counting from 1)
+            outside = zones[(zones < 1) | (zones > shape[0])]
+            if len(outside):
+                self.add(ERROR, "land_use", "zone_id", f"zone numbers outside 1 to {shape[0]:,}: the skims "
+                         f"({path.name}) have no zone lookup, so zone z is read from row z, counting "
+                         "from 1 (as in 1.x)", len(outside),
+                         [f"zone_id {_fmt(z)}" for z in outside[:EXAMPLES]], used_by=[])
+            elif shape[0] > len(zones):
+                self.add(WARNING, "land_use", "zone_id", f"{len(zones):,} zones, the skims ({path.name}) "
+                         f"{shape[0]:,}: {shape[0] - len(zones):,} skim zones have no land use, so they "
+                         "can't be chosen", used_by=[])
+            return
+        # no lookup, zones renumbered from 0: row i is the i-th smallest zone number
+        if len(zones) and zones[-1] - zones[0] + 1 != len(zones):
+            gaps = np.flatnonzero(np.diff(zones) > 1)
+            self.add(WARNING, "land_use", "zone_id", f"zone numbers have gaps, and the skims ({path.name}) "
+                     "have no zone lookup: their rows are taken to be the zones in ascending order "
+                     "(as in 1.x), which can't be checked; add a zone lookup to the skims to be sure",
+                     len(gaps), [f"after zone_id {_fmt(zones[i])}: {_fmt(zones[i + 1])}" for i in gaps[:EXAMPLES]],
+                     used_by=[])
+        if shape[0] < len(zones):
             self.add(ERROR, "land_use", "zone_id", f"{len(zones):,} zones, but the skims ({path.name}) "
                      f"have only {shape[0]:,}", used_by=[])
         elif shape[0] > len(zones):
@@ -598,7 +640,9 @@ def check_inputs(
     checker = _Checker(defs, tables, specs, _ConfigIndex(configs_dirs))
     checker.run()
     checker.check_size_terms(size_terms)
-    n_skims = checker.check_skims(omx) if omx else 0
+    from ..skims import land_use_zones_recoded
+
+    n_skims = checker.check_skims(omx, land_use_zones_recoded(configs_dirs)) if omx else 0
 
     undefined = {}
     for tname, table in tables.items():

@@ -1,5 +1,6 @@
 import os
 import time
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -260,3 +261,73 @@ def test_skim_access_and_lookup_options_give_the_same_values(tmp_path):
             for n in names:
                 assert np.array_equal(e.skim_lookup(held[n], o, d), ref[n]), (access, lookup, n)
             assert np.array_equal(held.positions(np.arange(5)), store.positions(np.arange(5)))
+
+
+def test_zones_without_a_lookup_are_numbered_from_1_as_in_1x(tmp_path):
+    """Original zone numbers and no zone lookup in the OMX file: 1.x reads zone z from
+    row z - 1 ("assume this is a one-based skim map"). Renumbered zones: zone i is row i."""
+    configs, data = tmp_path / "configs", tmp_path / "data"
+    configs.mkdir(), data.mkdir()
+    mat = np.arange(9.0).reshape(3, 3)
+    write_omx(data / "skims.omx", {"DIST": mat})
+
+    _write_settings(configs, recode=False)
+    store = prepare_skims_from_settings([configs], [data], tmp_path / "out1")
+    assert store.positions([1, 3]).tolist() == [0, 2]
+    with pytest.raises(KeyError):
+        store.positions([0])  # no zone 0
+    with pytest.raises(KeyError):
+        store.positions([4])
+
+    _write_settings(configs, recode=True)
+    store = prepare_skims_from_settings([configs], [data], tmp_path / "out2")
+    assert store.positions([0, 2]).tolist() == [0, 2]
+
+
+def test_a_zone_lookup_in_any_order_finds_the_right_values(tmp_path):
+    """Zones listed out of order in the OMX lookup are matched by number, with both lookups."""
+    from asim_core.seams import Engine
+
+    order = [30, 10, 20]  # matrix rows/columns, not ascending
+    mat = np.array([[0.0, 1, 2], [3, 4, 5], [6, 7, 8]])  # mat[i, j] = 3 * i + j
+    write_omx(tmp_path / "skims.omx", {"DIST": mat}, lookup=order)
+    store = import_omx(tmp_path / "skims.omx", tmp_path / "s", zone_ids="omx")
+    orig, dest = np.array([10, 10, 30, 20]), np.array([30, 20, 10, 20])
+    row = {z: i for i, z in enumerate(order)}
+    expected = np.array([mat[row[o], row[d]] for o, d in zip(orig, dest)], dtype=np.float32)
+    for lookup in ("numpy", "flat_take"):
+        got = Engine({"skim_lookup": lookup}).skim_lookup(
+            store["DIST"], store.positions(orig), store.positions(dest))
+        assert np.array_equal(got, expected), lookup
+
+
+class _Problems:
+    def __init__(self):
+        self.found = []
+
+    def add(self, level, table, column, message, *args, **kwargs):
+        self.found.append((level, message))
+
+
+@pytest.mark.parametrize("lookup, zones, recoded, expect", [
+    (None, [1, 2, 3], False, None),                       # zone z is row z
+    (None, [0, 1, 2], False, "outside 1 to 3"),           # zone 0 has no row
+    (None, [1, 2, 7], False, "outside 1 to 3"),
+    (None, [1, 2], False, "have no land use"),            # fewer zones than rows: warning
+    (None, [1, 2, 3], True, None),                        # renumbered: i-th smallest zone is row i
+    (None, [1, 2, 7], True, "gaps"),                      # can't be checked: warning
+    ([30, 10, 20], [10, 20, 30], False, None),            # any order, matched by number
+    ([30, 10, 20], [10, 20, 30], True, "ascending zone order"),  # renumbered: lookup ignored by 1.x
+    ([10, 20, 30], [10, 20, 30], True, None),
+    ([10, 20, 30], [10, 40], False, "not in the skims"),
+])
+def test_input_checks_find_zones_where_1x_would_look(lookup, zones, recoded, expect):
+    from asim_core.inputs.checks import _Checker
+
+    p = _Problems()
+    _Checker._check_skim_zones(p, Path("skims.omx"), (3, 3),
+                               None if lookup is None else np.array(lookup), np.sort(np.array(zones)), recoded)
+    if expect is None:
+        assert p.found == []
+    else:
+        assert len(p.found) == 1 and expect in p.found[0][1], p.found

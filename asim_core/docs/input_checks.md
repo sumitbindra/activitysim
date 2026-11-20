@@ -204,6 +204,18 @@ infinite and negative values; the land use zones must match the skims'
 zones. For the examples this takes 0.2–0.5 s. A region's full skims take
 longer, which is why the report is kept per version of the inputs.
 
+**Which skim row each zone reads** follows 1.x's rules, and is checked:
+
+| Zones | OMX file has a zone lookup | Zone → skim row | Checked |
+|---|---|---|---|
+| original numbers (MWCOG, ARC) | yes, in any order | matched by number through the lookup | every land use zone is in the lookup (error) |
+| original numbers | no | zone z is row z, counting from 1 | every zone is within 1 to the number of skim zones (error) |
+| renumbered from 0 (MTC) | yes | the i-th smallest zone is row i; 1.x doesn't use the lookup | the lookup lists the zones in ascending order (error: 1.x findings, #13) |
+| renumbered from 0 | no | the i-th smallest zone is row i | can't be checked; zone numbers with gaps give a warning |
+
+Lookups never see zone numbers: they get rows worked out from these rules,
+and the number of zones from the skims themselves.
+
 **Reports are kept per version of the inputs:** the input files' paths,
 sizes and modification times, the definitions, the size terms, the skim
 files and this code. Unchanged inputs give the saved report back at once.

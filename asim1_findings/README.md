@@ -33,6 +33,7 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 10 | Bad input data runs silently: negative employment changed results across the model with no error or warning | Data checking | Reproduced (MTC) | Not reported |
 | 11 | Numbers in CSV files are read inexactly (pandas' default parser): up to 1e-12 relative error, in inputs and in coefficients | Accuracy | Measured (all three examples) | Not reported |
 | 12 | ARC's destination terms for CBD and urban area read the person's home zone, not the destination, so they never change a choice | Model specification | Reproduced (ARC, all households) | Not reported |
+| 13 | With zones renumbered, the skims' zone lookup is not used or checked: a lookup in another order gives every zone another zone's skims, silently | Zone numbering | From reading the code | Not reported |
 
 ---
 
@@ -458,6 +459,44 @@ within each tour).
 measure). In 1.x: warn when an interaction term doesn't vary across a
 chooser's alternatives, and/or make the alternatives' columns and the
 chooser's columns distinguishable in formulas.
+
+---
+
+## 13. With zones renumbered, the skims' zone lookup is not used or checked
+
+**Evidence: from reading the code** (not reproduced; none of the three
+examples has a lookup out of order).
+
+**What happens.** With `recode_pipeline_columns: True` and
+`recode_columns: {zone_id: zero-based}` (as in MTC), 1.x renumbers the land
+use zones 0, 1, 2, ... in ascending order of their original numbers
+(`core/input.py`) and sets `offset_preprocessing`. The skim lookup then uses
+a fixed offset of 0 (`core/los.py`, `_override_offset_int = 0`), and
+`OffsetMapper.set_offset_int` drops any zone list read from the OMX file's
+lookup (`core/skim_dictionary.py`). So zone i is always read from skim row
+i. If the OMX file's lookup lists zones in another order (or with zones
+missing), every zone reads another zone's skims, with no error: the only
+check compares the number of zones (`los.py`, and only for `land_use_taz`).
+
+Without renumbering the lookup is used, in any order. Without renumbering
+and without a lookup, zone z is read from row z − 1 ("assume this is a
+one-based skim map").
+
+**Found while** checking that asim_core finds skim rows the way 1.x does
+(asim_core had the no-lookup case off by one; fixed). asim_core now checks
+before the run: with renumbered zones and a lookup, the lookup must list
+the zones in ascending order (error otherwise, naming the zones affected);
+without a lookup, original zone numbers must be within 1 to the number of
+skim zones (error), and renumbered zones with gaps get a warning that the
+row order can't be checked.
+
+**To reproduce:** reorder the rows and columns of a small example's skims
+and their lookup consistently (the same skims, listed in another order),
+then run with renumbering on: results change.
+
+**Suggested change.** When renumbering, map the original zone numbers
+through the OMX lookup if there is one (or at least check that it matches
+the renumbering, and stop if not).
 
 ---
 
