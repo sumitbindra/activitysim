@@ -30,7 +30,9 @@ asim_core already has.
   change:** its origin column is now a setting too (MWCOG's logsums start
   from `TAZ`). The model's interface otherwise held: bind to some chooser
   columns and an origin and destination, then evaluate rows.
-- Profiles: being measured.
+- **About 5 to 11 times faster than 1.x, with less memory.** All ARC
+  households, in a fresh process: 1.9 s and +340 MB against 10.6 s and
+  +650 MB; MTC: 0.37 s against 4.2 s (legacy) and 3.2 s (sharrow).
 
 ## How 1.x does it, step by step
 
@@ -88,7 +90,31 @@ but sampled different zones):
 
 ## Profiles
 
-(Fresh-process profiles: being measured.)
+Each step run in a fresh process, starting from 1.x's saved state before
+it, the same way for every engine (`harness/profile_step.py`). Not timed:
+loading the saved state, getting skims ready, and 1.x's one-time Numba
+compiles (its sampler is compiled before timing; Numba's compile events
+confirm nothing compiles inside the timed step). Wall time is the median;
+extra memory is the step's peak above where it started.
+
+**MTC, 4,521 tours, 5 runs each:**
+
+| | Wall time (median, min–max) | Extra memory | Same step in the full 1.x run |
+|---|---|---|---|
+| asim_core | 0.37 s (0.33–0.39) | 81 MB | |
+| 1.x, legacy | 4.22 s (4.08–4.41) | 115 MB | 5.67 s |
+| 1.x, sharrow | 3.17 s (2.89–95.7) | 74 MB | 2.44 s |
+
+One of the five sharrow runs took 95.7 s and +1,061 MB: sharrow compiled
+code it didn't find in its cache during that run. The median is the
+fairer figure.
+
+**ARC, 3 runs each:**
+
+| | 4,000 households (5,173 tours) | All households (30,851 tours) |
+|---|---|---|
+| asim_core | 0.38 s (0.33–0.41), +80 MB | 1.90 s (1.80–1.98), +340 MB |
+| 1.x, legacy | 4.06 s (3.78–4.11), +135 MB | 10.61 s (10.27–10.81), +650 MB |
 
 ## Not supported yet
 
