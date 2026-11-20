@@ -36,6 +36,10 @@ ARC result identical, halves peak memory, and lets 1.x run all ARC
 households on a 15 GB machine. Swappable
 pieces and the first experiments: [docs/experiments.md](docs/experiments.md).
 
+Problems and possible improvements found in 1.x itself are kept separately,
+written so they can be reported to the ActivitySim project:
+[../asim1_findings/README.md](../asim1_findings/README.md).
+
 ## Rules
 
 * **Dependencies:** only widely used libraries maintained by large
