@@ -161,7 +161,9 @@ def tour_scheduling_component(
         if "SPEC" in alts_pre:  # one for every segment
             alts_specs = {seg: _load_preprocessor(configs_dirs, alts_pre, constants, top, step, "alts")[0]
                           for seg in segments}
-        else:
+        elif settings.get("LOGSUM_SETTINGS"):
+            # 1.x looks per-segment preprocessors up by the logsum purpose, so
+            # without logsums it skips them (asim1_findings, smaller items)
             alts_specs = {seg: _load_preprocessor(configs_dirs, s, constants, top, step, f"alts_{seg}")[0]
                           for seg, s in alts_pre.items()}
 

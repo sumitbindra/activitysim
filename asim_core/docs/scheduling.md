@@ -141,8 +141,10 @@ Non-mandatory tour scheduling, the biggest memory user above, is now
 ported ([non_mandatory_scheduling.md](non_mandatory_scheduling.md)). It
 matches 1.x exactly on all ARC households, and processing each round in
 batches brings the step from +5.2 GB to +144 MB (151 s to 37.5 s).
-Mandatory tour scheduling needs mode choice logsums inside scheduling,
-which come next, with the "compute each distinct logsum once" rule.
+Mandatory tour scheduling is ported too
+([mandatory_scheduling.md](mandatory_scheduling.md)), with the "compute
+each distinct logsum once" rule as a swappable piece: on all ARC households
+19.2 s and +287 MB, against 89 s and +4.1 GB for 1.x with the patch above.
 
 ## Reproducing
 

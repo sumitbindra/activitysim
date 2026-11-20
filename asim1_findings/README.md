@@ -29,7 +29,7 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 6 | Numba functions are compiled again in every run | Speed | Measured | Not reported |
 | 7 | Time-of-day skim lookups are a third of tour mode choice's time | Speed | Measured | Not reported |
 | 8 | Tours of a type with no spec segment are silently left unscheduled | Bug (configuration) | From reading the code | Not reported |
-| 9 | Smaller items | Various | From reading the code | Not reported |
+| 9 | Smaller items (4) | Various | From reading the code, one measured | Not reported |
 
 ---
 
@@ -114,6 +114,12 @@ the chooser columns used by the mode choice spec and preprocessor, and
 compute one logsum per distinct combination. Details:
 `asim_core/docs/scheduling.md`.
 
+**Also shown in asim_core**, which implements this rule generally (it
+knows which columns every formula reads): on ARC at 4,000 households it
+computes 81,759 logsums instead of 1,245,334, and all 6,360,778 (tour,
+option) logsums are bit-for-bit identical to 1.x's
+(`asim_core/docs/mandatory_scheduling.md`).
+
 ---
 
 ## 3. Results depend on how many rows are evaluated at once
@@ -182,10 +188,14 @@ Measured over 100,000 random seeds: **in 51.4% of rows the choice draw is
 a uniform number the wait-time draws already used** (theory:
 1 − (π/4)³ ≈ 51.6%).
 
+**Also in mandatory tour scheduling.** The same preprocessor runs inside
+the scheduling logsums (MTC, MWCOG), once per tour, before the scheduling
+choice draw; that draw then has the same overlap.
+
 **Effect today:** none in these examples, because their wait-time
 standard deviations are all zero, so the wait times don't depend on the
 draws. In a model with non-zero standard deviations, a tour's wait time and
-its mode choice draw would be correlated.
+its mode choice draw (or its scheduling draw) would be correlated.
 
 **Suggested change.** Move the stream position by the number of uniform
 numbers actually used; or make each normal from exactly one uniform
@@ -282,6 +292,12 @@ From reading the code; low priority.
 - **Tour mode choice re-reads its spec, coefficients and coefficient
   template for every segment** (`run_tour_mode_choice_simulate`). Measured
   at about 2% of the step on MTC.
+- **A per-segment `ALTS_PREPROCESSOR` is skipped when there are no
+  logsums.** Tour scheduling looks it up by the logsum purpose
+  (`_schedule_tours`, marked "FIXME this is not always right" in the
+  code), which is empty without `LOGSUM_SETTINGS`, so the preprocessor
+  silently doesn't run. The examples all have logsums, so it doesn't
+  affect them.
 
 ---
 

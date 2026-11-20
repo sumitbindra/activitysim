@@ -16,18 +16,20 @@ picked by a setting and tested with the experiment harness. Speed-ups come
 from those experiments. Sharrow is not used; 1.x with sharrow is only a
 baseline in the reports.
 
-Status: four components are ported and match 1.x exactly:
+Status: five components are ported and match 1.x exactly:
 `compute_accessibility` (with skims), `auto_ownership` (multinomial or nested
-logit), `non_mandatory_tour_scheduling` (timetables, rounds of tours, one
-utility per tour × departure-return option) and `tour_mode_choice_simulate`
-(nested logit, purpose segments, preprocessor, time-of-day skims). They were
-checked on three regions' example models: MTC, MWCOG and ARC (all 24,061
-households). Every other step can be **replayed** from a 1.x run, so the
-model runs end to end today. Results: [docs/milestone1.md](docs/milestone1.md),
+logit), `mandatory_tour_scheduling` and `non_mandatory_tour_scheduling`
+(timetables, rounds of tours, one utility per tour × departure-return
+option, mode choice logsums computed once per distinct input) and
+`tour_mode_choice_simulate` (nested logit, purpose segments, preprocessor,
+time-of-day skims). They were checked on three regions' example models:
+MTC, MWCOG and ARC (all 24,061 households). Every other step can be
+**replayed** from a 1.x run, so the model runs end to end today. Results: [docs/milestone1.md](docs/milestone1.md),
 [docs/skims_and_accessibility.md](docs/skims_and_accessibility.md),
 [docs/mwcog.md](docs/mwcog.md), [docs/arc.md](docs/arc.md),
 [docs/tour_mode_choice.md](docs/tour_mode_choice.md),
-[docs/non_mandatory_scheduling.md](docs/non_mandatory_scheduling.md).
+[docs/non_mandatory_scheduling.md](docs/non_mandatory_scheduling.md),
+[docs/mandatory_scheduling.md](docs/mandatory_scheduling.md).
 
 The harness can also test changes to 1.x itself
 ([docs/scheduling.md](docs/scheduling.md)): a run-time patch that computes
@@ -173,8 +175,7 @@ Simple choice models, multinomial or nested logit, need no code: build them with
 ## Not supported yet
 
 Annotation after a model, park-and-ride, sampling of alternatives (so no
-destination choice yet), mode choice logsums inside scheduling (needed by
-mandatory tour scheduling), Parquet skim files, two- and
+destination choice yet), Parquet skim files, two- and
 three-zone systems (MAZ, TAP), writing trip tables to OMX, starting a run
 from asim_core's own saved state, a command-line `run` for agency model
 loops, multiprocessing, estimation, and peak-memory measurement outside
