@@ -238,3 +238,25 @@ def test_components_must_declare_skims(omx, tmp_path):
         Runner([missing], tmp_path / "r3", skims=skims).run(["missing"], _store())
     with pytest.raises(StartupCheckError, match="no skim store"):
         Runner([ok], tmp_path / "r4").run(["ok"], _store())
+
+
+def test_skim_access_and_lookup_options_give_the_same_values(tmp_path):
+    """Every way of holding skims (memory-mapped, pages mapped up front, in memory) and of
+    looking them up (2-D indexing, 1-D gather) gives the reference's values, bit for bit."""
+    from asim_core.seams import Engine
+
+    rng = np.random.default_rng(1)
+    mats = {f"S{k}__{p}": rng.random((40, 40)).astype(np.float64) for k in range(5) for p in ("AM", "MD")}
+    path = tmp_path / "s.omx"
+    write_omx(path, mats)
+    store = import_omx(path, tmp_path / "cache")
+    o, d = rng.integers(0, 40, 5000), rng.integers(0, 40, 5000)
+    names = ["S1__AM", "S3__MD", "S4__AM"]
+    ref = {n: store[n][o, d] for n in names}
+    for access in ("memory_map", "prefault", "in_memory"):
+        for lookup in ("numpy", "flat_take"):
+            e = Engine({"skim_access": access, "skim_lookup": lookup})
+            held = e.skim_access(store, names)
+            for n in names:
+                assert np.array_equal(e.skim_lookup(held[n], o, d), ref[n]), (access, lookup, n)
+            assert np.array_equal(held.positions(np.arange(5)), store.positions(np.arange(5)))

@@ -183,7 +183,9 @@ class Runner:
                 raise StartupCheckError(f"{step}: {problem}")
             self._zones_checked = True
         engine = self.step_engines.get(step, self.engine)
-        ctx = StepContext(comp, store, needs, engine, self.tracer, self.base_seed, skims=self.skims)
+        # how the step holds its skims (swappable: memory-mapped, mapped up front, or in memory)
+        skims = None if self.skims is None else engine.skim_access(self.skims, needs.get(SKIMS, ()))
+        ctx = StepContext(comp, store, needs, engine, self.tracer, self.base_seed, skims=skims)
         outputs = comp.run(ctx) or {}
         # a step can make a new table (e.g. 1.x's workplace_modeled_size): it
         # returns the whole Table, which replaces any table of that name

@@ -1,0 +1,21 @@
+# Skim lookup experiments (docs/skim_experiments.md): how a step holds its
+# skims, and how values are looked up. All give exactly the reference's values.
+#
+#   python asim_core/harness/run_experiments.py --config asim_core/harness/experiments_skims.yaml \
+#       --step tour_mode_choice_simulate --example-dir <full MTC example> --asim1-out <1.x run> \
+#       --match-run <1.x run with numexpr off> --read-skim-cache true
+
+step: tour_mode_choice_simulate
+repeat: 3
+
+experiments:
+  reference: {}
+  prefault:
+    skim_access: prefault
+  in_memory:
+    skim_access: in_memory
+  flat_take:
+    skim_lookup: flat_take
+  prefault_flat_take:
+    skim_access: prefault
+    skim_lookup: flat_take

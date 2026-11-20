@@ -101,7 +101,7 @@ def match_check(comp, st: Asim1State, engine: Engine, base_seed: int, out: Path,
 
 
 def profile(step, label, engine_kind, configs, run_dir, seams, repeat, out: Path,
-            example: Path) -> pd.DataFrame:
+            example: Path, read_skim_cache: str = "settings") -> pd.DataFrame:
     rows_csv = out / "runs" / f"{label}.csv"
     rows_csv.parent.mkdir(parents=True, exist_ok=True)
     if rows_csv.exists():
@@ -114,6 +114,7 @@ def profile(step, label, engine_kind, configs, run_dir, seams, repeat, out: Path
             "--configs", *configs, "--asim1-out", str(run_dir),
             "--scratch", str(out / "scratch" / label), "--out", str(rows_csv),
             "--seams", json.dumps(seams),
+            "--read-skim-cache", read_skim_cache if engine_kind == "asim_core" else "settings",
         ]
         subprocess.run(cmd, check=True, capture_output=True)
     return pd.read_csv(rows_csv)
@@ -206,6 +207,12 @@ def main(argv=None) -> int:
     p.add_argument("--sharrow-configs", nargs="+", default=["configs_sh", "configs"])
     p.add_argument("--out", default=str(REPO / "asim_core/work/experiments"))
     p.add_argument("--repeat", type=int, default=None, help="override the config's repeat")
+    p.add_argument("--step", default=None, help="override the config's step")
+    p.add_argument("--match-run", default=None,
+                   help="1.x run to compare results with (default: --asim1-out); e.g. a run with "
+                        "numexpr off, which asim_core matches exactly on large zone systems")
+    p.add_argument("--read-skim-cache", choices=["settings", "true", "false"], default="settings",
+                   help="for asim_core: reuse an unchanged skim cache (preparing skims isn't timed)")
     args = p.parse_args(argv)
 
     if args.list:
@@ -215,16 +222,17 @@ def main(argv=None) -> int:
         return 0
 
     cfg = yaml.safe_load(open(args.config))
-    step = cfg["step"]
+    step = args.step or cfg["step"]
     repeat = args.repeat or int(cfg.get("repeat", 5))
     example = Path(args.example_dir).resolve()
     configs = [example / c for c in args.configs]
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
-    st = Asim1State(args.asim1_out)
+    st = Asim1State(args.match_run or args.asim1_out)
     base_seed = int(load_top_settings(configs).get("rng_base_seed") or 0)
     comp = {c.name: c for c in build_components(configs)}[step]
-    skims = skim_store(example, configs)
+    rsc = {"settings": None, "true": True, "false": False}[args.read_skim_cache]
+    skims = skim_store(example, configs, read_skim_cache=rsc)
 
     rows = []
     for name, seams in (cfg.get("experiments") or {"reference": {}}).items():
@@ -235,7 +243,7 @@ def main(argv=None) -> int:
                "agreement": engine.agreement}
         row.update(match_check(comp, st, engine, base_seed, out / "match" / name, skims))
         runs = profile(step, name, "asim_core", args.configs, Path(args.asim1_out),
-                       engine.changed, repeat, out, example)
+                       engine.changed, repeat, out, example, args.read_skim_cache)
         row.update(summarize_runs(runs))
         rows.append(row)
 
@@ -254,7 +262,7 @@ def main(argv=None) -> int:
     exp = pd.DataFrame(rows)
     exp.to_csv(out / "experiments.csv", index=False)
     print("seam benchmarks", flush=True)
-    bench = seam_benchmarks(cfg.get("seam_benchmarks") or {})
+    bench = seam_benchmarks(cfg["seam_benchmarks"]) if cfg.get("seam_benchmarks") else pd.DataFrame()
     bench.to_csv(out / "seam_benchmarks.csv", index=False)
     report = write_report(out, step, exp, bench)
     print(report.read_text())
