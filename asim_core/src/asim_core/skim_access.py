@@ -13,8 +13,8 @@ Alternatives, all giving exactly the same values:
 * ``prefault``: before the step, ask the operating system to map every page
   of the skims the step declares, in one call per skim (``madvise`` with
   ``MADV_POPULATE_READ``), instead of one page fault at a time.
-* ``in_memory``: before the step, copy the skims it declares into memory
-  (as 1.x holds all of its skims), and look up from the copies.
+* ``in_memory``: before the step, read the skims it declares from the file
+  into memory (as 1.x holds all of its skims), and look up from the copies.
 
 The time this takes is part of the step's time.
 """
@@ -83,13 +83,28 @@ def _merge(ranges):
     return out
 
 
+def _read_copy(store, name):
+    """One skim read from the cache file into the process's own memory (not through the map,
+    so the process doesn't also hold the mapped pages)."""
+    from .skims import DATA
+
+    data = store._data
+    path = getattr(store, "path", None)
+    if getattr(data, "_mmap", None) is None or path is None or not (path / DATA).exists():
+        return np.array(store[name])
+    per_skim = data.shape[1] * data.shape[2]
+    offset = data.offset + store._index[name] * per_skim * data.dtype.itemsize
+    out = np.fromfile(path / DATA, dtype=data.dtype, count=per_skim, offset=offset)
+    return out.reshape(data.shape[1:])
+
+
 class InMemorySkims:
     """The step's skims copied into memory; anything else is asked of the store."""
 
     def __init__(self, store, names: Iterable[str]):
         self._store = store
         wanted = [n for n in sorted(set(names)) if n in store]
-        self._copies = {n: np.array(store[n]) for n in wanted}
+        self._copies = {n: _read_copy(store, n) for n in wanted}
 
     def __getitem__(self, name: str) -> np.ndarray:
         if name in self._copies:

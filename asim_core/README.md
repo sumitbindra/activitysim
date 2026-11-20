@@ -57,6 +57,14 @@ ARC result identical, halves peak memory, and lets 1.x run all ARC
 households on a 15 GB machine. Swappable
 pieces and the first experiments: [docs/experiments.md](docs/experiments.md).
 
+On the **full MTC zone system** (1,475 zones, 826 skims, 7.2 GB; 10,000
+households) asim_core matches 1.x bit for bit once 1.x's numexpr switch is
+off, and its 8 steps take 18 s in one process against 71 s in 1.x
+([docs/mtc_full.md](docs/mtc_full.md)). The first experiment there, on how
+steps hold and look up skims, found that reading skim pages, not the
+lookups, is most of the cost
+([docs/skim_experiments.md](docs/skim_experiments.md)).
+
 Problems and possible improvements found in 1.x itself are kept separately,
 written so they can be reported to the ActivitySim project:
 [../asim1_findings/README.md](../asim1_findings/README.md).
