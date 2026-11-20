@@ -42,6 +42,36 @@ def _with_read_skim_cache(configs, scratch: Path, value: bool):
     return [overlay] + list(configs)
 
 
+def _warm_up_timetable():
+    """
+    1.x's timetable functions (used by every scheduling step) are compiled by
+    Numba on first use. In a full run that happens in the first scheduling
+    step; compile them here, with the argument types scheduling uses.
+    """
+    import numpy as np
+    import pandas as pd
+    from activitysim.core import timetable as tt1
+
+    alts = pd.DataFrame({"start": [5, 5], "end": [5, 6]})
+    alts["duration"] = alts.end - alts.start
+    alts = alts.astype(np.int8)
+    windows = pd.DataFrame(0, index=pd.Index([1, 2], name="person_id"),
+                           columns=[str(p) for p in range(4, 8)], dtype=np.int8)
+    t = tt1.TimeTable(windows, alts, "person_windows")
+    ids = pd.Series(np.array([1, 2], dtype=np.int64))
+    periods = pd.Series(np.array([5, 6], dtype=np.int8))
+    # a timetable read from a saved run is column-major; one built in memory may not be
+    for layout in (np.ascontiguousarray, np.asfortranarray):
+        t.windows = layout(t.windows)
+        t.tour_available(ids, np.array([0, 1]))
+        t.adjacent_window_before(ids, periods)
+        t.adjacent_window_after(ids, periods)
+        t.previous_tour_ends(ids, periods)
+        t.previous_tour_begins(ids, periods)
+        t.remaining_periods_available(ids, periods, periods)
+        t.max_time_block_available(ids)
+
+
 def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler, read_skim_cache=None):
     from activitysim import abm  # noqa: F401
     from activitysim.core import workflow
@@ -73,6 +103,7 @@ def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler, rea
         choice_maker(probs, rn)
         choice_maker(np.asfortranarray(probs), rn)
         _accumulate_accessibility(np.zeros(4, dtype=dtype), 2, 2)
+    _warm_up_timetable()
 
     original = Runner.by_name
 
