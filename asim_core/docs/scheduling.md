@@ -25,7 +25,12 @@ itself, tested with the harness: same results, much less time and memory.
 - The change is applied by the harness at run time
   (`run_asim1.py --patch logsum_dedupe`). 1.x's own source is unchanged.
 
-_A patched 1.x run on all 24,061 ARC households (unpatched, it ran out of memory on this 15 GB machine) was still in progress when this was written._
+- **With the patch, 1.x runs all 24,061 ARC households on this 15 GB
+  machine:** all 34 steps in 347 seconds, with a peak of 5.8 GB. Without
+  it, the run was stopped for running out of memory at about 14 GB in
+  mandatory tour scheduling. There's no unpatched all-households run to
+  compare with, so the evidence that results are unchanged is the
+  4,000-household comparison above.
 
 ## Where the time and memory go
 
@@ -100,6 +105,20 @@ logsums, and choices, would change.
 | Peak memory | 2,929 MB | 1,480 MB |
 | Mandatory tour scheduling | 44.8 s, +2,322 MB | 13.0 s, +660 MB |
 | Non-mandatory tour scheduling (no logsums on ARC) | 16.3 s, +731 MB | 15.9 s, +737 MB |
+
+## All ARC households, with the patch
+
+| Step | Time (s) | Extra memory (MB) | Peak memory (MB) |
+|---|---|---|---|
+| non_mandatory_tour_scheduling | 121.4 | 5,029 | 5,846 |
+| mandatory_tour_scheduling | 74.5 | 3,829 | 4,602 |
+| trip_scheduling_choice | 6.0 | 1,601 | 2,681 |
+| workplace_location | 13.3 | 945 | 1,707 |
+
+Whole run: 347 seconds, peak 5.8 GB. The biggest memory user is now
+non-mandatory tour scheduling, which doesn't use logsums on ARC: its memory
+is the tour × option table itself. That's the clearest target for
+asim_core's batch-by-batch design.
 
 ## What this means for asim_core
 

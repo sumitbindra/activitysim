@@ -23,7 +23,13 @@ regions' example models: MTC, MWCOG (all 29,972 households) and ARC (all
 1.x run, so the model runs end to end today. Results:
 [docs/milestone1.md](docs/milestone1.md),
 [docs/skims_and_accessibility.md](docs/skims_and_accessibility.md),
-[docs/mwcog.md](docs/mwcog.md), [docs/arc.md](docs/arc.md). Swappable
+[docs/mwcog.md](docs/mwcog.md), [docs/arc.md](docs/arc.md).
+
+The harness can also test changes to 1.x itself
+([docs/scheduling.md](docs/scheduling.md)): a run-time patch that computes
+tour scheduling's mode choice logsums once per distinct input leaves every
+ARC result identical, halves peak memory, and lets 1.x run all ARC
+households on a 15 GB machine. Swappable
 pieces and the first experiments: [docs/experiments.md](docs/experiments.md).
 
 ## Rules
