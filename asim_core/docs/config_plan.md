@@ -27,43 +27,41 @@ without losing the ability to compare every result with ActivitySim 1.x.
 ## Decisions
 
 - **One configuration for everyone**, no separate layer for planners. Simpler.
-- **Pydantic for definitions** (model settings, table schemas). **PyArrow
-  for reading data**, with types from the schemas. **NumPy for checking
+- **Pydantic for definitions** (model settings, table definitions). **PyArrow
+  for reading data**, with types from the definitions. **NumPy for checking
   data**, a column at a time, never row by row. No new dependencies.
   Measured: 1M persons read in 0.06 s (pandas 0.25 s), checked in 0.02 s;
   Pydantic row by row would take 2.7 s per million rows.
 - **CSV tables stay** (term tables, coefficients), editable in Excel.
 - **Today's files keep loading**, so the exact comparison with 1.x stays.
 
-## Phase 1: table schemas and input checks
+## Part 1: table definitions and checks before the run (done)
 
-1. **Table schemas** (Pydantic), one per standard table (households,
-   persons, zones, tours, ...): standard column names, types, units,
-   descriptions, rules. Names and types seeded from the column lists 1.x's
-   runs already write (`data_dict.csv`).
-2. **Region input mapping** (YAML, checked): which file and raw column
-   provides each standard column (`TAZ` / `maz` / `HHID`), plus region-only
-   columns. Same idea as 1.x's `rename_columns`, in one place.
-3. **Reader**: PyArrow with the schema's types; CSV or Parquet.
-4. **Check before the first step**:
-   - column rules: ranges, allowed values, missing values, unique IDs;
-   - references: every `home_zone_id` is a zone, every person's household exists;
-   - cross-table: household size equals persons; zone employment roughly equals its categories;
-   - checks worked out from the configured models: size terms not negative
-     and positive somewhere per segment, `log()` inputs positive, skims used
-     without missing or negative values;
-   - errors stop the run; warnings are reported (e.g. a park-and-ride lot
-     with capacity 0);
-   - one report: every problem, counts, first examples, and which steps use
-     the column;
-   - checked once per version of the inputs (like the skim cache).
+Results: [input_checks.md](input_checks.md).
 
-**Done when:** a set of injected errors (negative employment, duplicate IDs,
-missing zone references, household size mismatch, missing skim values, zero
-capacity) is caught on all three regions; the clean example data passes
-with no false alarms; all ARC households are checked in seconds.
+1. **Table definitions** (YAML, checked by Pydantic): the standard
+   columns in asim_core, the region's own columns in its
+   `input_tables.yaml`: types, units, descriptions, rules.
+2. **Which file holds each table, and the renames:** read from 1.x's
+   `input_table_list` in settings.yaml, unchanged.
+3. **Reader**: PyArrow; CSV, compressed CSV or Parquet. Same tables as
+   1.x's reader.
+4. **Checks before the first step**: types, ranges, allowed values,
+   missing values, unique IDs; zone and household references; household
+   size against persons; sums; size terms and skims worked out from the
+   model files. Errors stop the run, warnings don't; one report with
+   counts, first examples, and the config files that use each column; a
+   report kept per version of the inputs.
 
-## Phase 2: model file format
+**Done:** seven kinds of injected error caught on all three regions;
+clean data passes with no false alarms; 6.7 million persons read and
+checked in 2.1 s.
+
+Left for later: `log()` inputs worked out from formulas (needs Part 2),
+a "same as the household's" rule, and tables none of the examples have
+(park-and-ride lots, MAZ/TAP).
+
+## Part 2: model file format, and a converter
 
 1. **One YAML file per model**, checked by its Pydantic class: kind of
    model, choosers, alternatives, term table, coefficients, and every option
@@ -75,32 +73,26 @@ with no false alarms; all ARC households are checked in seconds.
 4. **One formula language**: table-qualified names (`person.age`,
    `dest_zone.TOTEMP`), spreadsheet-like functions (`where`, `clip`, `log`,
    `min`, `max`), `and` / `or` / `not`, skims as `skim.SOV_TIME[od, out_period]`;
-   NumPy number rules, stated once; names checked against the table schemas
-   when the model loads ("did you mean ...?").
+   NumPy number rules, stated once; names checked against the table
+   definitions when the model loads ("did you mean ...?").
 5. **Derived columns** declared per table, replacing preprocessors; no
    tests of which columns exist. **Random draws** declared, each with its
    own named stream.
 6. **Regions inherit and override** a base model instead of copying it.
+7. **A converter** from today's files to the new format, applied to all
+   six ported steps; today's reader kept for the 1.x comparison.
 
-**Done when:** auto ownership and tour mode choice are converted (the
-hardest model checks the format); each gives the same results as its
-original files (exact wherever the old dialects' number rules agree, listed
-differences elsewhere); every behaviour 1.x hides is an explicit option.
-
-## Phase 3: converter and the rest
-
-- A converter from today's files to the new format, for all ported steps;
-  new ports written in the new format, with today's reader kept for the 1.x
-  comparison.
-- A generated page listing every variable and model: meaning, unit, source,
-  and which models use it.
+**Done when:** the six ported steps are converted, and each gives the same
+results as its original files (exact wherever the old dialects' number
+rules agree, listed differences elsewhere); every behaviour 1.x hides is
+an explicit option.
 
 ## What changes for people using the model
 
 | | Today | New |
 |---|---|---|
-| Column names differ by region | `rename_columns` in settings.yaml | the region's input mapping (same idea, checked) |
-| What a variable means | nowhere | the table schemas, and a generated page |
+| Column names differ by region | `rename_columns` in settings.yaml | the same `rename_columns`, with every column defined |
+| What a variable means | nowhere | the table definitions (`input_tables.yaml`) |
 | Bad input data | runs silently, or crashes far from the cause | stopped before the first step, with a report |
 | Formulas | two dialects with different rules | one, with stated rules |
 | Preprocessors | column-existence tests, hidden random draws | declared derived columns and random streams |

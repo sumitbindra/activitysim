@@ -45,6 +45,7 @@ import pandas as pd  # noqa: E402
 
 from asim_core.asim1 import Asim1State  # noqa: E402
 from asim_core.compare import compare_column, value_shares, write_comparisons  # noqa: E402
+from asim_core.inputs import check_inputs  # noqa: E402
 from asim_core.components import (  # noqa: E402
     auto_ownership,
     compute_accessibility,
@@ -388,6 +389,15 @@ def main(argv=None) -> int:
     base_seed = int(top.get("rng_base_seed") or 0)
     components = build_components(configs)
 
+    # the inputs are checked before anything runs; errors stop here
+    ours = REPO / "asim_core/configs" / example.name
+    inputs = check_inputs(([ours] if ours.is_dir() else []) + configs, [example / "data"],
+                          cache_dir=REPO / "asim_core/work" / example.name / "input_checks")
+    print(inputs.summary())
+    if not inputs.ok:
+        print(inputs.text(show_undefined=False))
+        return 2
+
     skims = skim_store(example, configs)
     trace_ids = {"households": [args.trace_hh_id]} if args.trace_hh_id is not None else None
 
@@ -434,6 +444,7 @@ def main(argv=None) -> int:
         "cpu_count": os.cpu_count(),
         "not_ported": dict(NOT_BUILT),
         "profiles": args.profiles,
+        "input_checks": inputs.summary(),
     }
     (out / "run_info.json").write_text(json.dumps(info, indent=2))
     summary = write_summary(out, info, step_cmp, util_rows, e2e_cmp, e2e_report, prof_cmp, full_prof, shares)

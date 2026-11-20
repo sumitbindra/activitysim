@@ -29,8 +29,9 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 6 | Numba functions are compiled again in every run | Speed | Measured | Not reported |
 | 7 | Time-of-day skim lookups are a third of tour mode choice's time | Speed | Measured | Not reported |
 | 8 | Tours of a type with no spec segment are silently left unscheduled | Bug (configuration) | From reading the code | Not reported |
-| 9 | Smaller items (4) | Various | From reading the code, one measured | Not reported |
+| 9 | Smaller items (5) | Various | From reading the code, one measured | Not reported |
 | 10 | Bad input data runs silently: negative employment changed results across the model with no error or warning | Data checking | Reproduced (MTC) | Not reported |
+| 11 | Numbers in CSV files are read inexactly (pandas' default parser): up to 1e-12 relative error, in inputs and in coefficients | Accuracy | Measured (all three examples) | Not reported |
 
 ---
 
@@ -299,6 +300,12 @@ From reading the code; low priority.
   code), which is empty without `LOGSUM_SETTINGS`, so the preprocessor
   silently doesn't run. The examples all have logsums, so it doesn't
   affect them.
+- **A quoted comment line in ARC's `destination_choice_size_terms.csv`
+  is read as a size term row.** The line starts with `"#ctramp ...`, in
+  quotes, so `read_csv(comment="#")` doesn't skip it: the table gets a
+  row with an empty segment and all-zero terms. Harmless today (no model
+  selects it), but it would surprise a check that every segment has a
+  positive size.
 
 ---
 
@@ -333,6 +340,48 @@ employment and sizes, valid zone references, unique IDs, household size
 matching persons. Also checks derived from how models use columns (size
 terms can't be negative, log inputs must be positive), all reported before
 the first step.
+
+Measured since: asim_core's column-at-a-time checks (NumPy) read and
+check 2.4 million households and 6.7 million persons in 2.1 s and 2.8 GB
+at peak; reading the same files with pandas, as 1.x does, takes 8.2 s and
+4.0 GB without any checks (`asim_core/harness/bench_input_checks.py`).
+So checks by default need not slow a run down.
+
+---
+
+## 11. Numbers in CSV files are read inexactly
+
+**Evidence: measured** (all three examples; inputs and configs).
+
+**What happens.** 1.x reads CSV files with `pandas.read_csv` and its
+default float parser, which is fast but not exact: it keeps about 16
+significant digits and doesn't round the last one correctly. Reading
+with `float_precision="round_trip"` gives the closest float to the text
+(the same value as Python's `float()` and PyArrow).
+
+| Example | File | Numbers | Read differently | Largest difference |
+|---|---|---|---|---|
+| MTC | land_use.csv | 250 | 22 | 1 unit in the last place |
+| MTC | config CSVs (9 files) | 31,377 | 29 | 1 unit in the last place |
+| MWCOG | land use | 265 | 9 | 6 units in the last place |
+| MWCOG | config CSVs (4 files) | 181,687 | 9,488 | 7,214 units in the last place (relative 1e-12) |
+| ARC | households.csv (`hhincAdj`) | 24,061 | 364 | 1 unit in the last place |
+
+For example, MWCOG's `trip_scheduling_probs_purpose_stops.csv` has
+`0.00010113064033479776`, read as `0.0001011306403347`. The MWCOG
+files affected include `tour_mode_choice_coeffs.csv` (42 coefficients)
+and `trip_mode_choice_coefficients.csv` (34).
+
+The differences are tiny, but they mean 1.x's results depend on which
+CSV parser reads the files, and any other tool (PyArrow, Polars, a
+database) reading the same inputs starts from slightly different numbers.
+
+**To reproduce:** compare `pd.read_csv(f)` with
+`pd.read_csv(f, float_precision="round_trip")` column by column.
+
+**Suggested change.** Pass `float_precision="round_trip"` wherever 1.x
+reads CSV (inputs, specs, coefficients, probability tables). Results
+would change in the last bits once, on adoption.
 
 ---
 

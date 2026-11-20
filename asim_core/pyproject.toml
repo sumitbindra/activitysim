@@ -26,3 +26,6 @@ omx = ["tables >= 3.9"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+asim_core = ["inputs/*.yaml"]

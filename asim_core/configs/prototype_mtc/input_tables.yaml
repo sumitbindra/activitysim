@@ -1,0 +1,81 @@
+# MTC example: input columns beyond asim_core's standard tables.
+# Column names are as the models see them, after settings.yaml's renames.
+
+tables:
+  households:
+    columns:
+      income: {type: int64, unit: dollars per year, description: Household income.}
+      HHT:
+        type: int64
+        description: >-
+          Household type: 0 none (group quarters), 1 married couple, 2 male
+          householder no wife, 3 female householder no husband, 4 to 7 non-family
+          (male alone, male not alone, female alone, female not alone).
+        values: [0, 1, 2, 3, 4, 5, 6, 7]
+      auto_ownership:
+        type: int64
+        unit: vehicles
+        description: Vehicles in the input; the auto ownership model replaces it.
+        min: 0
+      num_workers: {type: int64, unit: persons, description: Workers in the household., min: 0}
+
+  persons:
+    columns:
+      age: {type: int64, unit: years, min: 0, max: 120, warn_above: 100}
+      PNUM: {type: int64, description: Person number within the household (1 is the head)., min: 1}
+      sex: {type: int64, description: "1 male, 2 female.", values: [1, 2]}
+      pemploy:
+        type: int64
+        description: "Employment: 1 full-time, 2 part-time, 3 not employed, 4 under 16."
+        values: [1, 2, 3, 4]
+      pstudent:
+        type: int64
+        description: "Student status: 1 grade or high school, 2 college or university, 3 not a student."
+        values: [1, 2, 3]
+      ptype:
+        type: int64
+        description: >-
+          Person type: 1 full-time worker, 2 part-time worker, 3 university student,
+          4 non-working adult, 5 retired, 6 driving-age student, 7 non-driving
+          student, 8 preschool child.
+        values: [1, 2, 3, 4, 5, 6, 7, 8]
+
+  land_use:
+    columns:
+      DISTRICT: {type: int64, description: District., min: 1}
+      SD: {type: int64, description: Superdistrict., min: 1}
+      county_id:
+        type: int64
+        description: >-
+          County: 1 San Francisco, 2 San Mateo, 3 Santa Clara, 4 Alameda,
+          5 Contra Costa, 6 Solano, 7 Napa, 8 Sonoma, 9 Marin.
+        values: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+      TOTHH: {type: int64, unit: households, description: Total households., min: 0}
+      TOTPOP: {type: int64, unit: persons, description: Total population., min: 0}
+      TOTACRE: {type: float64, unit: acres, description: Total area., min: 0}
+      RESACRE: {type: float64, unit: acres, description: Residential area., min: 0}
+      CIACRE: {type: float64, unit: acres, description: Commercial and industrial area., min: 0}
+      TOTEMP:
+        type: int64
+        unit: jobs
+        description: Total employment.
+        min: 0
+        sum_of: [RETEMPN, FPSEMPN, HEREMPN, OTHEMPN, AGREMPN, MWTEMPN]
+      RETEMPN: {type: int64, unit: jobs, description: Retail employment., min: 0}
+      FPSEMPN: {type: int64, unit: jobs, description: Financial and professional services employment., min: 0}
+      HEREMPN: {type: int64, unit: jobs, description: "Health, education and recreation employment.", min: 0}
+      OTHEMPN: {type: int64, unit: jobs, description: Other employment., min: 0}
+      AGREMPN: {type: int64, unit: jobs, description: Agriculture and natural resources employment., min: 0}
+      MWTEMPN: {type: int64, unit: jobs, description: "Manufacturing, wholesale and transportation employment.", min: 0}
+      AGE0519: {type: int64, unit: persons, description: Population aged 5 to 19., min: 0}
+      PRKCST: {type: float64, unit: cents per hour, description: Long-term parking cost., min: 0}
+      OPRKCST: {type: float64, unit: cents per hour, description: Short-term parking cost., min: 0}
+      area_type:
+        type: int64
+        description: "Area type: 0 regional core, 1 CBD, 2 urban business, 3 urban, 4 suburban, 5 rural."
+        values: [0, 1, 2, 3, 4, 5]
+      HSENROLL: {type: float64, unit: students, description: High school enrollment., min: 0}
+      COLLFTE: {type: float64, unit: students, description: "College enrollment, full-time equivalent.", min: 0}
+      COLLPTE: {type: float64, unit: students, description: "College enrollment, part-time.", min: 0}
+      TOPOLOGY: {type: int64, description: "Terrain: 1 flat, 2 rolling, 3 hilly.", values: [1, 2, 3]}
+      TERMINAL: {type: float64, unit: minutes, description: Terminal time., min: 0}
