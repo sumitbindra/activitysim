@@ -38,6 +38,11 @@ accessibility, school location, workplace location, auto ownership.
   (here: distance and travel times to work and school, a household's sum
   over its workers). They run in 1.x's order and merge as 1.x does.
 
+- **5 to 15 times faster than 1.x's legacy engine, with less memory**
+  (ARC, all households: workplace 2.7 s and +382 MB against 13.6 s and
+  +1,209 MB). Against sharrow on MTC: 8 to 19 times faster, but sharrow
+  needs less memory for workplace location. Details below.
+
 - **Two last-bit details found and fixed** while matching 1.x (below):
   lookups of zone -1, and padding widths. The second was also a 1.x
   problem: its results change with its chunk size (1.x findings, #3).
@@ -145,7 +150,42 @@ hh_work_auto_savings_ratio
 
 ## Profiles
 
-Being measured (MTC against 1.x legacy and sharrow; ARC with all households).
+Each step run in a fresh process, starting from 1.x's saved state before
+it, the same way for every engine (`harness/profile_step.py`). Not timed:
+loading the saved state, getting skims ready, and 1.x's one-time Numba
+compiles. Wall time is the median; extra memory is the step's peak above
+where it started.
+
+**MTC, 5 runs each** (8,212 persons; 1,633 students, 4,361 workers):
+
+| | School location | Workplace location |
+|---|---|---|
+| asim_core | 0.13 s (0.12–0.15), +40 MB | 0.38 s (0.37–0.44), +118 MB |
+| 1.x, legacy | 1.88 s (1.77–2.80), +53 MB | 3.61 s (3.40–4.04), +139 MB |
+| 1.x, sharrow | 2.51 s (2.44–106.1), +50 MB | 2.96 s (2.73–8.19), +62 MB |
+| same step in the full 1.x run (legacy / sharrow) | 4.22 s / 4.42 s | 4.28 s / 2.12 s |
+
+One of the five sharrow school location runs took 106 s and +1,046 MB:
+sharrow compiled code it didn't find in its cache. On MTC's workplace
+location, sharrow needs less memory than asim_core (+62 MB against
++118 MB).
+
+**ARC, all 24,061 households, 3 runs each** (67,101 persons; 22,574
+students, 35,803 workers):
+
+| | School location | Workplace location |
+|---|---|---|
+| asim_core | 0.87 s (0.86–0.91), +330 MB | 2.72 s (2.63–2.76), +382 MB |
+| 1.x, legacy | 4.76 s (4.65–5.00), +645 MB | 13.60 s (13.24–14.46), +1,209 MB |
+
+About 5 times faster than 1.x on ARC, with a third to a half of the extra
+memory.
+
+**The padding fix costs nothing measurable.** Scheduling now works out the
+padding width of each round before its batches. MTC mandatory and
+non-mandatory scheduling: 0.99 s and 0.37 s (before: 1.05 s and 0.44 s).
+ARC mandatory scheduling, all households, `distinct_inputs`: 18.2 s
+(18.1–19.3), +288 MB (before: 19.2 s, +287 MB).
 
 ## Not supported yet
 
