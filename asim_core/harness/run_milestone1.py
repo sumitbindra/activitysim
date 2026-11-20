@@ -123,9 +123,10 @@ def step_check(comp, st: Asim1State, out: Path, base_seed: int, skims, trace_ids
     table = comp.info.get("trace_table")
     if trace_ids is None and table in store:  # default: trace the first row
         trace_ids = {table: [store[table].index[0]]}
-    Runner([comp], out, trace_ids=trace_ids, base_seed=base_seed, skims=skims).run(
+    report = Runner([comp], out, trace_ids=trace_ids, base_seed=base_seed, skims=skims).run(
         [comp.name], store, Profiler(), start_note=f"1.x state after {prev}"
     )
+    STEP_WARNINGS.extend(report.warnings)
     comparisons = []
     shares = {}
     for t, cols in comp.provides.items():
@@ -139,6 +140,10 @@ def step_check(comp, st: Asim1State, out: Path, base_seed: int, skims, trace_ids
         gen.mkdir(parents=True, exist_ok=True)
         (gen / f"{comp.name}.py").write_text(comp.info["generated_source"])
     return comparisons, shares
+
+
+# warnings the steps reported in the step check (the end-to-end run's are in its report)
+STEP_WARNINGS: list[dict] = []
 
 
 # --- 2. utility check ----------------------------------------------------------
@@ -330,11 +335,18 @@ def md_table(df: pd.DataFrame, floatfmt: str = "{:.3f}") -> str:
 
 
 def write_summary(out: Path, info: dict, step_cmp, util_rows, e2e_cmp, e2e_report, prof_cmp,
-                  full_prof, shares) -> Path:
+                  full_prof, shares, inputs=None) -> Path:
     s = ["# Milestone 1 results", ""]
     s.append(f"Example: `{info['example']}`, configs {info['configs']}. "
              f"Machine: {info['platform']}, {info['cpu_count']} CPUs. "
              f"Python {info['python']}.")
+    if inputs is not None:
+        s += ["", "## Input checks", "", "```", inputs.text(show_undefined=False), "```"]
+    warned = list({(w["step"], w["message"]): w for w in STEP_WARNINGS + e2e_report.warnings}.values())
+    if warned:
+        s += ["", "## Warnings from the steps", "",
+              "Reported by the steps while they ran; they didn't stop the run.", ""]
+        s += [f"- `{w['step']}`: {w['message']}" for w in warned]
     if NOT_BUILT:
         s += ["", "Not ported for this example (replayed from 1.x instead):", ""]
         s += [f"- `{k}`: {v}" for k, v in NOT_BUILT.items()]
@@ -401,9 +413,13 @@ def main(argv=None) -> int:
     ours = REPO / "asim_core/configs" / example.name
     inputs = check_inputs(([ours] if ours.is_dir() else []) + configs, [example / "data"],
                           cache_dir=REPO / "asim_core/work" / example.name / "input_checks")
-    print(inputs.summary())
-    if not inputs.ok:
+    (out / "input_checks.txt").write_text(inputs.text() + "\n")
+    if inputs.problems:  # warnings are shown too: the run goes on, but they're worth a look
         print(inputs.text(show_undefined=False))
+        print(f"(also in {out / 'input_checks.txt'} and summary.md)")
+    else:
+        print(inputs.summary())
+    if not inputs.ok:
         return 2
 
     skims = skim_store(example, configs)
@@ -456,7 +472,8 @@ def main(argv=None) -> int:
         "model_files": args.model_files,
     }
     (out / "run_info.json").write_text(json.dumps(info, indent=2))
-    summary = write_summary(out, info, step_cmp, util_rows, e2e_cmp, e2e_report, prof_cmp, full_prof, shares)
+    summary = write_summary(out, info, step_cmp, util_rows, e2e_cmp, e2e_report, prof_cmp, full_prof, shares,
+                            inputs)
 
     all_cmp = step_cmp + e2e_cmp
     ok = all(c.status == "exact" for c in all_cmp) and all(r["bit_identical"] == r["values"] for r in util_rows)

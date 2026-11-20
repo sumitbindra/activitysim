@@ -534,8 +534,9 @@ class _Checker:
                 self.add(f.severity, "skims", f.column, f.message, f.rows, f.examples, used_by=f.used_by)
         if skim_defs.distance is not None and distance is None and (
                 order is not None or any(m.per_distance for m in skim_defs.measures.values())):
-            self.add(ERROR, "skims", skim_defs.distance, "is the distance skim (skims.distance in the "
-                     "definitions), but is not in the skims", used_by=[])
+            self.add(WARNING, "skims", skim_defs.distance, "is the distance skim (skims.distance in the "
+                     "definitions), but is not in the skims: the zone order and times per distance "
+                     "are not checked", used_by=[])
         elif order is not None:
             self._check_zone_order(skim_defs.distance, order, distance, own_rows)
         self._check_measures(stats)
@@ -565,9 +566,9 @@ class _Checker:
                 self.add(WARNING, "skims", name, f"is in {len(paths)} files ({', '.join(paths)}), with the "
                          "same values", used_by=self.used_by(name.split("__")[0]))
             else:
-                self.add(ERROR, "skims", name, f"is in {len(paths)} files ({', '.join(paths)}) with "
-                         f"different values: 1.x uses the last one ({last}) without an error",
-                         used_by=self.used_by(name.split("__")[0]))
+                self.add(WARNING, "skims", name, f"is in {len(paths)} files ({', '.join(paths)}) with "
+                         f"different values: the last one's ({last}) are used, as in 1.x (an override, "
+                         "or the wrong file?)", used_by=self.used_by(name.split("__")[0]))
 
     @staticmethod
     def _read_skim(pytables, omx_paths, files_of_name):
@@ -592,8 +593,9 @@ class _Checker:
             if col is None:
                 continue
             if col not in self.tables["land_use"].column_names:
-                self.add(ERROR, "land_use", col, f"is the zones' {key} for checking the skims' zone order "
-                         "(skims.zone_order), but is not in the land use table", used_by=[])
+                self.add(WARNING, "land_use", col, f"is the zones' {key} for checking the skims' zone order "
+                         "(skims.zone_order), but is not in the land use table: the zone order is not "
+                         "checked", used_by=[])
                 return
             lu[key] = self.values("land_use", col)
         if not lu or len(own_rows) < 10:
@@ -601,11 +603,11 @@ class _Checker:
         d = np.asarray(distance)[np.ix_(own_rows, own_rows)]
         tests = zone_order_tests(d, **lu)
         if tests and max(t.z for t in tests) < ZONE_ORDER_Z:
-            self.add(ERROR, "skims", distance_name,
-                     "doesn't follow the land use: its zones look like they are in another order than "
-                     "the land use's (is the skim file in another zone order, without a zone lookup?). "
-                     "If the order is right, these land use columns are just weakly related to "
-                     "distances: remove them from skims.zone_order", 0,
+            self.add(WARNING, "skims", distance_name,
+                     "doesn't follow the land use: its zones may be in another order than the land "
+                     "use's (is the skim file in another zone order, without a zone lookup?), and then "
+                     "every zone reads another zone's skims. If the order is right, these land use "
+                     "columns are just weakly related to distances: remove them from skims.zone_order", 0,
                      [t.text() for t in tests], used_by=[])
 
     def _check_measures(self, stats) -> None:

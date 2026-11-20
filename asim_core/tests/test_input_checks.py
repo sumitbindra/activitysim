@@ -298,11 +298,11 @@ SKIM_REGIONS = {
 }
 # injection: (expected problems as (severity, column), words in the message)
 SKIM_INJECTIONS = {
-    "skims_in_another_order": ("error", "distance", "doesn't follow the land use"),
-    "missing_period": ("error", "time", "has no skim for period"),
-    "skim_not_in_files": ("error", "time", "not in the skims"),
+    "skims_in_another_order": ("warning", "distance", "doesn't follow the land use"),
+    "missing_period": ("warning", "time", "has no skim for period"),
+    "skim_not_in_files": ("warning", "time", "not in the skims"),
     "unknown_period": ("warning", None, "isn't in network_los.yaml"),
-    "duplicate_skim": ("error", "time__AM", "different values"),
+    "duplicate_skim": ("warning", "time__AM", "different values"),
     "time_in_seconds": ("warning", "time", "per unit of distance"),
     "no_path_placeholder": ("warning", "time", "placeholder"),
     "zero_within_zone": ("warning", "time", "within a zone"),

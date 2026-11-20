@@ -179,7 +179,15 @@ worth a warning; a region writes it as `warn_below: 1` on the column
 These checks look for the kind of problem that gives wrong results with no
 error at all: the right numbers read for the wrong zone, period or units.
 The rule behind them: wherever two inputs are matched by position or by a
-code, check the match. Each was tested by injecting the problem into a copy
+code, check the match.
+
+**Errors or warnings.** An error stops the run, so it is kept for problems
+that certainly make the run wrong or make it fail: a zone that can't be
+found in the skims, or would read another zone's row by the numbering
+rules; a missing skim value. Everything that is a judgment call, or found by
+a heuristic, is a warning: the run goes on, and the warnings are shown with
+the report (on screen, in `input_checks.txt` and in the run's `summary.md`)
+for the user to decide. Each was tested by injecting the problem into a copy
 of each region's data (8 cases × 3 regions, `tests/test_input_checks.py`):
 the report names it, by the right rule, and nothing else; the clean data of
 all three regions passes with no problems.
@@ -187,11 +195,11 @@ all three regions passes with no problems.
 | Check | Catches | Kind | Needs |
 |---|---|---|---|
 | Zone rows | each zone reads the skim row 1.x would read it from: through the file's zone lookup, or by 1.x's numbering rules (table above) | error | nothing |
-| Zone order | a skim file whose zones are in another order than the model assumes (e.g. not ascending, and no zone lookup to say so): its distances don't follow the land use better than a random order would | error | `skims.zone_order` |
-| Skims the models use | a skim named in a spec, preprocessor or model file that isn't in the skim files; a period it's used with that has no skim | error | nothing |
-| Time periods | a skim used with each row's time period that lacks some period of network_los.yaml (`SOV_TIME__EV` missing) | error | nothing |
+| Zone order | a skim file whose zones are in another order than the model assumes (e.g. not ascending, and no zone lookup to say so): its distances don't follow the land use better than a random order would | warning (statistical) | `skims.zone_order` |
+| Skims the models use | a skim named in a spec, preprocessor or model file that isn't in the skim files; a period it's used with that has no skim | warning (found by a text search; a step that uses it stops anyway) | nothing |
+| Time periods | a skim used with each row's time period that lacks some period of network_los.yaml (`SOV_TIME__EV` missing) | warning (as above) | nothing |
 | | skims for a period network_los.yaml doesn't list (1.x skips them) | warning | nothing |
-| Duplicates | a skim in two files: with different values (1.x uses the last file, silently) | error | nothing |
+| Duplicates | a skim in two files: with different values (the last file's are used, as in 1.x: an override, or the wrong file?) | warning | nothing |
 | | with the same values | warning | nothing |
 | Units | a skim's typical value (median of its positive values) outside its measure's range: e.g. fares in dollars instead of cents | warning | `skims.measures` |
 | | a time's typical minutes per mile outside its range: e.g. seconds or hours instead of minutes, whatever the size of the region | warning | `skims.measures` |
@@ -222,7 +230,7 @@ random orders:
 | ARC, 36 zones | distance within a zone against √area | 0.60 | 0.07 ± 0.15 | 3.5 |
 
 (Rank correlations; z: standard deviations above the random orders.) The
-check is an error when no test is 2 above random. It catches a file in
+check warns when no test is 2 above random. It catches a file in
 another order (tested: rows and columns in a random order). It can't catch
 a shift by a few zones (zone z read as z + 1): neighbouring zone numbers
 are neighbouring places, so the tests barely move (MTC full: 0.81 to 0.71
@@ -231,11 +239,16 @@ checked directly (zone rows, above).
 
 **Within the steps,** some columns only exist once earlier steps have run,
 so one check runs when the step starts: every chooser's segment value
-(income segment, school type, tour purpose) must have a segment in the
+(income segment, school type, tour purpose) should have a segment in the
 model. 1.x leaves choosers without a segment without a choice, with no
-error (1.x findings, #8, for scheduling); asim_core stops, naming the values
-and how many choosers have them. Scheduling and tour mode choice already
-did; location choice and destination choice do now.
+message (1.x findings, #8, for scheduling). In location choice and
+destination choice asim_core does the same, so results stay 1.x's, and
+reports it as a warning of the step, naming the values and how many
+choosers have them. Steps report warnings through `ctx.warn`; the runner
+collects them in its report and the run's `run_manifest.json`, and the
+milestone run lists them in `summary.md`. (Scheduling and tour mode choice
+still stop on it, as before: making them warn too needs matching what 1.x
+does with those tours afterwards, which isn't done yet.)
 
 ### Describing a region's skims
 

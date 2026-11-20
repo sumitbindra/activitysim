@@ -3,11 +3,12 @@ Checks of the skims against the model files and the land use, run with the
 other input checks (checks.py). They look for skims that would be used
 wrongly without any error:
 
-* **References** (errors): every skim the model files use is in the skim
-  files, for every time period it can be used with.
+* **References** (warnings): every skim the model files use is in the skim
+  files, for every time period it can be used with. Found by a text search,
+  so a warning: a step that does use a missing skim stops anyway.
 * **Time periods** (warnings): skims for periods network_los.yaml doesn't
   list are not used (as in 1.x).
-* **Zone order** (error): with land use columns given in the region's
+* **Zone order** (warning): with land use columns given in the region's
   definitions (``skims.zone_order``), the distances must follow them better
   than zones in a random order would: each zone's distance to itself grows
   with its area, distances grow with straight-line distances between zone
@@ -37,6 +38,9 @@ import numpy as np
 import pandas as pd
 
 VARIABLE = "<variable>"  # a skim used with a period from the data (each tour's, ...)
+# references are found by a text search of the config files, so they can be wrong; a step
+# that does look the skim up stops (asim_core before it starts, 1.x when it gets there)
+FOUND_BY_TEXT = "(found by a text search of the config files; a step that uses it stops)"
 PLACEHOLDER_RATIO = 1000  # values this many times the typical value look like placeholders
 ZONE_ORDER_Z = 2.0  # how far above a random order (in standard deviations) distances must be
 
@@ -113,19 +117,20 @@ def reference_problems(names: Iterable[str], labels: Sequence[str] | None,
             continue  # a skim without periods: any use finds it
         have = periods_of.get(name, set())
         if not have:
-            out.append(Found("error", name, "is used by the model files but is not in the skims",
-                             used_by=files))
+            out.append(Found("warning", name, "is used by the model files but is not in the skims "
+                             f"{FOUND_BY_TEXT}", used_by=files))
             continue
         named = sorted({p for p, _ in uses if p not in (None, VARIABLE)} - have)
         if named:
-            out.append(Found("error", name, f"is used for time period(s) {named}, but there is no "
-                             f"skim {name}__{named[0]}", 0, [f"{name}__{p}" for p in named],
+            out.append(Found("warning", name, f"is used for time period(s) {named}, but there is no "
+                             f"skim {name}__{named[0]} {FOUND_BY_TEXT}", 0, [f"{name}__{p}" for p in named],
                              used_by=files))
         if labels is not None and any(p in (None, VARIABLE) for p, _ in uses):
             missing = [p for p in labels if p not in have]
             if missing:
-                out.append(Found("error", name, f"is used with each row's time period, but has no skim "
-                                 f"for period(s) {missing} (rows in those periods can't be looked up)",
+                out.append(Found("warning", name, f"is used with each row's time period, but has no "
+                                 f"skim for period(s) {missing}: rows in those periods can't be looked up "
+                                 f"{FOUND_BY_TEXT}",
                                  0, [f"{name}__{p}" for p in missing], used_by=files))
     if labels is not None:
         unknown: dict[str, list[str]] = defaultdict(list)

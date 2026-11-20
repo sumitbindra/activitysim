@@ -64,7 +64,7 @@ from ..spec.legacy import (
     read_yaml,
 )
 from .runtime import plain
-from .segments import check_segment_values
+from .segments import segment_problem
 from .simple_choice import ChooserView
 from .tour_mode_choice import TourModeChoiceModel
 
@@ -184,8 +184,9 @@ def non_mandatory_tour_destination(
             cols[c] = ctx.column("tours", c)[rows_all]
         tour_ids = ids[rows_all]
         seg_values = np.asarray(plain(cols[segment_col])) if segment_col else None
-        if segment_col:
-            check_segment_values(STEP, "tours", segment_col, seg_values, segments)
+        problem = segment_problem("tours", segment_col, seg_values, segments) if segment_col else None
+        if problem:
+            ctx.warn(problem)
 
         zones, sizes = _size_terms(ctx, size_weights, size_columns)
         debug = info["samples"] = {}

@@ -48,6 +48,8 @@ class RunReport:
     # comparisons of our computed columns against 1.x's copies of them,
     # found when later 1.x tables are replayed
     carried_over: list[ColumnComparison] = field(default_factory=list)
+    # problems the steps reported without stopping ({"step", "message"})
+    warnings: list[dict] = field(default_factory=list)
 
 
 class Runner:
@@ -155,7 +157,7 @@ class Runner:
         for step, mode in plan:
             with profiler.step(step, mode):
                 if mode == COMPUTED:
-                    self._run_component(step, store, resolved[step], computed_cols)
+                    self._run_component(step, store, resolved[step], computed_cols, report.warnings)
                 else:
                     report.carried_over += self._replay_step(step, store, computed_cols)
 
@@ -168,12 +170,13 @@ class Runner:
                 for s, m in plan
             ],
             "computed_columns": {t: sorted(c) for t, c in computed_cols.items()},
+            "warnings": report.warnings,
         }
         (self.out_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2))
         profiler.write_csv(self.out_dir / "profile.csv")
         return report
 
-    def _run_component(self, step, store: Store, needs, computed_cols) -> None:
+    def _run_component(self, step, store: Store, needs, computed_cols, warnings=None) -> None:
         comp = self.components[step]
         if SKIMS in needs and not self._zones_checked and "land_use" in store:
             from .skims import check_zone_order
@@ -185,7 +188,8 @@ class Runner:
         engine = self.step_engines.get(step, self.engine)
         # how the step holds its skims (swappable: memory-mapped, mapped up front, or in memory)
         skims = None if self.skims is None else engine.skim_access(self.skims, needs.get(SKIMS, ()))
-        ctx = StepContext(comp, store, needs, engine, self.tracer, self.base_seed, skims=skims)
+        ctx = StepContext(comp, store, needs, engine, self.tracer, self.base_seed, skims=skims,
+                          warnings=warnings)
         outputs = comp.run(ctx) or {}
         # a step can make a new table (e.g. 1.x's workplace_modeled_size): it
         # returns the whole Table, which replaces any table of that name

@@ -24,6 +24,8 @@ Skims are declared like a table named ``skims``: ``needs={"skims": ["DIST",
 
 from __future__ import annotations
 
+import logging
+
 import csv
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
@@ -109,9 +111,12 @@ class StepContext:
         tracer: Tracer,
         base_seed: int = 0,
         skims=None,
+        warnings: list | None = None,
     ):
         self.component = component
         self.step = component.name
+        # problems worth a look that don't stop the step (see ``warn``)
+        self.warnings = warnings if warnings is not None else []
         self._store = store
         self._needs = {t: set(cols) for t, cols in needs.items()}
         self.engine = engine
@@ -128,6 +133,12 @@ class StepContext:
             raise ContractError(
                 f"step '{self.step}' read '{table}.{column}' but did not declare it in needs"
             )
+
+    def warn(self, message: str) -> None:
+        """Report something worth a look that doesn't stop the step: collected in the
+        run's report and its run_manifest.json, and logged."""
+        self.warnings.append({"step": self.step, "message": message})
+        logging.getLogger("asim_core").warning(f"{self.step}: {message}")
 
     def ids(self, table: str) -> np.ndarray:
         """The row IDs of a table the component declared."""
