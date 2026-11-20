@@ -72,7 +72,8 @@ def _warm_up_timetable():
         t.max_time_block_available(ids)
 
 
-def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler, read_skim_cache=None):
+def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler, read_skim_cache=None,
+                  patches=()):
     from activitysim import abm  # noqa: F401
     from activitysim.core import workflow
     from activitysim.core.workflow.runner import Runner
@@ -112,6 +113,10 @@ def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler, rea
             return original(self, model_name, **kwargs)
 
     Runner.by_name = profiled
+    if patches:  # run-time changes to 1.x being tested (asim1_patches.py)
+        import asim1_patches
+
+        asim1_patches.apply(list(patches))
     state = workflow.State.make_default(
         working_dir=example,
         configs_dir=tuple(configs),
@@ -165,6 +170,8 @@ def main(argv=None) -> int:
     p.add_argument("--out", required=True)
     p.add_argument("--read-skim-cache", choices=["settings", "true", "false"], default="settings",
                    help="override network_los.yaml's read_skim_cache for either engine")
+    p.add_argument("--patch", nargs="*", default=[],
+                   help="asim1 only: run-time patches to apply (see asim1_patches.py)")
     p.add_argument("--seams", default="{}",
                    help='asim_core only: implementations to use, as JSON, e.g. \'{"random": "counter"}\'')
     args = p.parse_args(argv)
@@ -180,7 +187,8 @@ def main(argv=None) -> int:
     scratch = Path(args.scratch).resolve()
     rsc = {"settings": None, "true": True, "false": False}[args.read_skim_cache]
     if args.engine == "asim1":
-        skims_ready_s = profile_asim1(args.step, prev, example, configs, st.path, scratch, profiler, rsc)
+        skims_ready_s = profile_asim1(args.step, prev, example, configs, st.path, scratch, profiler, rsc,
+                                      args.patch)
     else:
         import json
 

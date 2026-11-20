@@ -41,6 +41,10 @@ SEAMS = {
                      "probabilities(utils, shift) -> (probs, unusable_rows)",
     "nested_probabilities": "utilities and a nest tree -> probabilities (nested logit): "
                             "nested_probabilities(utils, alternatives, nests) -> (probs, unusable_rows, logsums)",
+    "nested_logsums": "utilities and a nest tree -> logsums only (nested logit): "
+                      "nested_logsums(utils, alternatives, nests) -> (n,) array",
+    "logsum_keys": "which scheduling option rows share a mode choice logsum: "
+                   "logsum_keys(read_columns, has_segments) -> option columns to group by",
     "choose": "probabilities and one random draw per row -> chosen position: "
               "choose(probs, rands) -> int32 array",
     "random": "per-row uniform random draws for a step: "
@@ -85,7 +89,7 @@ def register(seam: str, name: str, agreement: str = "exact", description: str = 
 
 def _load_builtin() -> None:
     # importing these modules registers the built-in implementations
-    from . import alternatives, logit, lookups, random  # noqa: F401
+    from . import alternatives, logit, logsums, lookups, random  # noqa: F401
 
 
 def implementations(seam: str | None = None) -> list[Implementation]:

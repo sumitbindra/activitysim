@@ -40,6 +40,7 @@ from asim_core.compare import compare_column, value_shares, write_comparisons  #
 from asim_core.components import (  # noqa: E402
     auto_ownership,
     compute_accessibility,
+    mandatory_tour_scheduling,
     non_mandatory_tour_scheduling,
     tour_mode_choice,
 )
@@ -52,7 +53,8 @@ from asim_core.spec.legacy import load_top_settings  # noqa: E402
 from asim_core.store import Store  # noqa: E402
 
 
-PORTED = [compute_accessibility, auto_ownership, non_mandatory_tour_scheduling, tour_mode_choice]
+PORTED = [compute_accessibility, auto_ownership, mandatory_tour_scheduling,
+          non_mandatory_tour_scheduling, tour_mode_choice]
 NOT_BUILT: dict[str, str] = {}  # component -> why it could not be built for this example
 
 

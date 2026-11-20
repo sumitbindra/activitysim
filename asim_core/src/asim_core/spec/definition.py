@@ -520,23 +520,27 @@ class AssignmentSpec(BaseModel):
         return self
 
     def bind(self, df_columns: set[str] | None = None,
-             tables: dict[str, set[str]] | None = None) -> BoundAssignments:
+             tables: dict[str, set[str]] | None = None,
+             constants: dict[str, Any] | None = None) -> BoundAssignments:
         """
         Translate for the given chooser columns and other tables' columns
-        (table name -> columns). Raises ValueError listing every problem.
+        (table name -> columns). ``constants`` add to or replace the spec's
+        constants for this binding (e.g. a different destination column).
+        Raises ValueError listing every problem.
         """
         problems: list[str] = []
-        bound = self._bind(df_columns, tables, problems)
+        bound = self._bind(df_columns, tables, problems, constants)
         if problems:
             raise ValueError(
                 f"assignments '{self.name}' have {len(problems)} problem(s):\n  " + "\n  ".join(problems)
             )
         return bound
 
-    def _bind(self, df_columns, tables, problems) -> BoundAssignments:
+    def _bind(self, df_columns, tables, problems, extra_constants=None) -> BoundAssignments:
         table_columns = {t: None for t in self.tables}
         table_columns.update({t: set(c) for t, c in (tables or {}).items() if t in table_columns})
         constants = dict(self.constants)
+        constants.update(extra_constants or {})
         kw = dict(functions=self.functions, skim_accessors=set(self.skim_accessors),
                   coefficients=set(self.coefficients), df_columns=df_columns,
                   tables=table_columns, settings=self.settings, df_names=set(self.df_names))

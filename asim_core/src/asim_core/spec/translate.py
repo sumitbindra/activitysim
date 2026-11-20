@@ -431,6 +431,11 @@ class _Translator:
         if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
                 and func.value.id in self.skim_accessors and func.attr == "lookup"):
             return self.skim_lookup(node, func.value.id)
+        # Python's abs() on a column is NumPy's absolute value (pandas Series.__abs__)
+        if isinstance(func, ast.Name) and func.id == "abs" and func.id not in self.functions:
+            if len(node.args) != 1 or node.keywords:
+                self.fail(node, "abs() takes one value")
+            return f"np.abs({self.visit(node.args[0])})"
         # bare functions made available by the model, e.g. exp(...) -> np.exp(...)
         if isinstance(func, ast.Name) and func.id in self.functions:
             if node.keywords:
@@ -490,6 +495,11 @@ class _Translator:
                 if len(node.args) != 1 or kw:
                     self.fail(node, "fillna() takes one value")
                 return f"_fillna({target}, {self.visit(node.args[0])})"
+            if method == "shift":
+                periods = self.fold(node.args[0]) if node.args else kw.get("periods") and self.fold(kw["periods"])
+                if not isinstance(periods, int) or (node.args and kw) or len(node.args) > 1:
+                    self.fail(node, "shift() takes a whole number of rows")
+                return f"_shift({target}, {periods})"
             if method == "map":
                 if len(node.args) != 1 or kw:
                     self.fail(node, "map() takes one dictionary")
@@ -797,6 +807,11 @@ def _pandas_eval(expr, names):
     return out.to_numpy() if isinstance(out, pd.Series) else out
 
 
+def _shift(x, periods):
+    """pandas Series.shift: move values down (or up, if negative) by rows, filling with missing."""
+    return pd.Series(x).shift(periods).to_numpy()
+
+
 def _as_int8(x):
     """1.x's reindex_i: missing values become 0, then 8-bit integers."""
     x = np.asarray(x)
@@ -816,7 +831,7 @@ def _full(x, n):
 
 RUNTIME_NAMESPACE = {"np": np, "_clip": _clip, "_fillna": _fillna, "_map": _map, "_cut": _cut,
                      "_astype": _astype, "_lognormal": _lognormal, "_full": _full,
-                     "_pandas_eval": _pandas_eval, "_as_int8": _as_int8}
+                     "_pandas_eval": _pandas_eval, "_as_int8": _as_int8, "_shift": _shift}
 
 
 def build_function(name: str, items: list[tuple[str, Translated]], doc: str = "") -> str:

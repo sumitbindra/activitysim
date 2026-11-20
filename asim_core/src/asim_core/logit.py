@@ -163,6 +163,30 @@ def _sum_columns(columns: list[np.ndarray]) -> np.ndarray:
     return total
 
 
+def _nested_exp_utilities(utils: np.ndarray, alternatives: list[str], nests) -> dict[str, np.ndarray]:
+    """Exponentiated utilities of alternatives and nests, from the leaves up (1.x's compute_nested_exp_utilities)."""
+    col = {a: j for j, a in enumerate(alternatives)}
+    exp_u: dict[str, np.ndarray] = {}
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        for node in walk_nests(nests, post_order=True):
+            if node.is_leaf:
+                x = utils[:, col[node.name]].astype(float) / node.product
+            else:
+                kids = [np.where(np.isnan(exp_u[c]), 0.0, exp_u[c]) for c in node.alternatives]
+                x = node.coefficient * np.log(_sum_columns(kids))  # pandas sum skips NaN
+            exp_u[node.name] = np.exp(x)
+    return exp_u
+
+
+@register("nested_logsums", "asim1", reference=True,
+          description="log of the root's exponentiated utility, as 1.x's eval_nl_logsums")
+def nested_logsums(utils: np.ndarray, alternatives: list[str], nests) -> np.ndarray:
+    """Logsums only (no probabilities), e.g. for scheduling's mode choice logsums."""
+    exp_u = _nested_exp_utilities(utils, alternatives, nests)
+    with np.errstate(divide="ignore"):
+        return np.log(exp_u[nests.name])
+
+
 @register("nested_probabilities", "asim1", reference=True,
           description="nested logit as ActivitySim 1.x computes it: exponentiated nest "
                       "utilities, conditional probabilities per nest, multiplied down the tree")
@@ -179,18 +203,8 @@ def nested_probabilities(utils: np.ndarray, alternatives: list[str], nests
     n = utils.shape[0]
     col = {a: j for j, a in enumerate(alternatives)}
     bad = np.zeros(n, dtype=bool)
-
-    # exponentiated utilities of alternatives and nests, from the leaves up
-    exp_u: dict[str, np.ndarray] = {}
+    exp_u = _nested_exp_utilities(utils, alternatives, nests)
     with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
-        for node in walk_nests(nests, post_order=True):
-            if node.is_leaf:
-                x = utils[:, col[node.name]].astype(float) / node.product
-            else:
-                kids = [np.where(np.isnan(exp_u[c]), 0.0, exp_u[c]) for c in node.alternatives]
-                x = node.coefficient * np.log(_sum_columns(kids))  # pandas sum skips NaN
-            exp_u[node.name] = np.exp(x)
-
         # probability of each child within its nest, from the root down
         cond: dict[str, np.ndarray] = {}
         for node in walk_nests(nests, post_order=False):

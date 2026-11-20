@@ -134,3 +134,50 @@ def scheduling_round_utilities(
                      index=pd.MultiIndex.from_arrays([interaction_df.index.to_numpy(),
                                                       interaction_df["tdd"].to_numpy()],
                                                      names=["tour_id", "tdd"]))
+
+
+def capture_scheduling_logsums(
+    example_dir: Path,
+    configs: list[str],
+    pipeline: Path,
+    step: str,
+    scratch_dir: Path,
+) -> pd.DataFrame:
+    """
+    Run one scheduling step of 1.x from its saved state, recording every mode
+    choice logsum it computes for a (tour, option) row. Returns a DataFrame
+    with tour_id, tdd and logsum (one row per tour and option, all rounds).
+    """
+    import shutil
+
+    from activitysim import abm  # noqa: F401
+    from activitysim.abm.models.util import vectorize_tour_scheduling as vts
+    from activitysim.core import workflow
+
+    from asim_core.asim1 import Asim1State
+
+    prev = Asim1State(pipeline).previous_step(step)
+    if scratch_dir.exists():
+        shutil.rmtree(scratch_dir)
+    scratch_dir.mkdir(parents=True)
+    shutil.copytree(pipeline, scratch_dir / "pipeline.parquetpipeline")
+    captured = []
+    original = vts.compute_tour_scheduling_logsums
+
+    def recording(state, alt_tdd, tours_merged, tour_purpose, model_settings, trace_label, **kw):
+        logsums = original(state, alt_tdd, tours_merged, tour_purpose, model_settings, trace_label, **kw)
+        captured.append(pd.DataFrame({"tour_id": alt_tdd.index.to_numpy(),
+                                      "tdd": alt_tdd["tdd"].to_numpy(),
+                                      "logsum": np.asarray(logsums, dtype=np.float64)}))
+        return logsums
+
+    vts.compute_tour_scheduling_logsums = recording
+    try:
+        state = workflow.State.make_default(working_dir=example_dir, configs_dir=tuple(configs),
+                                            data_dir=("data",), output_dir=scratch_dir)
+        state.checkpoint.restore(prev)
+        state.run(models=[step], resume_after=prev)
+        state.checkpoint.close_store()
+    finally:
+        vts.compute_tour_scheduling_logsums = original
+    return pd.concat(captured, ignore_index=True)
