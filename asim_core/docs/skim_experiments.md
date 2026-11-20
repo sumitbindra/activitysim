@@ -40,6 +40,11 @@ Two questions:
   `prefault` can be on everywhere; work out the flat positions once per set
   of zone pairs instead of once per skim. The largest opportunity is the
   layout: tour mode choice reads 6 GB of pages to use 128 MB of values.
+- **Done since** (below, "Follow-up"): `flat_take` with positions shared
+  across skims is the default, and steps declare only the skims they read.
+  Warm, the steps are 4 to 45% faster than with the old default (all
+  results still exactly 1.x's), and `prefault` now helps every step that
+  reads many skims when cold (14 to 43%).
 
 ## What was compared
 
@@ -162,16 +167,9 @@ choice looks up 32,020 tours: too few for it to show.
 
 ## What to do next
 
-1. **Make `flat_take` the default** (exact, plain NumPy, up to 15% faster
-   where lookups are large). Kept as an alternative until you decide.
-2. **Declare only the skims a step can read**: when the periods come from
-   settings (location and destination steps), only those periods. Then
-   `prefault` reads only what is needed and can be on for every step (it
-   costs nothing when warm).
-3. **Work out positions once per set of zone pairs**, and reuse them for
-   every skim with those pairs (1.x findings, #7 suggests the same for 1.x's
-   time-period lookups): from the table above, another 15 to 50% of each
-   lookup's time.
+1. ~~**Make `flat_take` the default**~~ (done, see "Follow-up").
+2. ~~**Declare only the skims a step can read**~~ (done).
+3. ~~**Work out positions once per set of zone pairs**~~ (done).
 4. **Skim layout.** Values used together could be stored together: for
    example, by blocks of origin zones, or all skims of one period for each
    zone pair. Tour mode choice would read more than 15 times fewer pages
@@ -182,6 +180,67 @@ choice looks up 32,020 tours: too few for it to show.
 
 Memory needs no work here: asim_core's own memory stays under 540 MB in
 every step; the mapped pages are the operating system's to manage.
+
+## Follow-up: the new default
+
+Items 1 to 3 above, done:
+
+- **`flat_take` is the reference implementation of `skim_lookup`**; the old
+  default stays as the alternative `index_2d`.
+- **Positions shared across skims.** A step's zone pairs are a `ZonePairs`
+  (`skims.py`): the flat positions (`orig * zones + dest`) are worked out
+  once, when the first skim needs them, and shared by every other skim
+  looked up for the same pairs, as are the reversed pairs and the rows of
+  each time period. Tour mode choice (and so every step's logsums),
+  destination choice and accessibility use them (`ctx.zone_pairs`).
+- **Steps declare only the skims they read.** Location and destination
+  choice take logsums at fixed periods, so they now declare those periods'
+  skims only:
+
+  | Step (full MTC) | Skims declared before | Now |
+  |---|---|---|
+  | school_location | 733 (6.38 GB) | 205 (1.78 GB) |
+  | workplace_location | 733 (6.38 GB) | 212 (1.84 GB) |
+  | non_mandatory_tour_destination | 733 (6.38 GB) | 149 (1.30 GB) |
+
+  Mandatory scheduling and tour mode choice use every period, and still
+  declare all of them.
+
+**Results: the same values.** MTC, MWCOG, ARC and full MTC (10,000
+households) still match 1.x exactly, every compared column; all 18
+combinations below too.
+
+**Time, full MTC,** median of 3 fresh processes per cell. All three variants
+ran in the same session, one after the other, so they compare with each
+other. Compare within this table only: the first table above came from
+another session, where the old default ran 6 to 55% faster than it did in
+this one (the same machine, busier or not; not investigated).
+
+| Step | Old default (`index_2d`), warm | New default, warm | New default, cold | New default + `prefault`, cold | 1.x |
+|---|---|---|---|---|---|
+| compute_accessibility | 1.10 | **0.60** (−45%) | 0.81 | 0.79 | 1.30 |
+| school_location | 2.68 | **2.10** (−22%) | 4.62 | **3.26** (−29%) | 7.32 |
+| workplace_location | 6.47 | **5.45** (−16%) | 8.01 | **6.59** (−18%) | 18.71 |
+| mandatory_tour_scheduling | 5.36 | 5.14 (−4%) | 11.78 | **9.77** (−17%) | 16.08 |
+| non_mandatory_tour_destination | 6.84 | **5.16** (−25%) | 6.60 | **5.70** (−14%) | 18.30 |
+| tour_mode_choice_simulate | 1.04 | **0.93** (−11%) | 7.78 | **4.46** (−43%) | 5.99 |
+
+(1.x: fresh process, skims already in memory, from mtc_full.md.) The ranges
+of the three runs don't overlap for the gains in bold, except mandatory
+scheduling's (4.79 to 5.42 against 5.09 to 5.33), which is within noise.
+
+**`prefault` now helps every step that reads many skims when cold** (not
+accessibility, which reads 0.19 GB), since it reads only what a step uses. When warm it is mixed: no change in four steps, slower in
+workplace location (6.21 against 5.45 s, all three runs) and non-mandatory
+destination (5.57 against 5.16 s, ranges overlapping). Mapping 1.8 GB of
+cached pages takes about 0.05 s, so the cause is something else, not found
+yet. So `memory_map` stays the default; `prefault` is the better choice when
+the skims are unlikely to be in the operating system's cache (a fresh
+machine, or one short of memory).
+
+Memory: unchanged (own memory 60 to 530 MB per step; mapped pages as
+before, slightly more with `prefault`, which maps every page of the declared
+skims).
 
 ## Reproducing
 

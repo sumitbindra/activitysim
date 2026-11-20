@@ -87,7 +87,9 @@ not an error; an error stays for land use zones that have no skims.
 
 ## Profiles
 
-Wall time in seconds, median of 3 runs, 10,000 households.
+Wall time in seconds, median of 3 runs, 10,000 households. These are
+before the skim experiment's changes (the new default skim lookup is 4 to
+45% faster per step when warm; see skim_experiments.md, "Follow-up").
 
 - **1.x, fresh process:** each step from 1.x's saved state before it
   (`harness/profile_step.py`); loading skims (about 40 s) is not timed.
