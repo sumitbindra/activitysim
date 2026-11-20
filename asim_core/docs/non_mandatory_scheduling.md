@@ -23,8 +23,10 @@ return option at once.
 - **Utilities are bit-for-bit identical to 1.x's own functions,** on
   every (tour, option) row of the first round: 501,136 rows on MTC and
   3,069,657 rows on ARC (4,000 households), with one caveat on ARC, below.
-- **Much less memory, and faster.** On all ARC households: 38 s and
-  +172 MB, against 121 s and +5.0 GB inside 1.x's full run. Profiles below.
+- **Much less memory, and faster.** On all ARC households, in a fresh
+  process: 37.5 s and +144 MB, against 151 s and +5.2 GB for 1.x (4 times
+  faster, 36 times less extra memory). On MTC: 0.44 s against 1.9 s.
+  Profiles below.
 - **Found in 1.x: its utilities depend on how many rows it evaluates at
   once.** Details below. It changed no choice in these runs, but it means
   1.x's results aren't strictly independent of its batch size.
@@ -50,9 +52,8 @@ asim_core does the same, with two differences that don't change results:
   Each tour's rows depend only on its own person's timetable and random
   stream, so batch size can't change any result; the tests check this by
   running with tiny batches. 1.x, with its default settings, builds the
-  whole round at once: 3.1 million rows for ARC's first round at 4,000
-  households (all households: about six times as many households, so
-  presumably several times more rows; not measured).
+  whole round at once: ARC's first round is 3.1 million rows at 4,000
+  households and 18.6 million with all households.
 - **Fitting options into a day is done for a batch of tours at once,** with
   small matrix products over the periods of the day, instead of 1.x's loop
   over every tour–option pair. Same rule (1.x's list of colliding period
@@ -159,7 +160,27 @@ median; extra memory is the step's peak above where it started.
 | 1.x, legacy | 1.90 s (1.82–1.92) | 139 MB | 1.59 s |
 | 1.x, sharrow | 2.28 s (2.22–2.37) | 144 MB | 2.43 s |
 
-(ARC, all households: being measured.)
+**ARC, all 24,061 households (30,851 tours), 3 runs each:**
+
+| | Wall time (median, min–max) | CPU time | Extra memory |
+|---|---|---|---|
+| asim_core | 37.5 s (37.2–38.3) | 52.5 s | 144 MB |
+| 1.x, legacy | 150.9 s (149.0–152.5) | 178.8 s | 5,202 MB |
+
+(There's no sharrow run of ARC; ARC's settings turn sharrow off for this
+step, because of its many string comparisons.) In the full 1.x run (with
+the logsum patch, which doesn't touch this step) the step took 121 s and
++5.0 GB.
+
+**Where asim_core's time goes on ARC** (Python's profiler, 4,000
+households): almost all of it is evaluating the spec's 317 formulas over
+the rows, about 3 million in the first round. ARC's formulas compare
+`tour_type` with a string in nearly every row; keeping it categorical (as
+1.x does) took the step from 20 s to 6 s. The next obvious improvement is
+to work out formulas that depend only on the tour (not the option) once
+per tour instead of once per row. Because formulas work row by row, that
+should give exactly the same values; it would be added as a swappable
+alternative and checked like the others.
 
 A note on measuring: the first fresh-process numbers for 1.x were 5.8 s,
 because 1.x compiles its timetable functions with Numba on first use (in a

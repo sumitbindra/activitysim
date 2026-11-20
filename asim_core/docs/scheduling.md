@@ -135,6 +135,15 @@ asim_core's batch-by-batch design.
 - **The patch could be offered to the ActivitySim project** as a change
   to `dedupe_alt_tdd`, with these tests as evidence.
 
+## Update: non-mandatory scheduling ported
+
+Non-mandatory tour scheduling, the biggest memory user above, is now
+ported ([non_mandatory_scheduling.md](non_mandatory_scheduling.md)). It
+matches 1.x exactly on all ARC households, and processing each round in
+batches brings the step from +5.2 GB to +144 MB (151 s to 37.5 s).
+Mandatory tour scheduling needs mode choice logsums inside scheduling,
+which come next, with the "compute each distinct logsum once" rule.
+
 ## Reproducing
 
 From the repository root:
