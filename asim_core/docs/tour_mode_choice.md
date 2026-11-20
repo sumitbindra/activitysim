@@ -23,7 +23,9 @@ mandatory tour scheduling spends most of its time on (as logsums; see
   coefficients, coefficient template and preprocessor of each region. The
   formulas are turned into NumPy code you can read
   (`work/milestone1/step_check/tour_mode_choice_simulate/generated/`).
-- **Faster and smaller than 1.x (details below).** PROFILE_SUMMARY
+- **Faster and smaller than 1.x.** On MTC, 0.30 s and 18 MB extra memory,
+  against 4.6 s and 47 MB for 1.x (legacy) and 4.0 s and 55 MB with
+  sharrow. Details below.
 - **Nothing tour-mode-specific went into the core.** The step is a
   component (`components/tour_mode_choice.py`, about 300 lines). What it
   needed is general: coefficient templates, preprocessors, table lookups,
@@ -99,7 +101,21 @@ mandatory tour scheduling spends most of its time on (as logsums; see
 
 ## Profiles
 
-PROFILE_TABLE
+Each step run in a fresh process, starting from 1.x's saved state before
+it, the same way for every engine (`harness/profile_step.py`). Not timed:
+loading the saved state, getting skims ready, and 1.x's one-time Numba
+compiles. Wall time is the median; extra memory is the step's peak above
+where it started.
+
+**MTC, 9,103 tours, 5 runs each:**
+
+| | Wall time (median, min–max) | Extra memory | Same step in the full 1.x run |
+|---|---|---|---|
+| asim_core | 0.30 s (0.25–0.31) | 18 MB | |
+| 1.x, legacy | 4.64 s (4.40–4.75) | 47 MB | 5.31 s |
+| 1.x, sharrow | 3.96 s (3.77–4.23) | 55 MB | 3.09 s |
+
+(ARC, all households: being measured.)
 
 ## Not supported yet
 
