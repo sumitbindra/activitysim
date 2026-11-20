@@ -495,6 +495,13 @@ class _Translator:
                 if len(node.args) != 1 or kw:
                     self.fail(node, "fillna() takes one value")
                 return f"_fillna({target}, {self.visit(node.args[0])})"
+            if method == "apply":
+                # Series.apply(np.<ufunc>) applies the ufunc to the whole column
+                f = node.args[0] if len(node.args) == 1 and not kw else None
+                if not (isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name)
+                        and f.value.id == "np" and f.attr in NP_FUNCTIONS):
+                    self.fail(node, f"apply() supports np.<function> from {sorted(NP_FUNCTIONS)}")
+                return f"np.{f.attr}({target})"
             if method == "shift":
                 periods = self.fold(node.args[0]) if node.args else kw.get("periods") and self.fold(kw["periods"])
                 if not isinstance(periods, int) or (node.args and kw) or len(node.args) > 1:

@@ -88,15 +88,15 @@ _UNSUPPORTED = {
 }
 
 
-def skim_locals(dest: str) -> dict[str, str]:
+def skim_locals(dest: str, orig: str = ORIG) -> dict[str, str]:
     """Names 1.x's skims dict makes available to formulas."""
-    return {"orig_col_name": ORIG, "dest_col_name": dest,
+    return {"orig_col_name": orig, "dest_col_name": dest,
             "out_time_col_name": OUT_TIME, "in_time_col_name": IN_TIME}
 
 
 @dataclass
 class BoundModel:
-    """The model bound to a set of chooser columns and a destination column."""
+    """The model bound to a set of chooser columns, an origin and a destination column."""
 
     dest: str
     preprocessor: BoundAssignments | None
@@ -104,6 +104,7 @@ class BoundModel:
     tables: set[tuple[str, str]]           # other tables' columns looked up
     skims: set[str]                        # skim names needed
     period_columns: set[str] = field(default_factory=set)  # out_period / in_period, if read
+    orig: str = ORIG
 
 
 class TourModeChoiceModel:
@@ -172,15 +173,17 @@ class TourModeChoiceModel:
 
     # --- binding ------------------------------------------------------------------
 
-    def bind(self, df_columns: set[str], tables: Mapping[str, set[str]], dest: str = DEST) -> BoundModel:
+    def bind(self, df_columns: set[str], tables: Mapping[str, set[str]], dest: str = DEST,
+             orig: str = ORIG) -> BoundModel:
         """
-        Work out, for choosers with ``df_columns`` and skims to ``dest``, what
-        the model reads: chooser columns, other tables' columns and skims.
-        Raises if something is missing or unsupported.
+        Work out, for choosers with ``df_columns`` and skims from ``orig`` to
+        ``dest`` (column names), what the model reads: chooser columns, other
+        tables' columns and skims. Raises if something is missing or
+        unsupported.
         """
-        if dest != DEST and self._spec_uses_dest_name:
-            raise NotImplementedError("the mode choice spec uses dest_col_name; only "
-                                      "'destination' is supported as its destination")
+        if (dest, orig) != (DEST, ORIG) and self._spec_uses_dest_name:
+            raise NotImplementedError("the mode choice spec uses dest_col_name or orig_col_name; "
+                                      "only the default origin and destination are supported")
         bound = None
         pre_targets: set[str] = set()
         pre_columns: set[str] = set()
@@ -189,14 +192,14 @@ class TourModeChoiceModel:
         if self.preprocessor is not None:
             bound = self.preprocessor.bind(
                 df_columns, {t: tables.get(t, set()) for t in self.preprocessor_tables},
-                constants=skim_locals(dest),
+                constants=skim_locals(dest, orig),
             )
             pre_targets = set(bound.targets)
             pre_columns = bound.columns_used()  # read from the choosers as they are
             skim_uses |= bound.skim_uses()
             table_cols = bound.tables_used()
         # the model's formulas also see the preprocessor's results
-        columns = (set(self._spec_columns) - pre_targets) | pre_columns | {ORIG, dest}
+        columns = (set(self._spec_columns) - pre_targets) | pre_columns | {orig, dest}
         skims: set[str] = set()
         period_columns: set[str] = set()
         for accessor, key, how in skim_uses:
@@ -208,7 +211,7 @@ class TourModeChoiceModel:
             else:
                 skims.update(f"{key}__{p}" for p in self.periods.unique_labels)
                 period_columns.add(period_col)
-        return BoundModel(dest, bound, columns, table_cols, skims, period_columns)
+        return BoundModel(dest, bound, columns, table_cols, skims, period_columns, orig)
 
     # --- evaluating -----------------------------------------------------------------
 
@@ -228,7 +231,7 @@ class TourModeChoiceModel:
             raise ValueError(f"tour mode choice: no coefficients for segment '{segment}' "
                              f"(template segments: {list(self.segments)})")
         seg = self.segments[segment]
-        s = SkimLookup(ctx, self.periods, ctx.skim_positions(c[ORIG]), ctx.skim_positions(c[bound.dest]),
+        s = SkimLookup(ctx, self.periods, ctx.skim_positions(c[bound.orig]), ctx.skim_positions(c[bound.dest]),
                        {p: c[p] for p in ("out_period", "in_period") if p in c})
         k = seg["values"]
         pre_values: dict = {}

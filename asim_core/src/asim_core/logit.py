@@ -68,26 +68,38 @@ def interaction_utilities(terms: Iterable, coefficients: list[float], n: int) ->
 
 @register("probabilities", "asim1", reference=True,
           description="exponentiate, zero out values below 1e-300, divide by row totals")
-def probabilities(utils: np.ndarray, shift: bool = False) -> tuple[np.ndarray, np.ndarray]:
+def probabilities(utils: np.ndarray, shift: bool = False, with_logsums: bool = False):
     """
     Probabilities from utilities, and a mask of rows that cannot be used
     (all probabilities zero, or infinite / NaN exponentiated utilities).
+    With ``with_logsums``, also each row's logsum: log of the sum of
+    exponentiated utilities (plus the shift), as 1.x's utils_to_probs.
 
     ``shift`` subtracts each row's largest utility first (overflow protection).
     ActivitySim 1.x turns this off when ``skip_failed_choices`` is on, which
     is its default.
     """
     u = np.array(utils, dtype=np.float64, copy=True)
+    shifts = None
     if shift:
-        u -= u.max(1, keepdims=True)
+        shifts = u.max(1, keepdims=True)
+        u -= shifts
     e = np.exp(u)
     np.putmask(e, e <= EXP_UTIL_MIN, 0)
     total = e.sum(axis=1)
     bad = (total == 0.0) | np.isinf(total) | np.isnan(total)
+    logsums = None
+    if with_logsums:
+        with np.errstate(divide="ignore"):
+            logsums = np.log(total)
+        if shifts is not None:
+            logsums += np.squeeze(shifts, 1)
     with np.errstate(invalid="ignore", divide="ignore"):
         np.divide(e, total.reshape(len(e), 1), out=e)
     np.putmask(e, np.isnan(e), PROB_MIN)
     np.clip(e, PROB_MIN, PROB_MAX, out=e)
+    if with_logsums:
+        return e, bad, logsums
     return e, bad
 
 
@@ -234,3 +246,34 @@ def nested_probabilities(utils: np.ndarray, alternatives: list[str], nests
     with np.errstate(divide="ignore", invalid="ignore"):
         logsums = np.log(exp_u[nests.name])
     return probs, bad, logsums
+
+
+@register("sample", "inverse_cdf", reference=True,
+          description="1.x's default sampling of alternatives: each random draw picks the first "
+                      "alternative whose cumulative probability exceeds it")
+def sample(probs: np.ndarray, rands: np.ndarray, max_cells: int = 20_000_000):
+    """
+    ``rands.shape[1]`` alternatives drawn (with replacement) for each row of
+    ``probs``, as 1.x's sample_choices_maker_preserve_ordering: draw k picks
+    the first alternative whose running sum of probabilities (64-bit, left to
+    right) is greater than draw k. Returns the chosen positions (rows x
+    draws) and their probabilities as 32-bit floats (as 1.x stores them).
+    """
+    n, n_alts = probs.shape
+    n_draws = rands.shape[1]
+    cum = np.cumsum(probs, axis=1)
+    picks = np.empty((n, n_draws), dtype=np.int64)
+    step = max(1, max_cells // max(1, n_alts * n_draws))
+    for start in range(0, n, step):
+        rows = slice(start, start + step)
+        # the first running sum above the draw = how many running sums are at or below it
+        picks[rows] = (cum[rows, None, :] <= rands[rows, :, None]).sum(axis=2)
+    over = picks >= n_alts  # draw above the total (rounding): 1.x takes the last usable alternative
+    if over.any():
+        for r in np.unique(np.nonzero(over)[0]):
+            a = n_alts - 1
+            while probs[r, a] < 1e-30 and a > 0:
+                a -= 1
+            picks[r][over[r]] = a
+    chosen = probs[np.arange(n)[:, None], picks].astype(np.float32)
+    return picks, chosen

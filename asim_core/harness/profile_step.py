@@ -72,6 +72,18 @@ def _warm_up_timetable():
         t.max_time_block_available(ids)
 
 
+def _warm_up_sampling():
+    """1.x's sampler for location and destination choice (Numba), with the argument types it gets."""
+    import numpy as np
+    from activitysim.core.choosing import sample_choices_maker_preserve_ordering
+
+    alts = np.arange(3, dtype=np.int64)
+    for writeable in (True, False):  # zone IDs from a table's index are read-only
+        a = alts.copy()
+        a.setflags(write=writeable)
+        sample_choices_maker_preserve_ordering(np.full((2, 3), 1 / 3), np.full((2, 4), 0.5), a)
+
+
 def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler, read_skim_cache=None,
                   patches=()):
     from activitysim import abm  # noqa: F401
@@ -105,6 +117,7 @@ def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler, rea
         choice_maker(np.asfortranarray(probs), rn)
         _accumulate_accessibility(np.zeros(4, dtype=dtype), 2, 2)
     _warm_up_timetable()
+    _warm_up_sampling()
 
     original = Runner.by_name
 

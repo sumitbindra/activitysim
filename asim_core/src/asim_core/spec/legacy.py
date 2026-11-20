@@ -268,11 +268,14 @@ def load_interaction_model(
     constants: dict | None = None,
     objects: dict[str, Sequence[str]] | None = None,
     name: str | None = None,
+    value_column: str | None = None,
+    skim_accessors: Sequence[str] = (),
 ) -> InteractionModelDefinition:
     """
-    An interaction spec (Label, Description, Expression, one coefficient
-    column), read as 1.x's read_model_spec reads it. Rows written
-    ``_name@formula`` assign a temporary.
+    An interaction spec (Label, Description, Expression, coefficient
+    column(s)), read as 1.x's read_model_spec reads it. Rows written
+    ``_name@formula`` assign a temporary. A spec with one coefficient column
+    per segment needs ``value_column`` (1.x's spec_for_segment).
     """
     configs_dirs = [Path(d) for d in configs_dirs]
     if not spec_file.lower().endswith(".csv"):
@@ -281,6 +284,11 @@ def load_interaction_model(
     coef_path = find_config_file(configs_dirs, coefficients_file)
     spec = pd.read_csv(spec_path, comment="#").dropna(subset=["Expression"])
     value_cols = [c for c in spec.columns if c not in _SPEC_META_COLUMNS]
+    if value_column is not None:
+        if value_column not in value_cols:
+            raise ValueError(f"{spec_path.name}: no coefficient column '{value_column}' "
+                             f"(columns: {value_cols})")
+        value_cols = [value_column]
     if len(value_cols) != 1:
         raise ValueError(f"{spec_path.name}: an interaction spec has one coefficient column, "
                          f"found {value_cols}")
@@ -300,5 +308,6 @@ def load_interaction_model(
         coefficients=read_coefficients(coef_path),
         constants=constants or {},
         objects={k: list(v) for k, v in (objects or {}).items()},
+        skim_accessors=list(skim_accessors),
         source_files=[spec_path.name, coef_path.name],
     )

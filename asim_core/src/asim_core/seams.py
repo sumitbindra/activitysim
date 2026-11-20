@@ -45,6 +45,8 @@ SEAMS = {
                       "nested_logsums(utils, alternatives, nests) -> (n,) array",
     "logsum_keys": "which scheduling option rows share a mode choice logsum: "
                    "logsum_keys(read_columns, has_segments) -> option columns to group by",
+    "sample": "probabilities and k random draws per row -> k sampled alternatives (with "
+              "replacement): sample(probs, rands) -> (positions, probabilities as float32)",
     "choose": "probabilities and one random draw per row -> chosen position: "
               "choose(probs, rands) -> int32 array",
     "random": "per-row uniform random draws for a step: "
