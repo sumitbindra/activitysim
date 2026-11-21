@@ -40,16 +40,23 @@ replayed from 1.x.)
 What 1.x does, reproduced (`components/initialize.py`):
 
 - **Reading**: `input_table_list` as in 1.x (renames, kept columns,
-  recodes, land use sorted by zone). CSV numbers are read with pandas'
-  parser by default, as 1.x reads them, so results are bit for bit 1.x's
-  (finding #11); `csv_reader="exact"` reads them correctly rounded.
+  recodes, land use sorted by zone). CSV files are read with exactly 1.x's
+  pandas call by default, so numbers are bit for bit 1.x's (finding #11)
+  and so are column types (pandas infers them per block of rows, which
+  matters for columns mixing numbers and text); `csv_reader="exact"` reads
+  numbers correctly rounded instead. The files go straight to pandas: a
+  first version converted them to Arrow and back, which on full MTC
+  doubled the step's time and memory and left 0.6 GB held afterwards.
 - **Sampling households** (`households_sample_size`): NumPy's
   `RandomState` seeded with the base seed and `hash32('sample_households')`,
   `choice` without replacement, households in the order drawn; the traced
   household replaces the first one if it wasn't drawn; `sample_rate` is the
   sample size over the total, written as is (even above 1). Persons of the
   sampled households are kept in file order; every person must have a
-  household and every household a person.
+  household and every household a person. asim_core picks the sample's
+  rows right after parsing (the same rows: 1.x's draw depends only on row
+  positions), so the rest of the step handles 10,000 households rather
+  than 2.9 million; not when a zero-based recode numbers all rows.
 - **Annotations** in the settings' order (MTC: persons, households, persons
   again), with the random draws 1.x makes (`rng.lognormal_for_df`, one
   draw per row per call by default).
