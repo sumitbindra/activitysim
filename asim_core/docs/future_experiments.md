@@ -95,3 +95,15 @@ a new cache; two processes building the same cache at once.
   complete (a groupby over tour and composition) are 1.x's pandas code. Both
   could work on row positions (members by household, candidates by tour),
   keeping the draw order so the results stay 1.x's.
+- **Trip scheduling in NumPy.** asim_core's port is 1.x's pandas code
+  (a merge with the probability table per round of trips, up to 100
+  attempts) and is no faster than 1.x (25 s against 21 s at 50,000
+  households, [block3.md](block3.md)). The rounds could work on positions
+  (each trip's probability row found once), keeping the draws in order.
+- **Trip destination's logsums, once per distinct input.** Each sampled
+  zone gets two trip mode choice logsums (origin → stop, stop → leg
+  destination); trips of the same tour leg, period and person share many of
+  them. As tour scheduling's logsums (computed once per distinct input),
+  the translator knows which columns the logsum formulas read. The step
+  takes 85 s at 50,000 households (how much of it is logsums: not measured
+  yet).

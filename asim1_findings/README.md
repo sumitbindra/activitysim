@@ -29,7 +29,7 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 6 | Numba functions are compiled again in every run | Speed | Measured | Not reported |
 | 7 | Time-of-day skim lookups are a third of tour mode choice's time | Speed | Measured | Not reported |
 | 8 | Tours of a type with no spec segment are silently left unscheduled | Bug (configuration) | From reading the code | Not reported |
-| 9 | Smaller items (7) | Various | From reading the code, one measured | Not reported |
+| 9 | Smaller items (9) | Various | From reading the code, one measured | Not reported |
 | 10 | Bad input data runs silently: negative employment changed results across the model with no error or warning | Data checking | Reproduced (MTC) | Not reported |
 | 11 | Numbers in CSV files are read inexactly (pandas' default parser): up to 1e-12 relative error, in inputs and in coefficients | Accuracy | Measured (all three examples) | Not reported |
 | 12 | ARC's destination terms for CBD and urban area read the person's home zone, not the destination, so they never change a choice | Model specification | Reproduced (ARC, all households) | Not reported |
@@ -38,6 +38,9 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 15 | CDAP ranks children by person type, not youngest first as its comments and CTRAMP say: in larger households, preschoolers are left out of the joint choice | Model behavior | Measured (MTC full zones, 50,000 households: 616 preschoolers) | Not reported |
 | 16 | Joint tour and non-mandatory frequency specs test tour types that don't exist ('eat', 'disc', 'maint' for eatout, othdiscr, othmaint): 13 terms with coefficients never apply | Model specification | Measured (MTC full zones, 50,000 households: 1.7% of joint tours change party type when corrected) | Not reported |
 | 17 | MTC's at-work subtour scheduling spec: four 'eating out' terms test business subtours, and the '2 to 3 hours' term covers 1 to 4 hours | Model specification | Measured (MTC full zones, 50,000 households: 70% of at-work subtours get another schedule when the eating-out terms are corrected) | Not reported |
+| 18 | Trip scheduling's default logic (`logic_version` 1) retries a tour's inbound trips without its outbound ones, so they can never be scheduled and are all forced to the window's edge after 100 attempts | Bug (default setting) | Measured (MTC full zones, 50,000 households: 11,289 trips forced, 474 with `logic_version: 2`) | Not reported |
+| 19 | MTC's stop frequency counts the household's shopping and maintenance tours, then looks them up by person ID | Model specification | Measured (MTC full zones, 50,000 households: 2,735 tours get another stop frequency when corrected) | Not reported |
+| 20 | ARC's trip scheduling specs: stop counts one too low, terms for a tour type that doesn't exist ('at_work'), inbound stop times checked against the outbound leg | Model specification | Measured (ARC example: 51 of 157 tours with stops get another split; 27 departures change) | Not reported |
 
 ---
 
@@ -356,6 +359,15 @@ From reading the code; low priority.
   tour mode choice merges the same tables with `suffixes=("", "_r")` and
   keeps the tour's. Harmless today (the spec doesn't use it), but the same
   spec can read a column in one step and fail in the other.
+- **Trip destination's sample spec and its spec disagree on one term.**
+  MTC's "stop proximity to home (inbound)" uses the distance from the
+  trip's origin to the stop in `trip_destination_sample.csv` but from the
+  stop to the leg's destination (home, inbound) in `trip_destination.csv`.
+  It only changes which zones are sampled for work tours' inbound stops.
+- **Trip departure choice sets `MAX_TOUR_ID` on the step function, not the
+  module** (`trip_departure_choice.MAX_TOUR_ID = ...`), so tour leg IDs
+  always use 10**9. Harmless until a tour ID passes 10**9, when outbound and
+  inbound legs of different tours would share IDs (and random streams).
 - **Every run's log has an ERROR that isn't one.** Making at-work subtours'
   IDs logs `ERROR - parent_tour_num.dtype: int8` (`canonical_ids.py`)
   whenever the parent tour number isn't 64-bit, which it never is, then
@@ -687,6 +699,99 @@ results, so it reproduces this too).
 `(duration >= 2) and (duration <= 3)` in the 2-to-3-hours term, after
 checking against the model's estimation (the labels and coefficients
 suggest these were meant; the CTRAMP original wasn't available here).
+
+---
+
+## 18. Trip scheduling's default logic leaves retried inbound trips unschedulable
+
+**Evidence: measured** (MTC full zones, 50,000 households; asim_core's
+`trip_scheduling`, which matches 1.x exactly, run from 1.x's saved state
+with `logic_version` 1 and 2, the same random numbers).
+
+**What happens.** Trip scheduling draws each intermediate trip's departure
+within a window; a trip can fail (its draw lands on the probability left
+outside the window), and the trips of the direction where one failed are
+scheduled again, up to `MAX_ITERATIONS` (MTC: 100). An inbound trip may not
+leave before the tour's last outbound departure: `update_tour_earliest`
+sets its earliest period to the largest outbound departure of its tour
+among the trips being scheduled. When only a tour's inbound trips are
+retried, its outbound trips aren't among them, so that largest departure is
+missing and, with `logic_version` 1, the inbound trips' earliest period
+becomes missing too. No period is then inside their window: they fail on
+every attempt and, on the last, are all given the window's edge
+(`choose_most_initial`). `logic_version` 2 keeps the earliest period when
+the outbound departure is missing. 1.x uses version 1 unless the settings
+say otherwise (it warns that the default may change); none of the examples
+sets it.
+
+**How much** (442,682 trips):
+
+| | Trips given the window's edge after 100 attempts | Trips with another departure |
+|---|---|---|
+| `logic_version: 1` (default) | 11,289 (2.6%) | |
+| `logic_version: 2` | 474 | 3,896 |
+
+**Suggested change.** Make `logic_version: 2` the default, or set it in
+the examples.
+
+---
+
+## 19. MTC stop frequency: household tour counts looked up by person ID
+
+**Evidence: measured** (MTC full zones, 50,000 households; asim_core's
+`stop_frequency`, which matches 1.x exactly, with the preprocessor as
+shipped and corrected, the same random numbers).
+
+**What happens.** In `stop_frequency_annotate_tours_preprocessor.csv`:
+
+```
+num_hh_shop_tours  = reindex_i(df[df.tour_type==SHOP_TOUR].groupby('household_id').size(), df.person_id)
+num_hh_maint_tours = reindex_i(df[df.tour_type==MAINT_TOUR].groupby('household_id').size(), df.person_id)
+```
+
+The counts are per household but looked up with the tour's person ID: each
+tour gets the count of whichever household happens to have its person's ID
+as household ID. The work, shopping and maintenance specs use them with
+nonzero coefficients.
+
+**How much** (175,579 tours): 2,735 tours get another stop frequency when
+the lookup uses `df.household_id` (shopping tours: 1,731 of 20,709, 8.4%;
+work: 648; maintenance: 356); 1,335 fewer trips (442,682 → 441,347).
+
+**Suggested change.** `df.household_id` in both rows.
+
+---
+
+## 20. ARC's trip scheduling specs
+
+**Evidence: measured** (ARC example, all households; asim_core's
+`trip_scheduling_choice` and `trip_departure_choice`, which match 1.x
+exactly, with the files as shipped and corrected, the same random numbers).
+
+**What happens.**
+
+- **Stop counts one too low.** `trip_scheduling_choice_preprocessor.csv`
+  counts each leg's stops of a purpose as
+  `(trips.query(...).groupby('tour_id').size() - 1)`. The `- 1` takes off a
+  direction's last trip, which only has the purpose on an outbound leg whose
+  tour has that primary purpose: a shopping tour's one work stop counts 0,
+  and every inbound count (the last inbound trip goes home) is one short.
+  Correcting it (counting the trips before the last) changes the counts of
+  144 of 331 tours, and the leg split of 51 of the 157 tours with stops.
+- **A tour type that doesn't exist.** Four calibration terms in
+  `trip_scheduling_choice.csv` test `tour_type == 'at_work'`; at-work
+  subtours have tour types `eat`, `business` and `maint` (tour category
+  `atwork`). Testing the category instead changes 4 tours' splits.
+- **Inbound stop times checked against the outbound leg.** The first term of
+  `trip_departure_choice.csv` ("alternative is invalid if stop time is
+  greater than leg time") compares with `outbound_duration` for both
+  columns; for inbound legs that makes some feasible stop times invalid
+  (-999). Checking inbound legs against `inbound_duration` changes 27 of 915
+  trips' departures.
+
+**Suggested change.** Count the stops (trips before a direction's last)
+without `- 1`; test the tour category for at-work subtours; split the first
+departure term by direction.
 
 ---
 

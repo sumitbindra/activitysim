@@ -16,7 +16,7 @@ picked by a setting and tested with the experiment harness. Speed-ups come
 from those experiments. Sharrow is not used; 1.x with sharrow is only a
 baseline in the reports.
 
-Status: twenty-three components are ported and match 1.x exactly:
+Status: thirty-one components are ported and match 1.x exactly:
 `initialize_landuse` and `initialize_households` (reading, household
 sampling, annotations, size tables), `compute_accessibility` (with skims),
 `school_location` and `workplace_location` (sampling, logsums, annotations
@@ -30,16 +30,22 @@ option, mode choice logsums computed once per distinct input),
 `tour_mode_choice_simulate` (nested logit, purpose segments, preprocessor,
 time-of-day skims), the five joint tour steps (frequency, composition,
 participation in rounds, destination, scheduling across participants),
-`non_mandatory_tour_frequency` (with the extension draws), and the four
+`non_mandatory_tour_frequency` (with the extension draws), the four
 at-work subtour steps (frequency, destination, scheduling within the work
-tour, mode choice from the workplace). They were checked on three regions'
-example models: MTC, MWCOG and ARC (all 24,061 households), and on MTC's
-full zone system. MTC's and ARC's first 23 steps, from the input files
-through at-work subtour mode choice, run in asim_core alone
-([docs/block1.md](docs/block1.md), [docs/block2.md](docs/block2.md)).
+tour, mode choice from the workplace), and the trip steps: stop frequency
+(and the trips, with 1.x's trip IDs), trip purpose, trip destination (two
+mode choice logsums per sampled zone), trip purpose and destination, trip
+scheduling (MTC, MWCOG) or trip scheduling choice and trip departure choice
+(ARC), and trip mode choice. They were checked on three regions' example
+models: MTC, MWCOG and ARC (all 24,061 households), and on MTC's full zone
+system. **Every model step of the three regions runs in asim_core**; MTC's
+and ARC's whole model runs from the input files alone
+([docs/block1.md](docs/block1.md), [docs/block2.md](docs/block2.md),
+[docs/block3.md](docs/block3.md)); only the output and summary steps (and
+MWCOG's four region-specific steps) are still taken from 1.x.
 Every other step can be
 **replayed** from a 1.x run, so the model runs end to end today. Results: [docs/milestone1.md](docs/milestone1.md),
-[docs/block1.md](docs/block1.md), [docs/block2.md](docs/block2.md),
+[docs/block1.md](docs/block1.md), [docs/block2.md](docs/block2.md), [docs/block3.md](docs/block3.md),
 [docs/skims_and_accessibility.md](docs/skims_and_accessibility.md),
 [docs/mwcog.md](docs/mwcog.md), [docs/arc.md](docs/arc.md),
 [docs/tour_mode_choice.md](docs/tour_mode_choice.md),
@@ -74,10 +80,10 @@ not tried yet: [docs/future_experiments.md](docs/future_experiments.md).
 On the **full MTC zone system** (1,475 zones, 826 skims, 7.2 GB; 10,000
 households) asim_core matches 1.x bit for bit once 1.x's numexpr switch is
 off, and its 8 steps take 18 s in one process against 71 s in 1.x
-([docs/mtc_full.md](docs/mtc_full.md)). With blocks 1 and 2, all 23 steps
-through at-work subtour mode choice run from the input files in 36 s
-against 137 s in 1.x at 10,000 households, and 104 s against 524 s at
-50,000 ([docs/block2.md](docs/block2.md)). The first experiment there, on how
+([docs/mtc_full.md](docs/mtc_full.md)). With blocks 1 to 3, the whole model
+(29 model steps) runs from the input files in 58 s against 227 s in 1.x at
+10,000 households, and 240 s against 806 s at 50,000
+([docs/block3.md](docs/block3.md)). The first experiment there, on how
 steps hold and look up skims, found that reading skim pages, not the
 lookups, is most of the cost
 ([docs/skim_experiments.md](docs/skim_experiments.md)).
@@ -172,7 +178,7 @@ To run the ported steps on their own, from the input files, with nothing
 taken from 1.x (then compared with 1.x's tables after the last step):
 
 ```bash
-python asim_core/harness/run_standalone.py --through atwork_subtour_mode_choice
+python asim_core/harness/run_standalone.py --through trip_mode_choice
 ```
 
 The milestone run checks the example's inputs first and stops on errors.
