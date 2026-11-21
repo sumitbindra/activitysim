@@ -78,9 +78,9 @@ from ..spec.legacy import (
     load_top_settings,
     read_yaml,
 )
-from ..timetable import FORMULA_FUNCTIONS, TimeTable, read_tdd_alternatives
+from ..timetable import FORMULA_FUNCTIONS, I_MIDDLE, TimeTable, read_tdd_alternatives
 from .annotate import load_preprocessor
-from .runtime import TableLookup, ZoneSkims, plain
+from .runtime import TableLookup, WrappedSkims, ZoneSkims, plain
 from .simple_choice import ChooserView
 from .tour_mode_choice import TourModeChoiceModel
 
@@ -90,6 +90,9 @@ LOGSUM_ROWS = 100_000  # logsum rows evaluated at once
 PREVIOUS_COLUMNS = ("start_previous", "end_previous")
 OUTPUT_COLUMNS = ["start", "end", "duration", "tdd"]
 MANDATORY_SEGMENT_COLUMN = "mandatory_tour_seg"  # 1.x's name
+# skim wrappers a scheduling preprocessor can use: the tour columns with each row's origin and
+# destination zone (1.x's atwork_subtour_scheduling: skim_dict.wrap("origin", "destination"))
+PREPROCESSOR_SKIMS = {"od_skims": ("origin", "destination")}
 
 VIEW = ChooserView("tours", [
     ("persons", "person_id"),
@@ -136,6 +139,21 @@ def mandatory_tour_scheduling(configs_dirs: Sequence[str | Path],
                                      "mandatory", max_rows, keep_utilities)
 
 
+def atwork_subtour_scheduling(configs_dirs: Sequence[str | Path],
+                              settings_file: str = "tour_scheduling_atwork.yaml",
+                              max_rows: int = 1_000_000, keep_utilities: bool = False) -> Component:
+    """
+    1.x's atwork_subtour_scheduling: as the other scheduling steps, by rounds
+    of tour number, except that each subtour must fit within its work tour
+    (the timetable has a row per work tour, free only where the work tour
+    is), the previous tour is the work tour's previous subtour, and persons'
+    timetables are left as they are. The preprocessor can use ``od_skims``
+    (from the subtour's origin to its destination).
+    """
+    return tour_scheduling_component(configs_dirs, "atwork_subtour_scheduling", settings_file,
+                                     "atwork", max_rows, keep_utilities)
+
+
 def tour_scheduling_component(
     configs_dirs: Sequence[str | Path],
     step: str,
@@ -160,6 +178,7 @@ def tour_scheduling_component(
     new_format = cfg.language == "asim_core"
     max_rows = cfg.max_rows or max_rows
 
+    atwork = category == "atwork"
     temps = {t.target for d in segments.values() for t in d.terms if t.target}
     spec_columns = set().union(*(d.columns_used() for d in segments.values()))
     resolved: dict = {}
@@ -170,12 +189,17 @@ def tour_scheduling_component(
         return cols | ({"out_period", "in_period"} if with_logsums else set())
 
     def resolve_needs(available: Mapping[str, set[str]]) -> Needs:
-        if "person_windows" not in available:
-            raise MissingInputError("needs the person_windows table (each person's timetable)")
-        missing = [p for p in periods if p not in available["person_windows"]]
-        if missing:
-            raise MissingInputError(f"person_windows lacks periods {missing}")
+        if not atwork:
+            if "person_windows" not in available:
+                raise MissingInputError("needs the person_windows table (each person's timetable)")
+            missing = [p for p in periods if p not in available["person_windows"]]
+            if missing:
+                raise MissingInputError(f"person_windows lacks periods {missing}")
         tour_cols = set(available.get("tours", set()))
+        if atwork:
+            missing = [c for c in ("parent_tour_id", "tdd") if c not in tour_cols]
+            if missing:
+                raise MissingInputError(f"tours lack {missing} (subtours' work tours and their schedules)")
         view_cols = VIEW.columns(available)
         needs: dict[str, set[str]] = {"tours": {"tour_category", "tour_num", "tour_type", "person_id"}}
         if cfg.segment_fn is not None:
@@ -197,6 +221,9 @@ def tour_scheduling_component(
             for t, c in bound_pre.tables_used():
                 needs.setdefault(t, set()).add(c)
             skims |= {name for _, name, _ in bound_pre.skim_uses()}
+            wrappers = {accessor for accessor, _, _ in bound_pre.skim_uses()} - {"skim_dict"}
+            for accessor in wrappers:
+                needs["tours"] |= set(PREPROCESSOR_SKIMS[accessor])
         chooser_cols = view_cols | pre_targets | ({segment_column} if segment_column else set())
         made_here = pre_targets | ({segment_column} if segment_column else set())
 
@@ -243,7 +270,10 @@ def tour_scheduling_component(
         for t, c in view_needs.items():
             needs.setdefault(t, set()).update(c)
         needs["tours"] |= {c for c in OUTPUT_COLUMNS if c in tour_cols}  # values of other tours
-        needs["person_windows"] = set(periods)
+        if atwork:
+            needs["tours"] |= {"parent_tour_id", "tdd"}
+        else:
+            needs["person_windows"] = set(periods)
         if category == "joint":
             if "joint_tour_participants" not in available:
                 raise MissingInputError("needs the joint_tour_participants table")
@@ -266,7 +296,7 @@ def tour_scheduling_component(
         # (as in 1.x): comparing them with a string compares integer codes.
         cols = {c: v[table_rows] for c, v in VIEW.gather(ctx, resolved["view_needs"]).items()}
         for c in ("tour_num", "tour_type", "person_id", "tour_category") + \
-                (("household_id",) if category == "joint" else ()):
+                (("household_id",) if category == "joint" else ()) + (("parent_tour_id",) if atwork else ()):
             cols[c] = ctx.column("tours", c)[table_rows]
         cols["tour_id"] = ids[table_rows]  # 1.x: the tour's own ID is a chooser column too
         if cfg.segment_fn is not None:
@@ -282,17 +312,29 @@ def tour_scheduling_component(
         if bound_pre is not None and n:
             pre_cols = {c: (cols[c] if c in cols else ctx.column("tours", c)[table_rows])
                         for c in bound_pre.columns_used()}
+            wrappers = {a: tuple(ctx.column("tours", c)[table_rows] for c in PREPROCESSOR_SKIMS[a])
+                        for a in {a for a, _, _ in bound_pre.skim_uses()} - {"skim_dict"}}
+            skim_obj = WrappedSkims(ctx, wrappers) if wrappers else ZoneSkims(ctx)
             with np.errstate(all="ignore"):
-                v = bound_pre.function(pre_cols, ZoneSkims(ctx), n, TableLookup(ctx), None, {})
+                v = bound_pre.function(pre_cols, skim_obj, n, TableLookup(ctx), None, {})
             for name in bound_pre.targets:
                 cols[name] = np.asarray(v[name])
         cols = {c: v[order] for c, v in cols.items()}         # now in tour ID order
         rows_in_table = table_rows[order]
         tour_ids = ids[rows_in_table]
 
-        tt = TimeTable.from_columns(ctx.ids("person_windows"),
-                                    {p: ctx.column("person_windows", p) for p in periods}, alts)
         joint = category == "joint"
+        if atwork:
+            # a row per work tour, free only within the work tour (1.x: assign_subtour_mask);
+            # the previous subtour is the work tour's; 1.x starts with option 0
+            parents = np.asarray(cols["parent_tour_id"]).astype(np.int64)
+            tt = subtour_timetable(parents, ids, ctx.column("tours", "tdd"), periods, alts)
+            previous = np.zeros(len(tt.ids), dtype=np.int64)
+            person_rows = tt.rows(parents)
+            prev_rows = person_rows
+        else:
+            tt = TimeTable.from_columns(ctx.ids("person_windows"),
+                                        {p: ctx.column("person_windows", p) for p in periods}, alts)
         if joint:
             # the household's previous joint tour (1.x starts with option 0), per household
             participants = ctx.table_frame("joint_tour_participants")
@@ -301,13 +343,13 @@ def tour_scheduling_component(
             previous = np.zeros(len(owners), dtype=np.int64)
             prev_rows = owners.get_indexer(hh)
             person_rows = np.full(n, -1, dtype=np.int64)  # rows in each round's tour timetable
-        else:
+        elif not atwork:
             # each person's previous tour of this category in this step; 1.x starts with option 0
             previous = np.zeros(len(tt.ids), dtype=np.int64)
             person_rows = tt.rows(cols["person_id"])
             prev_rows = person_rows
         chosen = np.full(n, -1, dtype=np.int64)
-        traced = set(ctx.tracer.targets("tours", tour_ids).tolist())
+        traced = set(tour_ids[ctx.tracer.targets("tours", tour_ids)].tolist())  # tour IDs
         kept = info["utilities"] = {}
         stats = info["stats"] = {"option_rows": 0, "logsum_rows": 0}
         per_batch = max(1, max_rows // n_alts)
@@ -358,12 +400,14 @@ def tour_scheduling_component(
                       else np.full(len(ids), np.nan))
             values[rows_in_table] = chosen if c == "tdd" else alts[c][chosen]
             out[c] = values
+        if atwork:
+            return {"tours": out}
         return {"tours": out, "person_windows": person_tt.to_columns()}
 
     component = Component(
         name=step,
         run=run,
-        provides={"tours": OUTPUT_COLUMNS, "person_windows": periods},
+        provides={"tours": OUTPUT_COLUMNS} if atwork else {"tours": OUTPUT_COLUMNS, "person_windows": periods},
         resolve_needs=resolve_needs,
         description=f"{category.replace('_', '-')} tour scheduling: {n_alts} departure-return options, "
                     f"{len(segments)} spec(s){', mode choice logsums' if model else ''}, "
@@ -582,7 +626,8 @@ def _load_legacy(configs_dirs, settings_file, step, category) -> _Config:
 
     # chooser preprocessor
     pre = settings.get("preprocessor")
-    pre_spec, pre_tables = load_preprocessor(configs_dirs, pre, constants, top, step, "preprocessor")
+    pre_spec, pre_tables = load_preprocessor(configs_dirs, pre, constants, top, step, "preprocessor",
+                                             skim_accessors=list(PREPROCESSOR_SKIMS) if category == "atwork" else ())
 
     # alternatives' preprocessor: one, or one per segment
     alts_pre = settings.get("ALTS_PREPROCESSOR") or {}
@@ -617,6 +662,25 @@ def _load_legacy(configs_dirs, settings_file, step, category) -> _Config:
 
     return _Config(segments, segment_column, compiled, alts, n_alts, periods, shift, pre_spec,
                    pre_tables, alts_specs, model, tdd_segments, destination)
+
+
+def subtour_timetable(parent_ids, tour_ids, tdd, periods, alts) -> TimeTable:
+    """
+    1.x's subtour timetable: a row per work tour (the distinct ``parent_ids``,
+    in order), each period outside the work tour taken (I_MIDDLE) and those
+    within it free (assign_subtour_mask). ``tdd``: every tour's option, by
+    ``tour_ids``.
+    """
+    owners = pd.unique(np.asarray(parent_ids))
+    pos = pd.Index(np.asarray(tour_ids)).get_indexer(owners)
+    if (pos < 0).any():
+        raise ValueError(f"subtours of tours that aren't in the tours table: {owners[pos < 0][:5].tolist()}")
+    options = np.asarray(tdd, dtype=np.float64)[pos]
+    if np.isnan(options).any():
+        raise ValueError(f"subtours of tours without a schedule: {owners[np.isnan(options)][:5].tolist()}")
+    tt = TimeTable(owners, np.zeros((len(owners), len(periods)), dtype=np.int8), [int(p) for p in periods], alts)
+    tt.windows[:] = (tt.footprints[options.astype(np.int64)] == 0) * I_MIDDLE
+    return tt
 
 
 def joint_round_timetable(persons: TimeTable, tour_ids, participants: pd.DataFrame, alts) -> TimeTable:

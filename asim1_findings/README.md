@@ -29,7 +29,7 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 6 | Numba functions are compiled again in every run | Speed | Measured | Not reported |
 | 7 | Time-of-day skim lookups are a third of tour mode choice's time | Speed | Measured | Not reported |
 | 8 | Tours of a type with no spec segment are silently left unscheduled | Bug (configuration) | From reading the code | Not reported |
-| 9 | Smaller items (5) | Various | From reading the code, one measured | Not reported |
+| 9 | Smaller items (7) | Various | From reading the code, one measured | Not reported |
 | 10 | Bad input data runs silently: negative employment changed results across the model with no error or warning | Data checking | Reproduced (MTC) | Not reported |
 | 11 | Numbers in CSV files are read inexactly (pandas' default parser): up to 1e-12 relative error, in inputs and in coefficients | Accuracy | Measured (all three examples) | Not reported |
 | 12 | ARC's destination terms for CBD and urban area read the person's home zone, not the destination, so they never change a choice | Model specification | Reproduced (ARC, all households) | Not reported |
@@ -37,6 +37,7 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 14 | 8-bit integer formulas overflow when evaluated without numexpr (7 tours × start 22 = −102), changing one person's schedule in 50,000 households | Arithmetic | Reproduced (MTC full zones, 50,000 households) | Not reported |
 | 15 | CDAP ranks children by person type, not youngest first as its comments and CTRAMP say: in larger households, preschoolers are left out of the joint choice | Model behavior | Measured (MTC full zones, 50,000 households: 616 preschoolers) | Not reported |
 | 16 | Joint tour and non-mandatory frequency specs test tour types that don't exist ('eat', 'disc', 'maint' for eatout, othdiscr, othmaint): 13 terms with coefficients never apply | Model specification | Measured (MTC full zones, 50,000 households: 1.7% of joint tours change party type when corrected) | Not reported |
+| 17 | MTC's at-work subtour scheduling spec: four 'eating out' terms test business subtours, and the '2 to 3 hours' term covers 1 to 4 hours | Model specification | Measured (MTC full zones, 50,000 households: 70% of at-work subtours get another schedule when the eating-out terms are corrected) | Not reported |
 
 ---
 
@@ -349,6 +350,16 @@ From reading the code; low priority.
   row with an empty segment and all-zero terms. Harmless today (no model
   selects it), but it would surprise a check that every segment has a
   positive size.
+- **At-work subtour mode choice loses `household_id`.** It merges the
+  subtours with `persons_merged` with pandas' default suffixes, so a column
+  both have (`household_id`) becomes `household_id_x` and `household_id_y`;
+  tour mode choice merges the same tables with `suffixes=("", "_r")` and
+  keeps the tour's. Harmless today (the spec doesn't use it), but the same
+  spec can read a column in one step and fail in the other.
+- **Every run's log has an ERROR that isn't one.** Making at-work subtours'
+  IDs logs `ERROR - parent_tour_num.dtype: int8` (`canonical_ids.py`)
+  whenever the parent tour number isn't 64-bit, which it never is, then
+  converts it and carries on. A real error is easy to miss among them.
 
 ---
 
@@ -632,6 +643,50 @@ results, so it reproduces this too).
 and a check, when a model loads, that each value a spec compares a category
 column with is one of the column's categories (asim_core could do this in
 its input checks).
+
+---
+
+## 17. At-work subtour scheduling: 'eating out' terms test business subtours (MTC)
+
+**Evidence: measured** (MTC full zones, 50,000 households; asim_core's
+`atwork_subtour_scheduling`, which matches 1.x exactly, run from 1.x's
+saved state with the spec as shipped and corrected, the same random
+numbers).
+
+**What happens.** In MTC's `tour_scheduling_atwork.csv` (the at-work
+subtour types are `eat`, `business` and `maint`):
+
+- four terms labelled for eating out test business subtours:
+  `util_dummy_for_eating_out_purpose_and_duration_of_1_hour`,
+  `..._departure_at_11`, `..._departure_at_12` and `..._departure_at_13`
+  are all `(tour_type == 'business') & ...`, with coefficients 0.40, 1.51,
+  2.72 and 2.12 (the row before them, labelled business, also tests
+  business);
+- `util_duration_of_2_to_3_hours` is `(duration >= 1) and (duration <= 4)`,
+  so it also applies to 1-hour subtours, whose own term is the reference
+  (coefficient fixed at 0), and to 4-hour ones, which the 4-to-5-hours term
+  covers too.
+
+MWCOG's and ARC's at-work scheduling specs are different files and test
+`'eat'` for their eating-out terms.
+
+**How much** (15,100 at-work subtours):
+
+| Corrected | Subtours with another schedule | Effect |
+|---|---|---|
+| eating-out terms test `'eat'` | 10,648 (70%) | eat subtours departing in hour 11, 12 or 13: 53% → 91%; business subtours: 85% → 46% |
+| 2-to-3-hours term tests 2 to 3 hours | 8,240 (55%) | subtours returning in the hour they left: 53% → 33%; one hour later: 21% → 49% |
+
+As shipped, business subtours get the lunchtime departures and eat
+subtours don't.
+
+**Found while** porting these steps to asim_core (which reproduces 1.x's
+results, so it reproduces this too).
+
+**Suggested change.** `tour_type == 'eat'` in the four eating-out terms and
+`(duration >= 2) and (duration <= 3)` in the 2-to-3-hours term, after
+checking against the model's estimation (the labels and coefficients
+suggest these were meant; the CTRAMP original wasn't available here).
 
 ---
 

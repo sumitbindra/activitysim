@@ -26,9 +26,13 @@ origin (home zone) to the destination, ``do_skims`` back; ``odt_skims`` /
 ``dot_skims`` at the departure / return period, ``odr_skims`` /
 ``dor_skims`` the other way round.
 
+At-work subtours (1.x's atwork_subtour_mode_choice) use the same model:
+``atwork_subtour_mode_choice`` runs it for those tours only, from the
+workplace, with the ``atwork`` coefficients.
+
 Not supported yet (the loader says so): park-and-ride, trip mode choice
-logsums inside tour mode choice, annotation after the model, multinomial
-mode choice models, and at-work subtours (a separate 1.x step).
+logsums inside tour mode choice, annotation after the model and
+multinomial mode choice models.
 """
 
 from __future__ import annotations
@@ -80,6 +84,8 @@ from .runtime import TableLookup, plain
 from .simple_choice import ChooserView
 
 STEP = "tour_mode_choice_simulate"  # 1.x step name (random streams depend on it)
+ATWORK_STEP = "atwork_subtour_mode_choice"
+ATWORK_ORIG = "workplace_zone_id"  # 1.x: at-work subtours start from the workplace
 CHANNEL = "tours"
 ORIG, DEST = "home_zone_id", "destination"  # 1.x setup_skims defaults
 OUT_TIME, IN_TIME = "start", "end"
@@ -467,52 +473,107 @@ class TourModeChoiceModel:
 
 def tour_mode_choice(configs_dirs: Sequence[str | Path],
                      settings_file: str = "tour_mode_choice.yaml") -> Component:
+    return tour_mode_choice_component(configs_dirs, settings_file)
+
+
+def atwork_subtour_mode_choice(configs_dirs: Sequence[str | Path],
+                               settings_file: str = "tour_mode_choice.yaml") -> Component:
+    """
+    1.x's atwork_subtour_mode_choice: the tour mode choice model for the
+    at-work subtours only, from the workplace (the person's
+    ``workplace_zone_id``) to the subtour's destination, all with the
+    ``atwork`` coefficients. As 1.x, the subtours don't get a
+    ``tour_purpose`` column, and columns both the tours and persons_merged
+    have (``household_id``) are not columns of the choosers (1.x's merge
+    renames both).
+    """
+    return tour_mode_choice_component(configs_dirs, settings_file, step=ATWORK_STEP, category="atwork",
+                                      orig=ATWORK_ORIG, purpose="atwork")
+
+
+def tour_mode_choice_component(configs_dirs: Sequence[str | Path], settings_file: str = "tour_mode_choice.yaml",
+                               step: str = STEP, category: str | None = None, orig: str = ORIG,
+                               purpose: str | None = None) -> Component:
+    """
+    ``category``: only the tours of this category choose (others keep their
+    mode); None: every tour. ``purpose``: every chooser's segment (none: each
+    tour's purpose, as 1.x's tour_mode_choice_simulate works it out).
+    """
     model = TourModeChoiceModel(configs_dirs, settings_file)
     alternatives = model.alternatives
     categories = sorted([""] + alternatives)  # as the tours table holds them after 1.x's step
     periods = model.periods
+    added = set(ADDED) if purpose is None else {"out_period", "in_period"}
     resolved: dict = {}
 
     def resolve_needs(available: Mapping[str, set[str]]) -> Needs:
         view_cols = VIEW.columns(available)
         if "pnr_zone_id" in view_cols:
             raise MissingInputError("park-and-ride (pnr_zone_id) is not supported yet")
+        df_cols = view_cols
+        if category is not None:
+            # 1.x merges the subtours with persons_merged with pandas' default suffixes, so a
+            # column both have is neither's
+            tour_cols = set(available.get("tours", set()))
+            merged = set().union(*(available.get(t, set()) for t, _ in VIEW.joins))
+            df_cols = view_cols - (tour_cols & merged)
+            for c in [model.choice_column] + ([model.logsum_column] if model.logsum_column else []):
+                if c not in tour_cols and c == model.choice_column:
+                    raise MissingInputError(f"tours lack {c} (the other tours' modes)")
         roles = None
         if model.language == "asim_core":
             from .roles import role_columns
 
             roles = role_columns(VIEW, TOUR_ROLES, available)
-            check_roles("tour mode choice: tour_purpose", [model.purpose[1]], roles)
-        bound = model.bind(view_cols | set(ADDED), available, DEST, roles=roles)
-        columns = bound.columns - set(ADDED) - {"tour_id"}
-        columns |= model.chooser_inputs(view_cols)
+            if purpose is None:
+                check_roles("tour mode choice: tour_purpose", [model.purpose[1]], roles)
+        bound = model.bind(df_cols | added, available, DEST, orig=orig, roles=roles)
+        columns = bound.columns - added - {"tour_id"}
+        if purpose is None:
+            columns |= model.chooser_inputs(view_cols)
+        else:
+            columns |= set(model.time_columns.values())
         needs = {t: set(c) for t, c in VIEW.resolve(columns, available).items()}
+        if category is not None:
+            needs["tours"] |= {"tour_category"} | {c for c in (model.choice_column, model.logsum_column)
+                                                   if c and c in available.get("tours", set())}
         for t, c in bound.tables:
             needs.setdefault(t, set()).add(c)
         needs[SKIMS] = set(bound.skims)
         resolved["needs"] = {t: sorted(c) for t, c in needs.items()}
         resolved["bound"] = bound
+        resolved["view_needs"] = VIEW.resolve(columns, available)
         return resolved["needs"]
 
     def run(ctx: StepContext):
         needs, bound = resolved["needs"], resolved["bound"]
-        ids = ctx.ids("tours")
-        view_needs = {t: c for t, c in needs.items() if t != SKIMS}
-        cols = {c: plain(v) for c, v in VIEW.gather(ctx, view_needs).items()}
-        cols.update(model.chooser_columns(cols))
+        all_ids = ctx.ids("tours")
+        if category is None:
+            view_needs = {t: c for t, c in needs.items() if t != SKIMS}
+            cols = {c: plain(v) for c, v in VIEW.gather(ctx, view_needs).items()}
+            cols.update(model.chooser_columns(cols))
+            table_rows = np.arange(len(all_ids))
+        else:
+            cat = np.asarray(plain(ctx.column("tours", "tour_category")))
+            table_rows = np.flatnonzero(cat == category)   # 1.x's chooser order (table order)
+            cols = {c: np.asarray(plain(v))[table_rows] for c, v in VIEW.gather(ctx, resolved["view_needs"]).items()}
+            for k, c in model.time_columns.items():
+                cols[k] = periods.labels_for(cols[c])
+            cols["tour_purpose"] = np.full(len(table_rows), purpose, dtype=object)
+        ids = all_ids[table_rows]
 
         choices = np.empty(len(ids), dtype=np.int64)
         logsums = np.empty(len(ids), dtype=np.float64)
         purposes = cols["tour_purpose"]
         traced = ctx.tracer.targets("tours", ids)
-        for purpose in sorted(set(purposes)):  # 1.x's groupby order
-            rows = np.flatnonzero(purposes == purpose)
+        for seg_purpose in sorted(set(purposes)):  # 1.x's groupby order
+            rows = np.flatnonzero(purposes == seg_purpose)
             seg_ids = ids[rows]
-            c = {k: v[rows] for k, v in cols.items()}
+            c = {k: v[rows] for k, v in cols.items() if not (purpose is not None and k == "tour_purpose")}
             utils, probs, bad, seg_logsums, pre_values = model.evaluate(
-                ctx, bound, c, len(rows), purpose, seg_ids)
+                ctx, bound, c, len(rows), seg_purpose, seg_ids)
             if bad.any():
-                raise ValueError(f"{STEP}: {int(bad.sum())} '{purpose}' tours have no usable "
+                raise ValueError(f"{step}: {int(bad.sum())} '{seg_purpose}' tours have no usable "
                                  f"probabilities, e.g. tour IDs {seg_ids[bad][:5].tolist()}")
             rands = ctx.random.uniform(CHANNEL, seg_ids)
             seg_choices = ctx.engine.choose(probs, rands)
@@ -520,22 +581,39 @@ def tour_mode_choice(configs_dirs: Sequence[str | Path],
             logsums[rows] = seg_logsums
             local = np.flatnonzero(np.isin(rows, traced))
             if len(local):
-                _trace(ctx, purpose, seg_ids, local, pre_values, bound.preprocessor, utils, probs,
+                _trace(ctx, seg_purpose, seg_ids, local, pre_values, bound.preprocessor, utils, probs,
                        seg_logsums, rands, seg_choices, alternatives)
 
-        modes = pd.Categorical(np.asarray(alternatives, dtype=object)[choices], categories=categories)
-        out = {model.choice_column: modes}
+        chosen = np.asarray(alternatives, dtype=object)[choices]
+        if category is None:
+            out = {model.choice_column: pd.Categorical(chosen, categories=categories)}
+            if model.logsum_column:
+                out[model.logsum_column] = logsums
+            return {"tours": out}
+        # the other tours keep theirs; categories: both sets, sorted (1.x's assign_in_place)
+        current = ctx.column("tours", model.choice_column)
+        current = current if isinstance(current, pd.Categorical) else pd.Categorical(np.asarray(current, dtype=object))
+        cats = sorted(set(current.categories) | set(chosen))
+        values = np.asarray(current.astype(object), dtype=object).copy()
+        values[table_rows] = chosen
+        out = {model.choice_column: pd.Categorical(values, categories=cats)}
         if model.logsum_column:
-            out[model.logsum_column] = logsums
+            if model.logsum_column in needs["tours"]:
+                lv = np.asarray(ctx.column("tours", model.logsum_column), dtype=np.float64).copy()
+            else:
+                lv = np.full(len(all_ids), np.nan)
+            lv[table_rows] = logsums
+            out[model.logsum_column] = lv
         return {"tours": out}
 
     return Component(
-        name=STEP,
+        name=step,
         run=run,
         provides={"tours": [model.choice_column] + ([model.logsum_column] if model.logsum_column else [])},
         resolve_needs=resolve_needs,
-        description=f"tour mode choice: nested logit over {len(alternatives)} modes, "
-                    f"{len(model.segments)} purpose segments",
+        description=(f"tour mode choice: nested logit over {len(alternatives)} modes, "
+                     + (f"{len(model.segments)} purpose segments" if purpose is None
+                        else f"{category} tours, '{purpose}' coefficients, from {orig}")),
         info={
             "model": model,
             "definition": model.definition,

@@ -202,3 +202,34 @@ def test_block1_steps_match_1x_exactly(step, tmp_path):
         for col in cols:
             result = compare_column(comp.name, store[table], col, ref[col])
             assert result.status == "exact", result
+
+
+BLOCK2 = ["joint_tour_frequency", "joint_tour_composition", "joint_tour_participation", "joint_tour_destination",
+          "joint_tour_scheduling", "non_mandatory_tour_frequency", "atwork_subtour_frequency",
+          "atwork_subtour_destination", "atwork_subtour_scheduling", "atwork_subtour_mode_choice"]
+
+
+@pytest.fixture(scope="module")
+def mtc_skims(tmp_path_factory):
+    pytest.importorskip("tables")
+    from asim_core.skims import import_omx
+
+    return import_omx(REPO / "activitysim/examples/prototype_mtc/data/skims.omx",
+                      tmp_path_factory.mktemp("skims") / "skims")
+
+
+@pytest.mark.skipif(not BASELINE.exists(), reason="no ActivitySim 1.x baseline run")
+@pytest.mark.parametrize("step", BLOCK2)
+def test_block2_steps_match_1x_exactly(step, tmp_path, mtc_skims):
+    from asim_core import components
+
+    st = Asim1State(BASELINE)
+    comp = getattr(components, step)(CONFIGS)
+    store = st.load_store(st.previous_step(comp.name))
+    Runner([comp], tmp_path / "run", skims=mtc_skims).run([comp.name], store)
+    for table, cols in comp.provides.items():
+        ref = st.read(table, comp.name)
+        assert list(store[table].index) == list(ref.index), table
+        for col in cols:
+            result = compare_column(comp.name, store[table], col, ref[col])
+            assert result.status == "exact", result

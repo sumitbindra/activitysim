@@ -6,6 +6,8 @@ step's declared needs.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import numpy as np
 import pandas as pd
 
@@ -180,3 +182,33 @@ class ZoneSkims:
         out = np.full(len(origins), np.nan, dtype=values.dtype if values.dtype.kind == "f" else np.float64)
         out[ok] = values
         return out
+
+
+class WrappedSkims(ZoneSkims):
+    """
+    ``ZoneSkims`` plus 1.x's skim wrappers without time periods, for the
+    rows being annotated: ``wrappers`` maps an accessor name to the rows'
+    origin and destination zone IDs (1.x: ``skim_dict.wrap("origin",
+    "destination")`` as ``od_skims``). ``s(accessor, key, how)`` gets the
+    skim from origin to destination, ``reverse`` from destination to origin,
+    ``max`` the larger of both.
+    """
+
+    def __init__(self, ctx: StepContext, wrappers: Mapping[str, tuple]):
+        super().__init__(ctx)
+        self.wrappers = dict(wrappers)
+        self._pairs: dict = {}
+
+    def __call__(self, accessor: str, key: str, how: str = "get"):
+        if accessor not in self._pairs:
+            if accessor not in self.wrappers:
+                raise KeyError(f"no skim wrapper {accessor!r} here (there are {sorted(self.wrappers)})")
+            o, d = self.wrappers[accessor]
+            self._pairs[accessor] = self.ctx.zone_pairs(self.ctx.skim_positions(np.asarray(o)),
+                                                        self.ctx.skim_positions(np.asarray(d)))
+        pairs = self._pairs[accessor]
+        if how == "reverse":
+            return self.ctx.skim(key, pairs.reversed())
+        if how == "max":
+            return np.maximum(self.ctx.skim(key, pairs), self.ctx.skim(key, pairs.reversed()))
+        return self.ctx.skim(key, pairs)

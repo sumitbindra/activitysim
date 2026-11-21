@@ -49,6 +49,8 @@ from asim_core.inputs import check_inputs  # noqa: E402
 from asim_core.components import (  # noqa: E402
     atwork_subtour_destination,
     atwork_subtour_frequency,
+    atwork_subtour_mode_choice,
+    atwork_subtour_scheduling,
     auto_ownership,
     cdap_simulate,
     compute_accessibility,
@@ -84,7 +86,7 @@ PORTED = [initialize_landuse, initialize_households, compute_accessibility, scho
           joint_tour_participation, joint_tour_destination, joint_tour_scheduling,
           non_mandatory_tour_frequency, non_mandatory_tour_destination,
           non_mandatory_tour_scheduling, tour_mode_choice, atwork_subtour_frequency,
-          atwork_subtour_destination]
+          atwork_subtour_destination, atwork_subtour_scheduling, atwork_subtour_mode_choice]
 # steps that read the input files: they also take the data folders (and the sample size 1.x ran with)
 READS_INPUTS = {initialize_landuse, initialize_households}
 NOT_BUILT: dict[str, str] = {}  # component -> why it could not be built for this example
@@ -447,6 +449,10 @@ def main(argv=None) -> int:
     top = load_top_settings(configs)
     base_seed = int(top.get("rng_base_seed") or 0)
     components = build_components(configs, args.asim1_out)
+    absent = [c.name for c in components if c.name not in st.steps]
+    if absent:  # e.g. a 1.x run stopped early: nothing to compare these with
+        print(f"not in the 1.x run, so not checked: {', '.join(absent)}")
+        components = [c for c in components if c.name in st.steps]
 
     # skims first (imported from OMX unless an unchanged cache exists), so the input
     # checks read the cache instead of decompressing the OMX files a second time

@@ -545,30 +545,31 @@ class _Translator:
             left = right
         return parts[0] if len(parts) == 1 else "(" + " & ".join(parts) + ")"
 
+    @staticmethod
+    def _skim_name(key: ast.AST) -> str | None:
+        """'DIST' -> DIST; ('SOVTOLL_TIME', 'AM') -> SOVTOLL_TIME__AM (skim name and time period)."""
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            return key.value
+        if (isinstance(key, ast.Tuple) and len(key.elts) == 2
+                and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in key.elts)):
+            return f"{key.elts[0].value}__{key.elts[1].value}"
+        return None
+
     def skim(self, node: ast.Subscript) -> str:
         """skim_od['DIST'] or skim_od[('SOVTOLL_TIME', 'AM')] -> s('skim_od', 'SOVTOLL_TIME__AM')"""
-        key = node.slice
-        if isinstance(key, ast.Constant) and isinstance(key.value, str):
-            name = key.value
-        elif (
-            isinstance(key, ast.Tuple)
-            and len(key.elts) == 2
-            and all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in key.elts)
-        ):
-            name = f"{key.elts[0].value}__{key.elts[1].value}"  # skim name and time period
-        else:
+        name = self._skim_name(node.slice)
+        if name is None:
             self.fail(node, "skim keys must be 'NAME' or ('NAME', 'PERIOD')")
         self.skims.add(name)
         self.skim_uses.add((node.value.id, name, "get"))
         return f"s({node.value.id!r}, {name!r})"
 
     def skim_method(self, node: ast.Call, accessor: str, how: str) -> str:
-        """od_skims.reverse('DIST') (destination to origin) and od_skims.max('DIST') (larger of both)."""
-        if len(node.args) != 1 or node.keywords or not (
-            isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str)
-        ):
-            self.fail(node, f".{how}() takes one skim name in quotes")
-        name = node.args[0].value
+        """od_skims.reverse('DIST') (destination to origin) and od_skims.max('DIST') (larger of both);
+        the key can also be ('NAME', 'PERIOD')."""
+        name = self._skim_name(node.args[0]) if len(node.args) == 1 and not node.keywords else None
+        if name is None:
+            self.fail(node, f".{how}() takes one skim key: 'NAME' or ('NAME', 'PERIOD')")
         self.skims.add(name)
         self.skim_uses.add((accessor, name, how))
         return f"s({accessor!r}, {name!r}, {how!r})"
