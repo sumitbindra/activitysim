@@ -120,6 +120,80 @@ def _literal(value) -> str:
     raise FormulaError(f"constant value {value!r} is not a number, string, list or dict")
 
 
+class StringLambda:
+    """
+    A lambda that only builds text, e.g. 1.x's ``_Q = lambda s: "'{}'".format(s)``,
+    used to write query strings. Checked when the model loads (its parameters,
+    text and numbers, ``'...'.format(...)``, ``%`` and ``+`` only) and evaluated
+    then, without Python's eval.
+    """
+
+    def __init__(self, formula: str):
+        text = formula.strip().lstrip("@").strip()
+        node = ast.parse(text, mode="eval").body
+        if not isinstance(node, ast.Lambda) or node.args.vararg or node.args.kwarg or node.args.kwonlyargs \
+                or node.args.defaults:
+            raise ValueError("not a plain lambda")
+        self.params = [a.arg for a in node.args.args]
+        self.body = node.body
+        self.formula = text
+        self._check(self.body)
+
+    def _check(self, n):
+        if isinstance(n, ast.Constant) and isinstance(n.value, (str, int, float)):
+            return
+        if isinstance(n, ast.Name) and n.id in self.params:
+            return
+        if isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Mod, ast.Add)):
+            self._check(n.left)
+            self._check(n.right)
+            return
+        if isinstance(n, ast.Tuple):
+            for e in n.elts:
+                self._check(e)
+            return
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "format"
+                and not n.keywords):
+            self._check(n.func.value)
+            for a in n.args:
+                self._check(a)
+            return
+        raise ValueError(f"not a text-only lambda: {ast.unparse(n)}")
+
+    def _eval(self, n, env):
+        if isinstance(n, ast.Constant):
+            return n.value
+        if isinstance(n, ast.Name):
+            return env[n.id]
+        if isinstance(n, ast.Tuple):
+            return tuple(self._eval(e, env) for e in n.elts)
+        if isinstance(n, ast.BinOp):
+            left, right = self._eval(n.left, env), self._eval(n.right, env)
+            return left % right if isinstance(n.op, ast.Mod) else left + right
+        target = self._eval(n.func.value, env)
+        if not isinstance(target, str):
+            raise ValueError(f"{self.formula}: format() on something that is not text")
+        return target.format(*(self._eval(a, env) for a in n.args))
+
+    def __call__(self, *args):
+        if len(args) != len(self.params):
+            raise ValueError(f"{self.formula}: takes {len(self.params)} arguments")
+        return self._eval(self.body, dict(zip(self.params, args)))
+
+    def __repr__(self):
+        return self.formula
+
+
+def string_lambda(formula: str) -> StringLambda | None:
+    """A StringLambda for the formula, or None if it isn't one."""
+    if not formula.strip().lstrip("@").strip().startswith("lambda"):
+        return None
+    try:
+        return StringLambda(formula)
+    except (SyntaxError, ValueError):
+        return None
+
+
 def parse_pandas_query(text: str) -> ast.AST:
     """
     A pandas query or eval string as Python syntax, the way pandas reads it:
@@ -250,9 +324,27 @@ class _Translator:
             if test is _NOT_CONSTANT:
                 return test
             return self.fold(node.body if test else node.orelse)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Mod, ast.Add)):
+            # text only ('tour_type==%s' % _Q('work')); numbers are left to run time
+            left = self.fold(node.left)
+            if not isinstance(left, str):
+                return _NOT_CONSTANT
+            right = self.fold(node.right)
+            if right is _NOT_CONSTANT:
+                return right
+            if isinstance(node.op, ast.Add):
+                return left + right if isinstance(right, str) else _NOT_CONSTANT
+            return left % (tuple(right) if isinstance(right, list) else right)
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id == "setting":
                 return self.setting(node)
+            if (isinstance(node.func, ast.Name) and self.python_mode and not node.keywords
+                    and isinstance(self.constants.get(node.func.id), StringLambda)):
+                args = [self.fold(a) for a in node.args]
+                if any(a is _NOT_CONSTANT for a in args):
+                    return _NOT_CONSTANT
+                self.used_constants.add(node.func.id)
+                return self.constants[node.func.id](*args)
         return _NOT_CONSTANT
 
     def membership(self, node: ast.Compare):
@@ -514,8 +606,9 @@ class _Translator:
             if grouped is not None:
                 if len(node.args) != 1 or node.keywords:
                     self.fail(node, "reindex() takes the IDs to look up")
-                table, col, key = grouped
-                return f"t.sum_by({table!r}, {col!r}, {key!r}, {self.visit(node.args[0])})"
+                table, x, key = grouped
+                values = self.whole_columns(x, table)
+                return f"t.sum_values({table!r}, {key!r}, {values}, {self.visit(node.args[0])})"
         # <column expression>.<method>(...)
         if isinstance(func, ast.Attribute):
             target = self.visit(func.value)
@@ -592,17 +685,19 @@ class _Translator:
             self.fail(node, f"method .{method}() is not supported")
         self.fail(node, "unsupported function call")
 
-    def count_call(self, node: ast.Call, key: str) -> str:
+    def count_call(self, node: ast.Call, key: tuple) -> str:
         """
         _PERSON_COUNT('16 <= age', persons, households): for each of the df's rows
         (households), how many rows of the table (persons) with the df's ID in
         ``key`` meet the query, as 8-bit integers. The query is a pandas query
         on the table's columns.
         """
-        if len(node.args) != 3 or node.keywords or not isinstance(node.args[0], ast.Constant) \
-                or not isinstance(node.args[0].value, str):
-            self.fail(node, "the counting function takes a query in quotes, the table and the df")
-        table_node, df_node = node.args[1], node.args[2]
+        key, queried, df_pos = key
+        query_text = self.fold(node.args[0]) if len(node.args) == 3 else None
+        if len(node.args) != 3 or node.keywords or not isinstance(query_text, str):
+            self.fail(node, "the counting function takes a query (text worked out when the model loads) "
+                            "and two tables")
+        table_node, df_node = node.args[queried], node.args[df_pos]
         if not (isinstance(table_node, ast.Name) and table_node.id in self.table_columns):
             self.fail(node, "the second argument must be a table the model lists")
         if not (isinstance(df_node, ast.Name) and df_node.id in self.df_names):
@@ -611,9 +706,9 @@ class _Translator:
         if self.table_columns[table] is None:
             raise NeedsColumns(f"formula {self.formula!r}: needs the columns of table '{table}'")
         try:
-            query = parse_pandas_query(node.args[0].value)
+            query = parse_pandas_query(query_text)
         except (SyntaxError, tokenize.TokenError):
-            self.fail(node, f"query {node.args[0].value!r} is not valid syntax")
+            self.fail(node, f"query {query_text!r} is not valid syntax")
         mask = self.query(query, table)
         if key not in self.table_columns[table]:
             self.fail(node, f"table '{table}' has no column '{key}'")
@@ -650,8 +745,11 @@ class _Translator:
             return parts[0] if len(parts) == 1 else "(" + " & ".join(parts) + ")"
         self.fail(node, "unsupported syntax in a query")
 
-    def group_sum(self, node) -> tuple[str, str, str] | None:
-        """T.column.groupby(T.key).sum() -> (T, column, key), else None."""
+    def group_sum(self, node) -> tuple[str, ast.AST, str] | None:
+        """
+        X.groupby(T.key).sum() -> (T, X, key), else None. X is a column of T
+        or an expression on T's columns, e.g. (persons.adult & persons.active).astype(int).
+        """
         if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and node.func.attr == "sum" and not node.args and not node.keywords):
             return None
@@ -659,20 +757,32 @@ class _Translator:
         if not (isinstance(g, ast.Call) and isinstance(g.func, ast.Attribute) and g.func.attr == "groupby"
                 and len(g.args) == 1 and not g.keywords):
             return None
-        col, key = g.func.value, g.args[0]
-        if not (isinstance(col, ast.Attribute) and isinstance(col.value, ast.Name)
-                and isinstance(key, ast.Attribute) and isinstance(key.value, ast.Name)
-                and col.value.id == key.value.id and col.value.id in self.table_columns):
+        x, key = g.func.value, g.args[0]
+        if not (isinstance(key, ast.Attribute) and isinstance(key.value, ast.Name)
+                and key.value.id in self.table_columns):
             return None
-        table = col.value.id
+        table = key.value.id
+        named = {n.id for n in ast.walk(x) if isinstance(n, ast.Name)}
+        if named & (set(self.table_columns) - {table}) or named & ({"df"} | set(self.df_names)) \
+                or table not in named:
+            return None  # X must read this table's columns only
         cols = self.table_columns[table]
         if cols is None:
             raise NeedsColumns(f"formula {self.formula!r}: needs the columns of table '{table}'")
-        for c in (col.attr, key.attr):
-            if c not in cols:
-                self.fail(node, f"table '{table}' has no column '{c}'")
-            self.tables.add((table, c))
-        return table, col.attr, key.attr
+        if key.attr not in cols:
+            self.fail(node, f"table '{table}' has no column '{key.attr}'")
+        self.tables.add((table, key.attr))
+        return table, x, key.attr
+
+    def whole_columns(self, node: ast.AST, table: str) -> str:
+        """An expression on a table's columns, over all its rows (not looked up for some IDs)."""
+        if self._lookup is not None:
+            self.fail(node, "a grouped sum inside reindex() is not supported")
+        self._lookup = (table, None)
+        try:
+            return self.visit(node)
+        finally:
+            self._lookup = None
 
     def reindex(self, node: ast.Call) -> str:
         """
@@ -759,6 +869,8 @@ class _Translator:
         if name not in self.table_columns[table]:
             self.fail(node, f"table '{table}' has no column '{name}'")
         self.tables.add((table, name))
+        if lookup[1] is None:  # whole column (inside a grouped sum)
+            return f"t.col({table!r}, {name!r})"
         return f"t({table!r}, {name!r}, {lookup[1]})"
 
     def mapping(self, node: ast.AST) -> dict:

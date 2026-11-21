@@ -87,7 +87,12 @@ class TableLookup:
         as 1.x's ``T.column.groupby(T.key).sum().reindex(keys)`` (missing
         values are skipped, as pandas does).
         """
-        values = pd.Series(np.asarray(plain(self._column(table, column))))
+        return self.sum_values(table, key, plain(self._column(table, column)), keys)
+
+    def sum_values(self, table: str, key: str, values, keys):
+        """``sum_by`` for values worked out from the table's columns (one per row), e.g.
+        1.x's ``(persons.adult & persons.active).astype(int).groupby(persons.household_id).sum()``."""
+        values = pd.Series(np.asarray(values))
         by = np.asarray(plain(self._column(table, key)))
         return values.groupby(by).sum().reindex(np.asarray(keys)).to_numpy()
 

@@ -16,17 +16,25 @@ picked by a setting and tested with the experiment harness. Speed-ups come
 from those experiments. Sharrow is not used; 1.x with sharrow is only a
 baseline in the reports.
 
-Status: eight components are ported and match 1.x exactly:
-`compute_accessibility` (with skims), `school_location` and
-`workplace_location` (sampling, logsums, annotations after the model),
-`auto_ownership` (multinomial or nested logit), `mandatory_tour_scheduling` and `non_mandatory_tour_scheduling`
+Status: thirteen components are ported and match 1.x exactly:
+`initialize_landuse` and `initialize_households` (reading, household
+sampling, annotations, size tables), `compute_accessibility` (with skims),
+`school_location` and `workplace_location` (sampling, logsums, annotations
+after the model), `auto_ownership` (multinomial or nested logit),
+`free_parking`, `cdap_simulate` (the joint household day pattern),
+`mandatory_tour_frequency` (and the tours, with 1.x's tour IDs),
+`mandatory_tour_scheduling` and `non_mandatory_tour_scheduling`
 (timetables, rounds of tours, one utility per tour × departure-return
 option, mode choice logsums computed once per distinct input),
 `non_mandatory_tour_destination` (sampling of alternatives, size terms) and
 `tour_mode_choice_simulate` (nested logit, purpose segments, preprocessor,
 time-of-day skims). They were checked on three regions' example models:
-MTC, MWCOG and ARC (all 24,061 households). Every other step can be
+MTC, MWCOG and ARC (all 24,061 households), and on MTC's full zone system.
+MTC's and ARC's first ten steps, from the input files through mandatory
+tour scheduling, run in asim_core alone ([docs/block1.md](docs/block1.md)).
+Every other step can be
 **replayed** from a 1.x run, so the model runs end to end today. Results: [docs/milestone1.md](docs/milestone1.md),
+[docs/block1.md](docs/block1.md),
 [docs/skims_and_accessibility.md](docs/skims_and_accessibility.md),
 [docs/mwcog.md](docs/mwcog.md), [docs/arc.md](docs/arc.md),
 [docs/tour_mode_choice.md](docs/tour_mode_choice.md),
@@ -104,7 +112,7 @@ written so they can be reported to the ActivitySim project:
 | `src/asim_core/spec/model_file.py` | Reading model files (YAML with `extends`, CSV term, coefficient and derived-value tables). |
 | `configs/<example>/` | asim_core's additions to the 1.x examples' configs: each region's `input_tables.yaml`, and the six ported steps converted to model files. |
 | `src/asim_core/spec/` | Model definitions (Pydantic): choice models and assignment specs; the loader for today's YAML/CSV files; the formula translator. |
-| `src/asim_core/components/` | Components. `simple_choice.py` runs any simple choice model from its definition; `auto_ownership.py`, `accessibility.py`, `location_choice.py`, `tour_mode_choice.py`, `tour_scheduling.py` and `tour_destination.py` are ported models; `annotate.py` runs annotations after a model. |
+| `src/asim_core/components/` | Components. `simple_choice.py` runs any simple choice model from its definition; `initialize.py`, `auto_ownership.py`, `accessibility.py`, `location_choice.py`, `free_parking.py`, `cdap.py`, `mandatory_tour_frequency.py` (with `tours.py`: making tours and 1.x's tour IDs), `tour_mode_choice.py`, `tour_scheduling.py` and `tour_destination.py` are ported models; `annotate.py` runs annotations after a model. |
 | `harness/` | Scripts that run 1.x and compare (these import 1.x). |
 | `tests/` | Unit tests, plus an exact-match test against a saved 1.x run. |
 
@@ -149,6 +157,13 @@ profiling, for a quick correctness check after a change:
 
 ```bash
 python asim_core/harness/run_milestone1.py --profiles none
+```
+
+To run the ported steps on their own, from the input files, with nothing
+taken from 1.x (then compared with 1.x's tables after the last step):
+
+```bash
+python asim_core/harness/run_standalone.py --through mandatory_tour_scheduling
 ```
 
 The milestone run checks the example's inputs first and stops on errors.
@@ -213,26 +228,29 @@ A component is a name, a function, and what it reads and writes:
 ```python
 from asim_core.component import Component
 
-def free_parking_run(ctx):
+def work_from_home_run(ctx):
     workers = ctx.column("persons", "is_worker")
     ...
-    return {"persons": {"free_parking_at_work": choices}}
+    return {"persons": {"work_from_home": choices}}
 
-free_parking = Component(
-    name="free_parking",              # use the 1.x step name to match 1.x random numbers
-    run=free_parking_run,
+work_from_home = Component(
+    name="work_from_home",            # use the 1.x step name to match 1.x random numbers
+    run=work_from_home_run,
     needs={"persons": ["is_worker", "workplace_zone_id"]},
-    provides={"persons": ["free_parking_at_work"]},
+    provides={"persons": ["work_from_home"]},
 )
 ```
 
 Simple choice models, multinomial or nested logit, need no code: build them with
 `simple_choice_component(definition, step, view, output_column)`, as
-`components/auto_ownership.py` does.
+`components/auto_ownership.py` does; optionally only some rows choose, a
+preprocessor adds columns first, and the choices are mapped to the values
+written (`components/free_parking.py`).
 
 ## Not supported yet
 
-Park-and-ride, shadow pricing (workplace and school location), annotations
+Park-and-ride, shadow pricing (workplace and school location), CDAP's
+joint tour option, school escorting, `override_hh_ids`, annotations
 of tours and trips, Parquet skim files, two- and
 three-zone systems (MAZ, TAP), writing trip tables to OMX, starting a run
 from asim_core's own saved state, a command-line `run` for agency model

@@ -35,6 +35,7 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 12 | ARC's destination terms for CBD and urban area read the person's home zone, not the destination, so they never change a choice | Model specification | Reproduced (ARC, all households) | Not reported |
 | 13 | With zones renumbered, the skims' zone lookup is not used or checked: a lookup in another order gives every zone another zone's skims, silently | Zone numbering | From reading the code | Not reported |
 | 14 | 8-bit integer formulas overflow when evaluated without numexpr (7 tours × start 22 = −102), changing one person's schedule in 50,000 households | Arithmetic | Reproduced (MTC full zones, 50,000 households) | Not reported |
+| 15 | CDAP ranks children by person type, not youngest first as its comments and CTRAMP say: in larger households, preschoolers are left out of the joint choice | Model behavior | Measured (MTC full zones, 50,000 households: 616 preschoolers) | Not reported |
 
 ---
 
@@ -540,6 +541,51 @@ also switched `pandas.eval` off numexpr. asim_core matches 1.x as installed
 **Suggested change.** Widen 8-bit integer columns before formulas use them
 (or keep counts and hours in at least 16 bits), so results don't depend on
 the evaluation engine.
+
+---
+
+## 15. CDAP ranks children by person type, not youngest first
+
+**Evidence: measured** (MTC full zones; asim_core's rank code, shown
+identical to 1.x's, with the run's own random draws).
+
+**What happens.** CDAP chooses the day patterns of at most five members of
+a household jointly; others get a pattern drawn from fixed proportions by
+person type, without regard to the household. `assign_cdap_rank`
+(`abm/models/util/cdap.py`) decides who the five are. Its comments, quoting
+CTRAMP's `reOrderPersonsForCdap`, say: up to two workers, "preferring full
+over part, older over younger", then up to three children, "preferring
+youngest". The code sorts workers and children by person type only:
+
+```python
+children = persons.loc[persons[_ptype_].isin(person_type_map["CHILD"]), [_hh_id_, _ptype_, _age_]]
+    .sort_values(by=[_hh_id_, _ptype_], ascending=[True, True]).groupby(_hh_id_).head(3)
+```
+
+With MTC's person types (6 driving-age child, 7 school child, 8 preschool)
+ascending order puts driving-age children first and preschoolers last: the
+opposite of youngest first. Age is selected but not used. Workers of the
+same type are taken in table order, not by age.
+
+**How much.** In households of six or more:
+
+| MTC full zones | Persons outside the joint choice | of them children | of them preschoolers | Households where the 3 children differ from youngest-first |
+|---|---|---|---|---|
+| 5,000 households (example data) | 315 | 54 | 42 | 40 |
+| 10,000 households | 1,310 | 222 | 119 | 202 |
+| 50,000 households | 6,445 | 1,105 | 616 | 938 |
+
+A preschooler's pattern depends strongly on the household (someone has to
+stay home with them, CDAP's interaction terms model exactly that); drawn
+from fixed proportions it is not coordinated with anyone.
+
+**Found while** porting CDAP to asim_core (it reproduces 1.x's ranks
+exactly, as it must to match 1.x).
+
+**Suggested change.** Either sort children by age (and workers by person
+type, then age descending), as documented, or change the comments to say
+what the code does. A model change: results change for the affected
+households.
 
 ---
 

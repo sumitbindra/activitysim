@@ -29,6 +29,7 @@ from .translate import (
     build_function,
     compile_function,
     fold_constant,
+    string_lambda,
     translate,
 )
 
@@ -514,12 +515,14 @@ class InteractionModelDefinition(BaseModel):
 RANDOM_MARKER = "rng.lognormal_for_df(df,"  # as 1.x's assign_variables looks for it
 
 
-def counting_lambda(formula: str) -> str | None:
+def counting_lambda(formula: str) -> tuple[str, int, int] | None:
     """
-    The key column if the formula is 1.x's counting lambda, e.g.
-    ``lambda query, persons, households: persons.query(query).groupby('household_id')
-    .size().reindex(households.index).fillna(0).astype(np.int8)``: for each row
-    of the second table, how many rows of the first meet a query. Else None.
+    If the formula is 1.x's counting lambda, e.g. ``lambda query, persons,
+    households: persons.query(query).groupby('household_id').size()
+    .reindex(households.index).fillna(0).astype(np.int8)`` (for each row of one
+    table, how many rows of the other meet a query): the key column, and the
+    positions of the queried table's and the counted-for table's arguments
+    (1 and 2, or 2 and 1). Else None.
     """
     import ast as _ast
 
@@ -548,8 +551,9 @@ def counting_lambda(formula: str) -> str | None:
         return None
     reindex = n
     n = call(reindex, "reindex", 1)
-    if n is None or _ast.unparse(reindex.args[0]) != f"{other}.index":
+    if n is None or _ast.unparse(reindex.args[0]) not in (f"{other}.index", f"{table}.index"):
         return None
+    counted_for = _ast.unparse(reindex.args[0])[:-len(".index")]
     n = call(n, "size", 0)
     grouped = n
     n = call(grouped, "groupby", 1)
@@ -558,9 +562,10 @@ def counting_lambda(formula: str) -> str | None:
     key = grouped.args[0].value
     queried = n
     n = call(queried, "query", 1)
-    if n is None or _ast.unparse(queried.args[0]) != q or not (isinstance(n, _ast.Name) and n.id == table):
+    if n is None or _ast.unparse(queried.args[0]) != q or not isinstance(n, _ast.Name) \
+            or {n.id, counted_for} != {table, other}:
         return None
-    return key
+    return (key, 1, 2) if n.id == table else (key, 2, 1)
 
 
 @dataclass
@@ -703,7 +708,12 @@ class AssignmentSpec(BaseModel):
             key = counting_lambda(a.formula)
             if key is not None:  # e.g. _PERSON_COUNT: rows of a table per key, used by later rows
                 count_functions[a.target] = key
-                items.append((a.target, a.description, f"counts rows of a table per '{key}'"))
+                items.append((a.target, a.description, f"counts rows of a table per '{key[0]}'"))
+                continue
+            text_fn = string_lambda(a.formula) if a.target.startswith("_") else None
+            if text_fn is not None:  # e.g. _Q = lambda s: "'{}'".format(s): builds query text
+                constants[a.target] = text_fn
+                items.append((a.target, a.description, f"builds text: {text_fn}"))
                 continue
             if a.target.startswith("_") and a.target.isupper():
                 try:

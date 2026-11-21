@@ -182,3 +182,23 @@ def test_choosers_without_a_segment_are_reported(step, tmp_path):
     assert manifest["warnings"] == report.warnings
     value = np.asarray(store[table][column])[row]
     assert value == -1 or np.isnan(value)  # no choice, as in 1.x
+
+
+@pytest.mark.skipif(not BASELINE.exists(), reason="no ActivitySim 1.x baseline run")
+@pytest.mark.parametrize("step", ["initialize_landuse", "initialize_households", "free_parking", "cdap_simulate",
+                                  "mandatory_tour_frequency"])
+def test_block1_steps_match_1x_exactly(step, tmp_path):
+    from asim_core import components
+
+    st = Asim1State(BASELINE)
+    data = [REPO / "activitysim/examples/prototype_mtc/data"]
+    make = getattr(components, step)
+    comp = make(CONFIGS, data) if step.startswith("initialize") else make(CONFIGS)
+    store = st.load_store(st.previous_step(comp.name))
+    Runner([comp], tmp_path / "run").run([comp.name], store)
+    for table, cols in comp.provides.items():
+        ref = st.read(table, comp.name)
+        assert list(store[table].index) == list(ref.index), table
+        for col in cols:
+            result = compare_column(comp.name, store[table], col, ref[col])
+            assert result.status == "exact", result

@@ -96,10 +96,12 @@ def load_choice_model(
     formulas_see_coefficients: bool = False,
     skim_accessors: Sequence[str] = (),
     extra_constants: dict | None = None,
+    spec_key: str = "SPEC",
 ) -> ChoiceModelDefinition:
     """
     ``handled`` lists settings the calling component deals with itself (e.g.
-    ``preprocessor``), so they aren't reported as unsupported.
+    ``preprocessor``), so they aren't reported as unsupported. ``spec_key``:
+    the setting naming the spec file (CDAP: INDIV_AND_HHSIZE1_SPEC).
     ``formulas_see_coefficients``: formulas may use coefficient names as values
     (1.x allows this in mode choice models). ``skim_accessors`` are the skim
     lookups formulas may use (e.g. ``odt_skims``). ``extra_constants`` are
@@ -119,7 +121,7 @@ def load_choice_model(
             f"{settings_file} uses settings asim_core does not support yet: {', '.join(unsupported)}"
         )
 
-    spec_file = str(settings["SPEC"])
+    spec_file = str(settings[spec_key])
     if not spec_file.lower().endswith(".csv"):
         spec_file += ".csv"
     spec_path = find_config_file(configs_dirs, spec_file)
