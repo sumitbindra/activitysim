@@ -106,6 +106,85 @@ class StepRandom:
         return out
 
 
+# MT19937, as NumPy's RandomState (legacy, frozen) runs it
+_N, _M = 624, 397
+_MULT = np.uint32(1812433253)
+_MATRIX_A, _UPPER, _LOWER = np.uint32(0x9908B0DF), np.uint32(0x80000000), np.uint32(0x7FFFFFFF)
+# the doubles a freshly seeded generator gives before its state needs more than one pass of the
+# twist: output i (i < N - M) depends only on seeding words i, i + 1 and i + M; a double takes two
+FIRST_DRAWS = (_N - _M) // 2  # 113
+
+
+def _temper(y: np.ndarray) -> np.ndarray:
+    y = y ^ (y >> np.uint32(11))
+    y = y ^ ((y << np.uint32(7)) & np.uint32(0x9D2C5680))
+    y = y ^ ((y << np.uint32(15)) & np.uint32(0xEFC60000))
+    return y ^ (y >> np.uint32(18))
+
+
+def _first_doubles(seeds: np.ndarray, k: int) -> np.ndarray:
+    """
+    ``RandomState(seed).rand(k)`` for every seed at once (k <= FIRST_DRAWS),
+    bit for bit: the seeding recurrence (``init_genrand``) as far as word
+    397 + 2k, one pass of the twist for the outputs used, tempering, and two
+    32-bit outputs per double as ``random_sample``. Returns (len(seeds), k).
+    """
+    words = 2 * k
+    cur = np.asarray(seeds).astype(np.uint32)  # a copy, updated in place
+    tmp = np.empty_like(cur)
+    low = np.empty((words + 1, len(cur)), dtype=np.uint32)  # seeding words 0 .. 2k
+    high = np.empty((words, len(cur)), dtype=np.uint32)  # seeding words 397 .. 396 + 2k
+    low[0] = cur
+    for pos in range(1, _M + words):
+        np.right_shift(cur, 30, out=tmp)
+        np.bitwise_xor(cur, tmp, out=cur)
+        np.multiply(cur, _MULT, out=cur)  # mod 2**32, as the C code
+        np.add(cur, np.uint32(pos), out=cur)
+        if pos <= words:
+            low[pos] = cur
+        elif pos >= _M:
+            high[pos - _M] = cur
+    y = (low[:-1] & _UPPER) | (low[1:] & _LOWER)
+    out = _temper(high ^ (y >> np.uint32(1)) ^ ((y & np.uint32(1)) * _MATRIX_A))
+    a = (out[0::2] >> np.uint32(5)).astype(np.float64)
+    b = (out[1::2] >> np.uint32(6)).astype(np.float64)
+    return ((a * 67108864.0 + b) / 9007199254740992.0).T
+
+
+@register("random", "vectorized", agreement="exact",
+          description="1.x's per-row streams, the same numbers, worked out for all rows at once (each row's "
+                      "first 113 uniform draws in a step; later ones, and normal draws, row by row as asim1)")
+class VectorizedRandom(StepRandom):
+    """
+    The reference's numbers without its loop: each row's stream is seeded
+    and drawn from for all rows at once (``_first_doubles``), in batches of
+    rows so the working arrays stay small. Rows whose stream is past its
+    first 113 draws in the step, and normal draws, go through the
+    reference's per-row loop.
+    """
+
+    BATCH_ROWS = 1 << 16  # fastest measured: fewer NumPy calls per row, arrays still in cache
+    SAVED_WORDS = 1 << 24  # at most 64 MB of seeding words kept per batch (4k + 1 per row)
+
+    def _draw(self, seeds: np.ndarray, offsets: np.ndarray, n: int) -> np.ndarray:
+        out = np.empty((len(seeds), n), dtype=np.float64)
+        fast = offsets + n <= FIRST_DRAWS
+        rows = np.flatnonzero(fast)
+        if len(rows):
+            k_all = int(offsets[rows].max()) + n
+            batch = min(self.BATCH_ROWS, max(4096, self.SAVED_WORDS // (4 * k_all + 1)))
+            for start in range(0, len(rows), batch):
+                r = rows[start:start + batch]
+                off = offsets[r]
+                k = int(off.max()) + n
+                first = _first_doubles(seeds[r], k)
+                out[r] = first if k == n else np.take_along_axis(first, off[:, None] + np.arange(n), axis=1)
+        slow = np.flatnonzero(~fast)
+        if len(slow):
+            out[slow] = super()._draw(seeds[slow], offsets[slow], n)
+        return out
+
+
 def _splitmix64(x: np.ndarray) -> np.ndarray:
     """SplitMix64 finalizer: a well-known 64-bit mixing function (vectorized)."""
     with np.errstate(over="ignore"):
