@@ -596,6 +596,17 @@ class _Translator:
         # a counting lambda defined by an earlier row: _PERSON_COUNT('16 <= age', persons, households)
         if isinstance(func, ast.Name) and func.id in self.count_functions:
             return self.count_call(node, self.count_functions[func.id])
+        # size_terms.get_cols(names): each name's column position in the size terms (1.x: DataFrameMatrix)
+        if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "size_terms"
+                and func.attr == "get_cols" and func.value.id not in self.objects):
+            columns = self.constants.get("size_terms")
+            if columns is None or not hasattr(columns, "columns"):
+                self.fail(node, "size_terms.get_cols() needs the size terms, which this step doesn't give")
+            if len(node.args) != 1 or node.keywords:
+                self.fail(node, "size_terms.get_cols() takes the column names")
+            self.used_constants.add("size_terms")
+            mapping = {c: i for i, c in enumerate(columns.columns)}
+            return f"_get_cols({self.visit(node.args[0])}, {mapping!r})"
         # network_los.skim_time_period_label(times): each time's skim time period label (1.x: pd.cut)
         if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "network_los"
                 and func.attr == "skim_time_period_label"):
@@ -615,7 +626,10 @@ class _Translator:
                                 f"(supported: {sorted(self.objects[func.value.id])})")
             if node.keywords:
                 self.fail(node, f"{func.value.id}.{func.attr}() takes no keyword arguments")
-            return f"{func.value.id}.{func.attr}({', '.join(self.visit(a) for a in node.args)})"
+            # the step's objects come in the terms function's ``tt`` argument: the timetable
+            # itself (tt.<method>), or a namespace of objects (tt.size_terms.<method>)
+            obj = "tt" if func.value.id == "tt" else f"tt.{func.value.id}"
+            return f"{obj}.{func.attr}({', '.join(self.visit(a) for a in node.args)})"
         # skim_dict.lookup(origins, destinations, ('NAME', 'PERIOD'))
         if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
                 and func.value.id in self.skim_accessors and func.attr == "lookup"):
@@ -1424,6 +1438,11 @@ class _DfView:
         return pd.Series(k).groupby(k).size()
 
 
+def _get_cols(names, mapping):
+    """1.x's DataFrameMatrix.get_cols: np.vectorize(dict.get) over the names."""
+    return np.vectorize(mapping.get)(np.asarray(names, dtype=object))
+
+
 def _period_label(times, periods, labels):
     """1.x's network_los.skim_time_period_label for a column: pd.cut, then text."""
     if np.ndim(times) == 0:
@@ -1506,7 +1525,7 @@ RUNTIME_NAMESPACE = {"np": np, "_clip": _clip, "_fillna": _fillna, "_map": _map,
                      "_pandas_eval": _pandas_eval, "_as_int8": _as_int8, "_shift": _shift,
                      "_other_than": _other_than, "_where": _where, "_column_of": _column_of,
                      "_reindex_columns": _reindex_columns, "_series_reindex": _series_reindex,
-                     "_reindex_i": _reindex_i, "_DfView": _DfView, "_isnull": _isnull, "_period_label": _period_label}
+                     "_reindex_i": _reindex_i, "_DfView": _DfView, "_isnull": _isnull, "_get_cols": _get_cols, "_period_label": _period_label}
 
 
 def build_function(name: str, items: list[tuple[str, Translated]], doc: str = "") -> str:

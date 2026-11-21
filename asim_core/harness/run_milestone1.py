@@ -68,7 +68,13 @@ from asim_core.components import (  # noqa: E402
     non_mandatory_tour_frequency,
     non_mandatory_tour_scheduling,
     school_location,
+    stop_frequency,
     tour_mode_choice,
+    trip_destination,
+    trip_mode_choice,
+    trip_purpose,
+    trip_purpose_and_destination,
+    trip_scheduling,
     workplace_location,
 )
 from asim_core.spec.translate import FormulaError  # noqa: E402
@@ -86,7 +92,9 @@ PORTED = [initialize_landuse, initialize_households, compute_accessibility, scho
           joint_tour_participation, joint_tour_destination, joint_tour_scheduling,
           non_mandatory_tour_frequency, non_mandatory_tour_destination,
           non_mandatory_tour_scheduling, tour_mode_choice, atwork_subtour_frequency,
-          atwork_subtour_destination, atwork_subtour_scheduling, atwork_subtour_mode_choice]
+          atwork_subtour_destination, atwork_subtour_scheduling, atwork_subtour_mode_choice,
+          stop_frequency, trip_purpose, trip_destination, trip_purpose_and_destination, trip_scheduling,
+          trip_mode_choice]
 # steps that read the input files: they also take the data folders (and the sample size 1.x ran with)
 READS_INPUTS = {initialize_landuse, initialize_households}
 NOT_BUILT: dict[str, str] = {}  # component -> why it could not be built for this example
@@ -236,7 +244,10 @@ def end_to_end(components, st: Asim1State, out: Path, base_seed: int, skims):
         for t, cols in comp.provides.items():
             ref = st.read(t, final)
             for col in cols:
-                comparisons.append(compare_column(f"end of run ({final})", store[t], col, ref[col]))
+                if col not in ref.columns and col not in store[t].column_names:
+                    continue  # dropped by a later step in both runs (e.g. trips' failed)
+                comparisons.append(compare_column(f"end of run ({final})", store[t], col,
+                                                  ref[col] if col in ref.columns else pd.Series(dtype=object)))
     return report, comparisons
 
 

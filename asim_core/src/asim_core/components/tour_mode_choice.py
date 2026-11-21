@@ -672,10 +672,12 @@ class SkimLookup:
     """
 
     def __init__(self, ctx: StepContext, periods, orig: np.ndarray, dest: np.ndarray,
-                 period_labels: Mapping[str, np.ndarray], wrappers: Mapping | None = None):
+                 period_labels: Mapping[str, np.ndarray], wrappers: Mapping | None = None,
+                 zones: Mapping[str, np.ndarray] | None = None):
         self.ctx = ctx
         self.wrappers = SKIM_WRAPPERS if wrappers is None else wrappers
-        self.zones = {"orig": orig, "dest": dest}
+        # zone positions by role (orig, dest; trip destination also has its own roles)
+        self.zones = {"orig": orig, "dest": dest} if zones is None else dict(zones)
         # positions shared by every skim looked up for the same zone pairs (and periods)
         self._pairs: dict = {}
         labels = periods.unique_labels
@@ -686,7 +688,7 @@ class SkimLookup:
             covered = sum(len(r) for _, r in self.groups[col])
             if covered != len(values):
                 raise ValueError(f"{col}: labels not in the skim time periods {labels}")
-        self.n = len(orig)
+        self.n = len(next(iter(self.zones.values())))
 
     def pairs(self, o_role: str, d_role: str):
         if (o_role, d_role) not in self._pairs:
