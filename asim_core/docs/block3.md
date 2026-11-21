@@ -224,10 +224,11 @@ median of 3 runs; `profile_step.py`):
 | trip_scheduling_choice | ARC | 0.094 | 0.368 | 6 | 6 |
 | trip_departure_choice | ARC | 0.072 | 0.261 | 5 | 6 |
 
-On MTC's 25 zones trip destination is 18 times faster than 1.x (1.x's cost
-there is per call: one sample, two logsum and one choice evaluation per trip
-number and primary purpose); on full MTC's 1,475 zones the sampling's work
-per zone dominates and the gain is 2.7 to 4 times.
+On MTC's 25 zones trip destination is 18 times faster than 1.x; on full
+MTC's 1,475 zones, 2.7 to 4 times. Why the gain shrinks with more zones
+(per-call costs in 1.x, which runs a sample, two logsum and one choice
+evaluation per trip number and primary purpose, against work per zone) has
+not been measured yet.
 
 ## Reproducing
 
