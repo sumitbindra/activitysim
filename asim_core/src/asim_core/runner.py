@@ -125,6 +125,8 @@ class Runner:
                     elif missing:
                         problems.append(f"{step}: needs {table}.{missing}, not provided by any earlier step")
                 resolved[step] = needs
+                if comp.resolve_provides is not None:  # this run's columns (see Component)
+                    comp.provides = comp.provides_given(available)
                 for table, cols in comp.provides.items():
                     available.setdefault(table, set()).update(cols)
                     computed_cols[table].update(cols)
@@ -242,7 +244,8 @@ class Runner:
                     changed = _changed_by_step(df[column], before, column, ids)
                     keep = ~changed
                     result = compare_column(
-                        step, Table(table, ids[keep], old.index_name, {column: _take(ours, keep)}),
+                        step, Table(table, ids[keep], old.index_name,
+                                    {column: _widened(_take(ours, keep), df[column], before, column)}),
                         column, df[column].loc[ids[keep]],
                     )
                     if changed.any():
@@ -271,6 +274,24 @@ class Runner:
 
 def _take(values, mask):
     return values[np.asarray(mask)]
+
+
+def _widened(ours, after, before, column):
+    """
+    Our categorical column under 1.x's categories after its step, if that step
+    changed them (1.x's extend_table unites a column's categories with the new
+    rows') and ours were 1.x's before it; else as it is.
+    """
+    import pandas as pd
+
+    if not (isinstance(ours, pd.Categorical) and isinstance(after.dtype, pd.CategoricalDtype)
+            and before is not None and column in getattr(before, "columns", ())
+            and isinstance(before[column].dtype, pd.CategoricalDtype)):
+        return ours
+    old_cats, new_cats = list(before[column].cat.categories), list(after.cat.categories)
+    if list(ours.categories) == old_cats and old_cats != new_cats:
+        return pd.Categorical(np.asarray(ours, dtype=object), categories=after.cat.categories)
+    return ours
 
 
 def _changed_by_step(after, before, column, ids) -> np.ndarray:

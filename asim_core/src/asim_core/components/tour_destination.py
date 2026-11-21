@@ -62,6 +62,7 @@ from ..spec.legacy import (
     load_global_constants,
     load_interaction_model,
     load_top_settings,
+    read_settings,
     read_yaml,
 )
 from .runtime import plain
@@ -103,9 +104,32 @@ def non_mandatory_tour_destination(
     settings_file: str = "non_mandatory_tour_destination.yaml",
     max_rows: int = 1_000_000,
 ) -> Component:
+    return tour_destination_component(configs_dirs, settings_file, STEP, CATEGORY, max_rows)
+
+
+def joint_tour_destination(
+    configs_dirs: Sequence[str | Path],
+    settings_file: str = "joint_tour_destination.yaml",
+    max_rows: int = 1_000_000,
+) -> Component:
+    """1.x's joint_tour_destination: the same model as non-mandatory destination
+    (run_tour_destination), for the joint tours, from their point person."""
+    return tour_destination_component(configs_dirs, settings_file, "joint_tour_destination", "joint", max_rows)
+
+
+def tour_destination_component(
+    configs_dirs: Sequence[str | Path],
+    settings_file: str,
+    step: str,
+    category: str,
+    max_rows: int = 1_000_000,
+) -> Component:
+    """A destination for each tour of ``category`` (1.x's run_tour_destination)."""
+    STEP, CATEGORY = step, category  # noqa: N806 (the module's names, for this step)
     configs_dirs = [Path(d) for d in configs_dirs]
     path = find_config_file(configs_dirs, settings_file)
-    cfg = _load_model_file(path, configs_dirs) if is_model_file(path) else _load_legacy(configs_dirs, settings_file)
+    cfg = _load_model_file(path, configs_dirs) if is_model_file(path) else \
+        _load_legacy(configs_dirs, settings_file, step)
     segments, segment_col, orig_col, alt_col = cfg.segments, cfg.segment_col, cfg.orig_col, cfg.alt_col
     chooser_id, sample_size, logsum_column = cfg.chooser_id, cfg.sample_size, cfg.logsum_column
     size_weights, size_columns, shift = cfg.size_weights, cfg.size_columns, cfg.shift
@@ -207,7 +231,7 @@ def non_mandatory_tour_destination(
                 raise ValueError(f"{STEP}: no zone has a size for segment '{seg}'")
             # 2. sample
             sample = _sample(ctx, sel, tour_ids, cols, orig_pos, alt_zones, alt_size,
-                             sample_fns[seg], sample_size, shift, max_rows)
+                             sample_fns[seg], sample_size, shift, max_rows, step=STEP)
             # 3. logsums
             if model is not None:
                 sample["mode_choice_logsum"] = _logsums(
@@ -218,7 +242,7 @@ def non_mandatory_tour_destination(
             # 4. choice
             zone_size = pd.Series(alt_size, index=alt_zones)
             seg_chosen, seg_logsums = _choose(ctx, sel, tour_ids, cols, orig_pos, sample, zone_size,
-                                              choice_fns[seg], shift, max_rows, alt_col, chooser_id)
+                                              choice_fns[seg], shift, max_rows, alt_col, chooser_id, step=STEP)
             chosen[sel] = seg_chosen
             logsums[sel] = seg_logsums
             debug[seg] = {"tour_id": tour_ids[sample["tour"]], **{k: v for k, v in sample.items() if k != "tour"}}
@@ -300,9 +324,9 @@ class _Config:
     max_rows: int | None = None
 
 
-def _load_legacy(configs_dirs, settings_file) -> _Config:
+def _load_legacy(configs_dirs, settings_file, step=STEP) -> _Config:
     """Today's settings, specs and coefficients."""
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     top = load_top_settings(configs_dirs)
     unsupported = [f"{k} ({why})" for k, why in _UNSUPPORTED.items() if settings.get(k)]
     method = (settings.get("compute_settings") or {}).get("sample_method") or top.get("sample_method")
@@ -341,7 +365,7 @@ def _load_legacy(configs_dirs, settings_file) -> _Config:
 
     def load(spec_key, seg):
         return load_interaction_model(configs_dirs, settings[spec_key], settings["COEFFICIENTS"],
-                                      constants, name=f"{STEP}_{spec_key.lower()}_{seg}",
+                                      constants, name=f"{step}_{spec_key.lower()}_{seg}",
                                       value_column=seg, skim_accessors=[SKIM_ACCESSOR])
 
     sample_defs = {seg: load("SAMPLE_SPEC", seg) for seg in segments}

@@ -75,6 +75,8 @@ NP_FUNCTIONS = {
 }
 NP_VALUES = {"inf", "nan"}  # np.inf, np.nan
 ASTYPE_NAMES = {"int", "float", "bool"}  # .astype(int) etc.
+# 1.x's time-window functions formulas may call (components/overlap.py)
+WINDOW_FUNCTIONS = {"hh_time_window_overlap", "person_time_window_overlap", "person_max_window"}
 ASTYPE_STRINGS = {"int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64",
                   "float32", "float64", "bool"}
 
@@ -184,6 +186,26 @@ class StringLambda:
         return self.formula
 
 
+@dataclass(frozen=True)
+class CountingLambda:
+    """
+    1.x's counting lambda, e.g. ``lambda ptype, activity, households, persons:
+    persons.query('ptype == %s and cdap_activity==\'%s\'' % (ptype, activity))
+    .groupby('household_id').size().reindex(households.index).fillna(0)``: for
+    each row of one table (``counted``), how many rows of another
+    (``queried``) with its ID in ``key`` meet a query, the query text built
+    from the other arguments (``others``, by ``query``) when the model loads.
+    """
+
+    key: str
+    queried: int
+    counted: int
+    others: tuple
+    query: StringLambda
+    as_int8: bool
+    n_args: int
+
+
 def string_lambda(formula: str) -> StringLambda | None:
     """A StringLambda for the formula, or None if it isn't one."""
     if not formula.strip().lstrip("@").strip().startswith("lambda"):
@@ -228,8 +250,11 @@ class _Translator:
         df_names: set[str] = frozenset({"df"}),
         objects: Mapping[str, set[str]] | None = None,
         count_functions: Mapping[str, str] | None = None,
+        views: Mapping[str, str] | None = None,
     ):
         self.formula = formula
+        # temporaries holding some rows of a table (1.x: tours[tours.tour_category == 'joint'])
+        self.views = dict(views or {})
         # name -> key column: lambdas counting another table's rows per key (person_count)
         self.count_functions = dict(count_functions or {})
         self.random_broadcast: bool | None = None
@@ -430,6 +455,14 @@ class _Translator:
                 return f"np.{node.attr}"
             if isinstance(node.value, ast.Name) and node.value.id in self.table_columns:
                 return self.table_column(node, node.value.id, node.attr)
+            # a column of some rows of a table: _JOINT_TOURS.tour_type
+            if isinstance(node.value, ast.Name) and node.value.id in self.views and node.value.id in self.assigned:
+                table = self.views[node.value.id]
+                if node.attr not in (self.table_columns.get(table) or ()):
+                    self.fail(node, f"table '{table}' has no column '{node.attr}'")
+                self.tables.add((table, node.attr))
+                self.names.add(node.value.id)
+                return f"v[{node.value.id!r}].col({node.attr!r})"
             self.fail(node, "unsupported attribute")
 
         if isinstance(node, ast.Subscript):
@@ -444,6 +477,16 @@ class _Translator:
                 name = self.fold(node.slice)
                 if isinstance(name, str):
                     return self.table_column(node, node.value.id, name)
+            # some rows of a table or view: tours[tours.tour_category == 'joint']
+            view = self.view_expr(node)
+            if view is not None:
+                return view[0]
+            # a column of an earlier row's result that has several: _HH_OVERLAPS['aa']
+            if isinstance(node.value, ast.Name) and node.value.id in self.assigned:
+                key = self.fold(node.slice)
+                if isinstance(key, str):
+                    self.names.add(node.value.id)
+                    return f"_column_of({self.visit(node.value)}, {key!r})"
             self.fail(node, "unsupported subscript (only df['column'] and skim lookups are allowed)")
 
         if isinstance(node, ast.IfExp):
@@ -546,6 +589,9 @@ class _Translator:
             if len(node.args) != 2 or node.keywords:
                 self.fail(node, "other_than() takes the groups and the flags")
             return f"_other_than({self.visit(node.args[0])}, {self.visit(node.args[1])})"
+        # 1.x's time-window functions
+        if isinstance(func, ast.Name) and func.id in WINDOW_FUNCTIONS:
+            return self.window_function(node, func.id)
         # a counting lambda defined by an earlier row: _PERSON_COUNT('16 <= age', persons, households)
         if isinstance(func, ast.Name) and func.id in self.count_functions:
             return self.count_call(node, self.count_functions[func.id])
@@ -609,6 +655,29 @@ class _Translator:
                 table, x, key = grouped
                 values = self.whole_columns(x, table)
                 return f"t.sum_values({table!r}, {key!r}, {values}, {self.visit(node.args[0])})"
+            # V.groupby('key').size().reindex(ids), V some rows of a table (tours[tours.x == 'y'])
+            counted = self.group_size_expr(func.value)
+            if counted is not None:
+                if len(node.args) != 1 or node.keywords:
+                    self.fail(node, "reindex() takes the IDs to look up")
+                return f"_series_reindex({counted}, {self.visit(node.args[0])})"
+            # T.groupby('key').size().reindex(ids): how many rows of another table per ID
+            sized = func.value
+            if (isinstance(sized, ast.Call) and isinstance(sized.func, ast.Attribute) and sized.func.attr == "size"
+                    and not sized.args and isinstance(sized.func.value, ast.Call)):
+                g = sized.func.value
+                if (isinstance(g.func, ast.Attribute) and g.func.attr == "groupby" and len(g.args) == 1
+                        and isinstance(g.func.value, ast.Name) and g.func.value.id in self.table_columns
+                        and isinstance(self.fold(g.args[0]), str)):
+                    if len(node.args) != 1 or node.keywords:
+                        self.fail(node, "reindex() takes the IDs to look up")
+                    table, key = g.func.value.id, self.fold(g.args[0])
+                    if self.table_columns[table] is None:
+                        raise NeedsColumns(f"formula {self.formula!r}: needs the columns of table '{table}'")
+                    if key not in self.table_columns[table]:
+                        self.fail(node, f"table '{table}' has no column '{key}'")
+                    self.tables.add((table, key))
+                    return f"t.group_size({table!r}, {key!r}, {self.visit(node.args[0])})"
         # <column expression>.<method>(...)
         if isinstance(func, ast.Attribute):
             target = self.visit(func.value)
@@ -685,23 +754,30 @@ class _Translator:
             self.fail(node, f"method .{method}() is not supported")
         self.fail(node, "unsupported function call")
 
-    def count_call(self, node: ast.Call, key: tuple) -> str:
+    def count_call(self, node: ast.Call, cl: CountingLambda) -> str:
         """
         _PERSON_COUNT('16 <= age', persons, households): for each of the df's rows
         (households), how many rows of the table (persons) with the df's ID in
-        ``key`` meet the query, as 8-bit integers. The query is a pandas query
-        on the table's columns.
+        ``key`` meet the query, as 8-bit integers (or as pandas gives them,
+        without 1.x's ``astype(np.int8)``). The query is a pandas query on the
+        table's columns, its text worked out when the model loads.
         """
-        key, queried, df_pos = key
-        query_text = self.fold(node.args[0]) if len(node.args) == 3 else None
-        if len(node.args) != 3 or node.keywords or not isinstance(query_text, str):
-            self.fail(node, "the counting function takes a query (text worked out when the model loads) "
-                            "and two tables")
-        table_node, df_node = node.args[queried], node.args[df_pos]
+        if len(node.args) != cl.n_args or node.keywords:
+            self.fail(node, f"the counting function takes {cl.n_args} arguments")
+        values = [self.fold(node.args[i]) for i in cl.others]
+        if any(v is _NOT_CONSTANT for v in values):
+            self.fail(node, "the counting function's query must be worked out when the model loads")
+        try:
+            query_text = cl.query(*values)
+        except (TypeError, ValueError, KeyError, IndexError) as err:
+            self.fail(node, f"the counting function's query can't be built: {err}")
+        if not isinstance(query_text, str):
+            self.fail(node, "the counting function's query must be text")
+        table_node, df_node = node.args[cl.queried], node.args[cl.counted]
         if not (isinstance(table_node, ast.Name) and table_node.id in self.table_columns):
-            self.fail(node, "the second argument must be a table the model lists")
+            self.fail(node, "the queried argument must be a table the model lists")
         if not (isinstance(df_node, ast.Name) and df_node.id in self.df_names):
-            self.fail(node, "the third argument must be the table being annotated")
+            self.fail(node, "the counted-for argument must be the table being annotated")
         table = table_node.id
         if self.table_columns[table] is None:
             raise NeedsColumns(f"formula {self.formula!r}: needs the columns of table '{table}'")
@@ -710,10 +786,96 @@ class _Translator:
         except (SyntaxError, tokenize.TokenError):
             self.fail(node, f"query {query_text!r} is not valid syntax")
         mask = self.query(query, table)
-        if key not in self.table_columns[table]:
+        if cl.key not in self.table_columns[table]:
+            self.fail(node, f"table '{table}' has no column '{cl.key}'")
+        self.tables.add((table, cl.key))
+        extra = "" if cl.as_int8 else ", as_int8=False"
+        return f"t.count_where({table!r}, {cl.key!r}, {self.column(INDEX)}, {mask}{extra})"
+
+    def view_expr(self, node: ast.AST):
+        """
+        Code for some rows of a table (a TableView), or None: a view temporary
+        (``_JOINT_TOURS``), ``T[mask]`` with a mask on table T's columns, or
+        ``V[mask]`` on a view's columns. Returns (code, table) or None.
+        """
+        if isinstance(node, ast.Name) and node.id in self.views and node.id in self.assigned:
+            self.names.add(node.id)
+            return f"v[{node.id!r}]", self.views[node.id]
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+            key = self.fold(node.slice)
+            if isinstance(key, str):
+                return None  # a column, not rows
+            if node.value.id in self.views and node.value.id in self.assigned:
+                base, table = self.view_expr(node.value)
+                return f"{base}.filter({self.visit(node.slice)})", table
+            if node.value.id in self.table_columns and not (node.value.id in self.df_names):
+                table = node.value.id
+                if self.table_columns[table] is None:
+                    raise NeedsColumns(f"formula {self.formula!r}: needs the columns of table '{table}'")
+                return f"t.view({table!r}, {self.whole_columns(node.slice, table)})", table
+        return None
+
+    def group_size_expr(self, node: ast.AST):
+        """``X.groupby('key').size()`` on a view (or table): code giving 1.x's counts per key, or None."""
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "size"
+                and not node.args and not node.keywords and isinstance(node.func.value, ast.Call)):
+            return None
+        g = node.func.value
+        if not (isinstance(g.func, ast.Attribute) and g.func.attr == "groupby" and len(g.args) == 1
+                and not g.keywords and isinstance(self.fold(g.args[0]), str)):
+            return None
+        view = self.view_expr(g.func.value)
+        if view is None:
+            return None
+        code, table = view
+        key = self.fold(g.args[0])
+        if key not in (self.table_columns.get(table) or ()):
             self.fail(node, f"table '{table}' has no column '{key}'")
         self.tables.add((table, key))
-        return f"t.count_where({table!r}, {key!r}, {self.column(INDEX)}, {mask})"
+        return f"{code}.group_size({key!r})"
+
+    def window_function(self, node: ast.Call, name: str) -> str:
+        """
+        1.x's time-window functions (components/overlap.py), reading the
+        ``person_windows`` table, which the step lists for its formulas:
+        hh_time_window_overlap(households, persons) and
+        person_time_window_overlap(persons) give columns aa, cc and ac;
+        person_max_window(persons) a column.
+        """
+        if "person_windows" not in self.table_columns:
+            self.fail(node, f"{name}() needs the time windows, which this step doesn't provide")
+        windows = self.table_columns["person_windows"]
+        if windows is None:
+            raise NeedsColumns(f"formula {self.formula!r}: needs the columns of table 'person_windows'")
+        if node.keywords:
+            self.fail(node, f"{name}() takes no keyword arguments")
+        self.tables.update(("person_windows", c) for c in windows)
+        args = node.args
+        if name == "hh_time_window_overlap":
+            if not (len(args) == 2 and isinstance(args[0], ast.Name) and args[0].id in self.df_names
+                    and isinstance(args[1], ast.Name) and args[1].id in self.table_columns):
+                self.fail(node, "hh_time_window_overlap() takes the households (df) and the persons table")
+            table = args[1].id
+            for c in ("household_id", "adult"):
+                if c not in (self.table_columns[table] or ()):
+                    self.fail(node, f"table '{table}' has no column '{c}'")
+                self.tables.add((table, c))
+            return f"t.hh_time_window_overlap({table!r}, {self.column(INDEX)})"
+        if len(args) != 1 or not isinstance(args[0], ast.Name):
+            self.fail(node, f"{name}() takes the persons")
+        if args[0].id in self.df_names:  # the persons being annotated
+            if name == "person_max_window":
+                return f"t.person_max_window({self.column(INDEX)})"
+            return (f"t.person_time_window_overlap({self.column(INDEX)}, {self.column('household_id')}, "
+                    f"{self.column('adult')})")
+        table = args[0].id
+        if name == "person_time_window_overlap" and table in self.table_columns:  # a whole table's persons
+            for c in ("household_id", "adult"):
+                if c not in (self.table_columns[table] or ()):
+                    self.fail(node, f"table '{table}' has no column '{c}'")
+                self.tables.add((table, c))
+            return f"t.person_time_window_overlap_of({table!r})"
+        self.fail(node, f"{name}() of '{table}' is not supported")
 
     def query(self, node: ast.AST, table: str) -> str:
         """A pandas query string (bare names are the table's columns) as NumPy code."""
@@ -796,6 +958,15 @@ class _Translator:
             self.fail(node, "reindex() takes a table column and the IDs to look up")
         if self._lookup is not None:
             self.fail(node, "reindex() inside reindex() is not supported")
+        # a column of an earlier row's result, looked up by its IDs: reindex(_P_OVERLAPS.aa, df.person_id)
+        first = node.args[0]
+        if (isinstance(first, (ast.Attribute, ast.Subscript)) and isinstance(first.value, ast.Name)
+                and first.value.id in self.assigned):
+            key = first.attr if isinstance(first, ast.Attribute) else self.fold(first.slice)
+            if not isinstance(key, str):
+                self.fail(node, "reindex() of a result needs a column name")
+            self.names.add(first.value.id)
+            return f"_reindex_columns({self.visit(first.value)}, {key!r}, {self.visit(node.args[1])})"
         tables = {n.id for n in ast.walk(node.args[0])
                   if isinstance(n, ast.Name) and n.id in self.table_columns}
         if len(tables) != 1:
@@ -821,6 +992,13 @@ class _Translator:
             self.fail(node, "reindex_i() takes a table column (or group size) and the IDs to look up")
         arg = node.args[0]
         keys = self.visit(node.args[1])
+        # V.groupby('col').size(), V some rows of a table (a view)
+        if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute) and arg.func.attr == "size" \
+                and isinstance(arg.func.value, ast.Call) and isinstance(arg.func.value.func, ast.Attribute) \
+                and self.view_expr(arg.func.value.func.value) is not None \
+                and not (isinstance(arg.func.value.func.value, ast.Name)
+                         and arg.func.value.func.value.id in self.table_columns):
+            return f"_reindex_i({self.group_size_expr(arg)}, {keys})"
         # T.groupby('col').size()
         if (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute) and arg.func.attr == "size"
                 and not arg.args and isinstance(arg.func.value, ast.Call)):
@@ -946,6 +1124,7 @@ def translate(
     df_names: set[str] = frozenset({"df"}),
     objects: Mapping[str, set[str]] | None = None,
     count_functions: Mapping[str, str] | None = None,
+    views: Mapping[str, str] | None = None,
 ) -> Translated:
     """
     Translate one spec formula to a NumPy expression over column arrays ``c``.
@@ -990,7 +1169,7 @@ def translate(
         raise FormulaError(f"formula {formula!r} is not valid syntax: {getattr(err, 'msg', err)}") from None
     t = _Translator(formula, constants or {}, python_mode, assigned, functions, skim_accessors,
                     coefficients, df_columns, tables, settings, random_index,
-                    pandas_locals, df_names, objects, count_functions)
+                    pandas_locals, df_names, objects, count_functions, views)
     source = t.visit(tree)
     if not python_mode and _has_arithmetic(tree):
         names = sorted({n.id for n in ast.walk(tree) if isinstance(n, ast.Name)})
@@ -1110,8 +1289,65 @@ def _as_int8(x):
     return x.astype(np.int8)
 
 
+class TableView:
+    """Some rows of another table (1.x: ``tours[tours.tour_category == 'joint']``), by position."""
+
+    def __init__(self, lookup, table: str, positions):
+        self.lookup = lookup
+        self.table = table
+        self.positions = np.asarray(positions, dtype=np.int64)
+
+    def col(self, name: str) -> np.ndarray:
+        return np.asarray(self.lookup.col(self.table, name))[self.positions]
+
+    def filter(self, mask) -> TableView:
+        return TableView(self.lookup, self.table, self.positions[np.asarray(mask, dtype=bool)])
+
+    def group_size(self, key: str) -> pd.Series:
+        """pandas' ``df.groupby(key).size()`` on these rows: rows per key."""
+        k = self.col(key)
+        return pd.Series(k).groupby(k).size()
+
+
+def _series_reindex(series: pd.Series, ids) -> np.ndarray:
+    """1.x's ``series.reindex(ids)``: values for the IDs, missing (a float) where absent."""
+    return series.reindex(np.asarray(ids)).to_numpy()
+
+
+def _reindex_i(series: pd.Series, ids, dtype=np.int8) -> np.ndarray:
+    """1.x's reindex_i: values for the IDs, 0 where absent, as 8-bit integers."""
+    return series.reindex(np.asarray(ids)).fillna(0).astype(dtype).to_numpy()
+
+
+class IndexedColumns:
+    """A result with several columns and the IDs of its rows (1.x: a DataFrame), e.g. the
+    time-window overlaps of a table's persons, looked up with reindex(result.column, ids)."""
+
+    def __init__(self, index, columns: dict):
+        self.index = np.asarray(index)
+        self.columns = dict(columns)
+
+
+def _column_of(x, key):
+    """One column of a result with several (a dict of columns, or IndexedColumns)."""
+    cols = x.columns if isinstance(x, IndexedColumns) else x
+    if not isinstance(cols, dict) or key not in cols:
+        raise KeyError(f"no column {key!r} in the result")
+    return cols[key]
+
+
+def _reindex_columns(x, key, ids):
+    """1.x's reindex(result.column, ids): the column's values for the IDs (missing if absent)."""
+    if not isinstance(x, IndexedColumns):
+        raise TypeError("reindex() of a result needs one with row IDs")
+    return pd.Series(x.columns[key], index=x.index).reindex(np.asarray(ids)).to_numpy()
+
+
 def _full(x, n):
-    """A scalar result becomes a column of n equal values (1.x promotes scalars to Series)."""
+    """A scalar result becomes a column of n equal values (1.x promotes scalars to Series);
+    a result with several columns (a dict) is kept as it is."""
+    if isinstance(x, (dict, IndexedColumns, TableView)):
+        return x
     if np.ndim(x) == 0:
         if isinstance(x, np.ndarray):
             return np.full(n, x[()], dtype=x.dtype)
@@ -1122,7 +1358,9 @@ def _full(x, n):
 RUNTIME_NAMESPACE = {"np": np, "_clip": _clip, "_fillna": _fillna, "_map": _map, "_cut": _cut,
                      "_astype": _astype, "_lognormal": _lognormal, "_full": _full,
                      "_pandas_eval": _pandas_eval, "_as_int8": _as_int8, "_shift": _shift,
-                     "_other_than": _other_than, "_where": _where}
+                     "_other_than": _other_than, "_where": _where, "_column_of": _column_of,
+                     "_reindex_columns": _reindex_columns, "_series_reindex": _series_reindex,
+                     "_reindex_i": _reindex_i}
 
 
 def build_function(name: str, items: list[tuple[str, Translated]], doc: str = "") -> str:

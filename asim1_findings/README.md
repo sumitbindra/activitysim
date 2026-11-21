@@ -36,6 +36,7 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 13 | With zones renumbered, the skims' zone lookup is not used or checked: a lookup in another order gives every zone another zone's skims, silently | Zone numbering | From reading the code | Not reported |
 | 14 | 8-bit integer formulas overflow when evaluated without numexpr (7 tours × start 22 = −102), changing one person's schedule in 50,000 households | Arithmetic | Reproduced (MTC full zones, 50,000 households) | Not reported |
 | 15 | CDAP ranks children by person type, not youngest first as its comments and CTRAMP say: in larger households, preschoolers are left out of the joint choice | Model behavior | Measured (MTC full zones, 50,000 households: 616 preschoolers) | Not reported |
+| 16 | Joint tour and non-mandatory frequency specs test tour types that don't exist ('eat', 'disc', 'maint' for eatout, othdiscr, othmaint): 13 terms with coefficients never apply | Model specification | Measured (MTC full zones, 50,000 households: 1.7% of joint tours change party type when corrected) | Not reported |
 
 ---
 
@@ -586,6 +587,51 @@ exactly, as it must to match 1.x).
 type, then age descending), as documented, or change the comments to say
 what the code does. A model change: results change for the affected
 households.
+
+---
+
+## 16. Specs test tour types that don't exist ('eat', 'disc', 'maint')
+
+**Evidence: measured** (MTC full zones, 50,000 households; the same steps
+run in asim_core from 1.x's saved state, with the specs as shipped and
+corrected, the same random numbers).
+
+**What happens.** The joint tour types in all three examples are
+`shopping`, `othmaint`, `eatout`, `social` and `othdiscr`
+(`joint_tour_frequency_alternatives.csv`). But:
+
+- `joint_tour_composition.csv`: `tour_type=='eat'` and `tour_type=='disc'`
+  (4 coefficients, e.g. eating out −0.97 for children-only parties,
+  discretionary +0.76 for adults-only);
+- `joint_tour_participation_annotate_participants_preprocessor.csv`:
+  `tour_type_is_eat` and `tour_type_is_disc` the same way, used in 10
+  participation terms (each person type on eating out and discretionary
+  tours);
+- `non_mandatory_tour_frequency_annotate_persons_preprocessor.csv`:
+  `num_hh_joint_maint_tours` counts tours of type `'maint'`, so it is
+  always 0, though the spec gives it −1.35 for school-age children.
+
+None of these terms can ever apply, and nothing reports it: comparing a
+column with a value it never takes is valid. The same files are in MTC,
+MWCOG and ARC.
+
+**How much** (joint tours, as shipped against corrected):
+
+| Joint tours | Tours | Children-only parties | Mixed parties |
+|---|---|---|---|
+| discretionary (othdiscr) | 979 | 12.2% → 16.1% | 54.3% → 49.6% |
+| eating out | 446 | 4.0% → 3.8% | 36.1% → 35.4% |
+
+53 of 3,068 joint tours (1.7%) get another party type; 8,092 participants
+become 8,066.
+
+**Found while** porting these steps to asim_core (which reproduces 1.x's
+results, so it reproduces this too).
+
+**Suggested change.** Use the tour type names of the alternatives files;
+and a check, when a model loads, that each value a spec compares a category
+column with is one of the column's categories (asim_core could do this in
+its input checks).
 
 ---
 

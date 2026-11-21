@@ -70,15 +70,74 @@ class TableLookup:
         """A whole column of another table, in its row order."""
         return np.asarray(plain(self._column(table, column)))
 
-    def count_where(self, table: str, key: str, keys, mask):
+    def count_where(self, table: str, key: str, keys, mask, as_int8: bool = True):
         """
         For each key, how many rows of the table with that key in ``key`` have
         ``mask``, as 8-bit integers (0 if none): 1.x's
-        ``T.query(q).groupby(key).size().reindex(keys).fillna(0).astype(np.int8)``.
+        ``T.query(q).groupby(key).size().reindex(keys).fillna(0).astype(np.int8)``;
+        without ``as_int8``, as pandas gives them (64-bit, floats if a key has none).
         """
         by = np.asarray(plain(self._column(table, key)))[np.asarray(mask, dtype=bool)]
         counts = pd.Series(by).value_counts()
-        return counts.reindex(np.asarray(keys)).fillna(0).to_numpy().astype(np.int8)
+        out = counts.reindex(np.asarray(keys)).fillna(0).to_numpy()
+        return out.astype(np.int8) if as_int8 else out
+
+    # --- 1.x's time-window functions (overlap.py), on person_windows -------------
+
+    def _windows(self):
+        if getattr(self, "_window_cache", None) is None:
+            names = sorted(self.ctx.declared("person_windows"), key=int)
+            windows = np.column_stack([np.asarray(self.ctx.column("person_windows", c)) for c in names])
+            self._window_cache = (windows, pd.Index(self.ctx.ids("person_windows")))
+        return self._window_cache
+
+    def hh_time_window_overlap(self, table: str, household_ids) -> dict:
+        from .overlap import hh_time_window_overlap
+
+        household_ids = np.asarray(household_ids)
+        persons = pd.DataFrame({"household_id": np.asarray(plain(self._column(table, "household_id"))),
+                                "adult": np.asarray(plain(self._column(table, "adult")))},
+                               index=pd.Index(self.ctx.ids(table), name="person_id"))
+        persons = persons[persons.household_id.isin(household_ids)]  # 1.x: these households' persons
+        out = hh_time_window_overlap(pd.Index(household_ids), persons, *self._windows())
+        return {c: out[c].to_numpy() for c in out.columns}
+
+    def person_time_window_overlap(self, person_ids, household_id, adult) -> dict:
+        from .overlap import person_time_window_overlap
+
+        persons = pd.DataFrame({"household_id": np.asarray(household_id), "adult": np.asarray(adult)},
+                               index=pd.Index(np.asarray(person_ids), name="person_id"))
+        out = person_time_window_overlap(persons, *self._windows())
+        return {c: out[c].to_numpy() for c in out.columns}
+
+    def person_time_window_overlap_of(self, table: str):
+        """person_time_window_overlap for every person of a table, with their IDs."""
+        from ..spec.translate import IndexedColumns
+        from .overlap import person_time_window_overlap
+
+        ids = self.ctx.ids(table)
+        persons = pd.DataFrame({"household_id": np.asarray(plain(self._column(table, "household_id"))),
+                                "adult": np.asarray(plain(self._column(table, "adult")))},
+                               index=pd.Index(ids, name="person_id"))
+        out = person_time_window_overlap(persons, *self._windows())
+        return IndexedColumns(out.index.to_numpy(), {c: out[c].to_numpy() for c in out.columns})
+
+    def view(self, table: str, mask):
+        """Some rows of another table: those where ``mask`` (one value per row) holds."""
+        from ..spec.translate import TableView
+
+        return TableView(self, table, np.flatnonzero(np.asarray(mask, dtype=bool)))
+
+    def group_size(self, table: str, key: str, keys):
+        """1.x's T.groupby(key).size().reindex(keys): rows per key, missing (a float) where none."""
+        counts = pd.Series(np.asarray(plain(self._column(table, key)))).groupby(
+            np.asarray(plain(self._column(table, key)))).size()
+        return counts.reindex(np.asarray(keys)).to_numpy()
+
+    def person_max_window(self, person_ids):
+        from .overlap import person_max_window
+
+        return person_max_window(np.asarray(person_ids), *self._windows()).to_numpy()
 
     def sum_by(self, table: str, column: str, key: str, keys):
         """

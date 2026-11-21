@@ -80,6 +80,11 @@ def compare_column(
         mismatched = int((~eq).sum())
         max_diff = None
         status = "exact" if mismatched == 0 else "different"
+    # categories: the same values in a different category list are not 1.x's column
+    ours_cat, ref_cat = _categories(table[column]), _categories(reference)
+    if ours_cat is not None and ref_cat is not None and ours_cat != ref_cat:
+        status = "different"
+        note = (note + "; " if note else "") + f"categories differ: ours {ours_cat}, reference {ref_cat}"
 
     return ColumnComparison(
         step=step,
@@ -113,3 +118,10 @@ def write_comparisons(rows: list[ColumnComparison], path: str | Path) -> Path:
         for r in rows:
             w.writerow(asdict(r))
     return path
+
+
+def _categories(values):
+    dtype = getattr(values, "dtype", None)
+    if isinstance(dtype, pd.CategoricalDtype):
+        return [str(c) for c in dtype.categories]
+    return None

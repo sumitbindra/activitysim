@@ -59,6 +59,10 @@ class Component:
     # the run (used by components whose inputs come from a joined view of
     # several tables). Receives {table: set(columns)}; returns ``Needs``.
     resolve_needs: Callable[[Mapping[str, set[str]]], Needs] | None = None
+    # Optional: work out ``provides`` from the columns available at this point
+    # (for a step that returns a whole table whose columns depend on earlier
+    # steps, e.g. tours with rows added). The runner sets ``provides`` to it.
+    resolve_provides: Callable[[Mapping[str, set[str]]], Needs] | None = None
     description: str = ""
     # anything component-specific worth inspecting (e.g. generated code)
     info: dict = field(default_factory=dict)
@@ -67,6 +71,11 @@ class Component:
         if self.resolve_needs is not None:
             return self.resolve_needs(available)
         return self.needs
+
+    def provides_given(self, available: Mapping[str, set[str]]) -> Needs:
+        if self.resolve_provides is not None:
+            return self.resolve_provides(available)
+        return self.provides
 
 
 class Tracer:
@@ -148,6 +157,22 @@ class StepContext:
         run's report and its run_manifest.json, and logged."""
         self.warnings.append({"step": self.step, "message": message})
         logging.getLogger("asim_core").warning(f"{self.step}: {message}")
+
+    def has(self, table: str) -> bool:
+        """True if the step declared it reads this table."""
+        return table in self._needs
+
+    def table_frame(self, table: str):
+        """A declared table's declared columns, in the table's order, as a pandas DataFrame
+        (for 1.x code that works on whole tables, e.g. adding rows)."""
+        self._check(table)
+        t = self._store[table]
+        return t.to_pandas([c for c in t.column_names if c in self._needs[table]])
+
+    def declared(self, table: str) -> list[str]:
+        """The columns of a table the step declared it reads."""
+        self._check(table)
+        return sorted(self._needs[table])
 
     def ids(self, table: str) -> np.ndarray:
         """The row IDs of a table the component declared."""

@@ -61,6 +61,25 @@ def read_yaml(path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
+def read_settings(configs_dirs: Sequence[str | Path], file_name: str, _stack: tuple = ()) -> dict:
+    """
+    A model's settings file, as 1.x reads it: a file holding only
+    ``include_settings: <other file>`` is that other file (found in the
+    configs folders), e.g. MTC's joint_tour_destination.yaml.
+    """
+    configs_dirs = [Path(d) for d in configs_dirs]
+    path = find_config_file(configs_dirs, file_name)
+    settings = read_yaml(path)
+    include = settings.get("include_settings")
+    if not include:
+        return settings
+    if len(settings) > 1:
+        raise ValueError(f"{path}: 'include_settings' must appear alone in the file (as 1.x requires)")
+    if include in _stack or include == file_name:
+        raise ValueError(f"{path}: settings files include each other: {' -> '.join(_stack + (file_name,))}")
+    return read_settings(configs_dirs, include, _stack + (file_name,))
+
+
 def load_top_settings(configs_dirs: Sequence[str | Path]) -> dict:
     """
     The run's settings.yaml. As in 1.x, a settings.yaml with

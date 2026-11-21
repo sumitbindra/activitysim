@@ -147,3 +147,70 @@ def set_tour_index(tours: pd.DataFrame, channels: Sequence[str], parent_tour_num
         raise ValueError("tour IDs are not unique")
     tours.set_index("tour_id", inplace=True, verify_integrity=True)
     return tours
+
+
+def extend_table(table: pd.DataFrame | None, rows: pd.DataFrame) -> pd.DataFrame:
+    """
+    1.x's ``state.extend_table`` (adding rows): categories of columns in both
+    are united (sorted), the new rows go after the old ones, columns only in
+    the old table become missing for the new rows (so integers become
+    floats), and text columns, or categories that include '', missing in the
+    new rows get ''.
+    """
+    if table is None:
+        return rows
+    from pandas.api.types import union_categoricals
+
+    if len(table.index.intersection(rows.index)):
+        raise ValueError("new rows reuse existing IDs")
+    table = table.copy()
+    rows = rows.copy()
+    blank = [c for c in table.columns if c not in rows.columns and table[c].dtype == "O"]
+    for c in table.columns:
+        if c in rows.columns:
+            if isinstance(table[c].dtype, pd.CategoricalDtype) and isinstance(rows[c].dtype, pd.CategoricalDtype):
+                uc = union_categoricals([table[c], rows[c]], sort_categories=True)
+                table[c] = pd.Categorical(table[c], categories=uc.categories)
+                rows[c] = pd.Categorical(rows[c], categories=uc.categories)
+        elif isinstance(table[c].dtype, pd.CategoricalDtype) and "" in table[c].cat.categories:
+            blank.append(c)
+    out = pd.concat([table, rows], sort=False, axis=0)
+    for c in blank:
+        out[c] = out[c].fillna("")
+    return out
+
+
+def assign_in_place(df: pd.DataFrame, df2: pd.DataFrame) -> None:
+    """
+    1.x's util.assign_in_place (without its optional downcasting): update
+    ``df``'s rows from ``df2`` (categories united), then put back an integer
+    type that pandas' update turned into floats; new columns are added.
+    """
+    from pandas.api.types import union_categoricals
+
+    if len(df2.index.difference(df.index)):
+        raise ValueError("rows to update that the table doesn't have")
+    common = df2.columns.intersection(df.columns)
+    if len(common):
+        old_dtypes = [df[c].dtype for c in common]
+        for c in common:
+            if isinstance(df[c].dtype, pd.CategoricalDtype):
+                if not isinstance(df2[c].dtype, pd.CategoricalDtype):
+                    df2[c] = df2[c].astype("category")
+                uc = union_categoricals([df[c], df2[c]], sort_categories=True)
+                df[c] = pd.Categorical(df[c], categories=uc.categories)
+                df2[c] = pd.Categorical(df2[c], categories=uc.categories)
+        df.update(df2)
+        for c, old in zip(common, old_dtypes):
+            if old == df2[c].dtype and df[c].dtype != old:
+                df[c] = df[c].astype(old)
+            if isinstance(old, pd.CategoricalDtype):
+                continue
+            if (np.issubdtype(old, np.integer) and np.issubdtype(df2[c].dtype, np.integer)
+                    and not np.issubdtype(df[c].dtype, np.integer)):
+                df[c] = df[c].astype(old)
+    new = [c for c in df2.columns if c not in df.columns]
+    df[new] = df2[new]
+    for c in new:
+        if pd.api.types.is_object_dtype(df[c]):
+            df[c] = df[c].astype("category")

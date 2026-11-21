@@ -515,16 +515,34 @@ class InteractionModelDefinition(BaseModel):
 RANDOM_MARKER = "rng.lognormal_for_df(df,"  # as 1.x's assign_variables looks for it
 
 
-def counting_lambda(formula: str) -> tuple[str, int, int] | None:
+def _view_of(formula: str, tables: set[str], views: dict) -> str | None:
+    """The table whose rows the formula selects (``tours[tours.x == 'y']``, or a view's), else None."""
+    import ast as _ast
+
+    try:
+        node = _ast.parse(formula.strip().lstrip("@").strip(), mode="eval").body
+    except SyntaxError:
+        return None
+    if not (isinstance(node, _ast.Subscript) and isinstance(node.value, _ast.Name)):
+        return None
+    if isinstance(node.slice, _ast.Constant) and isinstance(node.slice.value, str):
+        return None  # a column
+    if node.value.id in views:
+        return views[node.value.id]
+    return node.value.id if node.value.id in tables else None
+
+
+def counting_lambda(formula: str):
     """
-    If the formula is 1.x's counting lambda, e.g. ``lambda query, persons,
-    households: persons.query(query).groupby('household_id').size()
-    .reindex(households.index).fillna(0).astype(np.int8)`` (for each row of one
-    table, how many rows of the other meet a query): the key column, and the
-    positions of the queried table's and the counted-for table's arguments
-    (1 and 2, or 2 and 1). Else None.
+    A ``CountingLambda`` if the formula is 1.x's counting lambda, e.g.
+    ``lambda query, persons, households: persons.query(query).groupby('household_id')
+    .size().reindex(households.index).fillna(0).astype(np.int8)`` (for each row
+    of one table, how many rows of the other meet a query), the query given
+    or built from the other arguments (``'ptype == %s' % (ptype,)``). Else None.
     """
     import ast as _ast
+
+    from .translate import CountingLambda, StringLambda
 
     text = formula.strip().lstrip("@").strip()
     if not text.startswith("lambda"):
@@ -533,39 +551,48 @@ def counting_lambda(formula: str) -> tuple[str, int, int] | None:
         node = _ast.parse(text, mode="eval").body
     except SyntaxError:
         return None
-    if not isinstance(node, _ast.Lambda) or len(node.args.args) != 3:
+    if not isinstance(node, _ast.Lambda) or len(node.args.args) < 3 or node.args.defaults:
         return None
-    q, table, other = (a.arg for a in node.args.args)
+    params = [a.arg for a in node.args.args]
 
     def call(n, attr, nargs):
         ok = (isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute) and n.func.attr == attr
               and len(n.args) == nargs and not n.keywords)
         return n.func.value if ok else None
 
-    n = call(node.body, "astype", 1)
-    if n is None or _ast.unparse(node.body.args[0]) not in ("np.int8", "'int8'"):
-        return None
-    fill = n
-    n = call(fill, "fillna", 1)
-    if n is None or _ast.unparse(fill.args[0]) != "0":
+    body = node.body
+    as_int8 = False
+    n = call(body, "astype", 1)
+    if n is not None:
+        if _ast.unparse(body.args[0]) not in ("np.int8", "'int8'"):
+            return None
+        as_int8, body = True, n
+    n = call(body, "fillna", 1)
+    if n is None or _ast.unparse(body.args[0]) != "0":
         return None
     reindex = n
     n = call(reindex, "reindex", 1)
-    if n is None or _ast.unparse(reindex.args[0]) not in (f"{other}.index", f"{table}.index"):
+    target = _ast.unparse(reindex.args[0]) if n is not None else ""
+    if n is None or not target.endswith(".index") or target[:-len(".index")] not in params:
         return None
-    counted_for = _ast.unparse(reindex.args[0])[:-len(".index")]
-    n = call(n, "size", 0)
-    grouped = n
+    counted = params.index(target[:-len(".index")])
+    grouped = call(n, "size", 0)
     n = call(grouped, "groupby", 1)
     if n is None or not isinstance(grouped.args[0], _ast.Constant) or not isinstance(grouped.args[0].value, str):
         return None
     key = grouped.args[0].value
-    queried = n
-    n = call(queried, "query", 1)
-    if n is None or _ast.unparse(queried.args[0]) != q or not isinstance(n, _ast.Name) \
-            or {n.id, counted_for} != {table, other}:
+    queried_call = n
+    n = call(queried_call, "query", 1)
+    if n is None or not isinstance(n, _ast.Name) or n.id not in params or n.id == params[counted]:
         return None
-    return (key, 1, 2) if n.id == table else (key, 2, 1)
+    queried = params.index(n.id)
+    others = tuple(i for i in range(len(params)) if i not in (queried, counted))
+    try:
+        query = StringLambda(f"lambda {', '.join(params[i] for i in others)}: "
+                             f"{_ast.unparse(queried_call.args[0])}")
+    except (SyntaxError, ValueError):
+        return None
+    return CountingLambda(key, queried, counted, others, query, as_int8, len(params))
 
 
 @dataclass
@@ -700,6 +727,8 @@ class AssignmentSpec(BaseModel):
         n_random = 0
         count_functions: dict[str, str] = {}
         kw["count_functions"] = count_functions  # filled as counting lambdas are found
+        views: dict[str, str] = {}
+        kw["views"] = views  # temporaries holding some rows of a table, filled as found
         for i, a in enumerate(self.assignments):
             random_index = None
             if RANDOM_MARKER in a.formula:
@@ -708,7 +737,7 @@ class AssignmentSpec(BaseModel):
             key = counting_lambda(a.formula)
             if key is not None:  # e.g. _PERSON_COUNT: rows of a table per key, used by later rows
                 count_functions[a.target] = key
-                items.append((a.target, a.description, f"counts rows of a table per '{key[0]}'"))
+                items.append((a.target, a.description, f"counts rows of a table per '{key.key}'"))
                 continue
             text_fn = string_lambda(a.formula) if a.target.startswith("_") else None
             if text_fn is not None:  # e.g. _Q = lambda s: "'{}'".format(s): builds query text
@@ -730,10 +759,13 @@ class AssignmentSpec(BaseModel):
                     assigned.discard(a.target)
                     items.append((a.target, a.description, value))
                     continue
+            view_of = _view_of(a.formula, set(table_columns), views)
             try:
                 tr = translate(a.formula, constants, python_mode=True, assigned=assigned,
                                random_index=random_index, **kw)
                 items.append((a.target, a.description, tr))
+                if view_of is not None and a.target.startswith("_"):
+                    views[a.target] = view_of
             except NeedsColumns:
                 raise
             except FormulaError as err:

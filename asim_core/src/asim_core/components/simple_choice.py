@@ -134,12 +134,30 @@ class ChoiceOutput:
     """
     What is written for each row of the chooser table: ``values(choices)``
     for the rows that chose (``choices``: positions among the alternatives),
-    ``fill`` for the others, as ``dtype``.
+    ``fill`` for the others, as ``dtype``; with ``categories``, as a pandas
+    category with them (as 1.x writes many choices).
     """
 
     values: Callable[[np.ndarray], np.ndarray]
     fill: object = 0
     dtype: object = None
+    categories: list | None = None
+
+
+@dataclass
+class Preprocessor:
+    """
+    Columns a 1.x preprocessor adds before the choice: an assignment spec and
+    the other tables it reads. ``on``: the table it runs on, when that isn't
+    the choosers but a table they join (1.x: joint tour composition annotates
+    the households, then merges them with the tours); ``rows``: which of that
+    table's rows it runs on (1.x filters them first).
+    """
+
+    spec: object
+    tables: list
+    on: str | None = None
+    rows: Choosers | None = None
 
 
 def simple_choice_component(
@@ -176,6 +194,9 @@ def simple_choice_component(
     columns = definition.columns_used(keep)
     channel = random_channel or view.table
     resolved: dict[str, Needs] = {}
+    pre = preprocessor
+    if isinstance(pre, tuple):  # (spec, tables): on the choosers
+        pre = Preprocessor(*pre)
 
     def resolve_needs(available: Mapping[str, set[str]]) -> Needs:
         if roles is not None:  # asim_core's language: role.column names checked
@@ -185,13 +206,20 @@ def simple_choice_component(
             check_roles(step, translated, role_columns(view, roles, available))
         wanted = set(columns)
         extra: dict[str, set[str]] = {}
-        if preprocessor is not None:
-            spec, tables = preprocessor
-            bound = spec.bind(view.columns(available), {t: available.get(t, set()) for t in tables})
+        if pre is not None:
+            df_cols = view.columns(available) if pre.on is None else set(available.get(pre.on, set()))
+            bound = pre.spec.bind(df_cols, {t: available.get(t, set()) for t in pre.tables})
             if bound.n_random or bound.skim_uses():
                 raise NotImplementedError(f"{step}: preprocessor with random draws or skims")
             resolved["pre"] = bound
-            wanted = (wanted - set(bound.targets)) | (bound.columns_used() - {INDEX})
+            if pre.on is None:
+                wanted = (wanted - set(bound.targets)) | (bound.columns_used() - {INDEX})
+            else:  # runs on the joined table: its columns are read there, its results joined
+                if pre.on not in dict(view.joins):
+                    raise MissingInputError(f"{step}: the preprocessor's table '{pre.on}' isn't joined")
+                wanted = (wanted - set(bound.targets)) | {dict(view.joins)[pre.on]}
+                own = set(bound.columns_used() - {INDEX}) | ({pre.rows.column} if pre.rows else set())
+                extra.setdefault(pre.on, set()).update(own)
             for t, c in bound.tables_used():
                 extra.setdefault(t, set()).add(c)
         if choosers is not None:
@@ -221,18 +249,21 @@ def simple_choice_component(
             rows_choosing = np.flatnonzero(choosers.test(np.asarray(cols[choosers.column])))
             ids = all_ids[rows_choosing]
             cols = {c: (v[rows_choosing] if np.ndim(v) else v) for c, v in cols.items()}
-        pre = resolved.get("pre")
-        if pre is not None:
+        bound_pre = resolved.get("pre")
+        if bound_pre is not None and pre.on is None:
             from .annotate import _update
             from .runtime import TableLookup
 
-            c = {k: cols[k] for k in pre.columns_used() - {INDEX}}
+            c = {k: cols[k] for k in bound_pre.columns_used() - {INDEX}}
             c[INDEX] = ids
             with np.errstate(all="ignore"):  # 1.x logs numpy warnings and carries on
-                v = pre.function(c, None, len(ids), TableLookup(ctx), None, {})
+                v = bound_pre.function(c, None, len(ids), TableLookup(ctx), None, {})
             cols = dict(cols)
-            for target in pre.targets:
+            for target in bound_pre.targets:
                 cols[target] = _update(cols.get(target), np.asarray(v[target]))
+        elif bound_pre is not None:
+            cols = dict(cols)
+            cols.update(_joined_preprocessor(ctx, pre, bound_pre, np.asarray(cols[dict(view.joins)[pre.on]])))
         utils, probs, bad = compute(cols, len(ids), ctx.engine)
         if bad.any():
             raise ValueError(
@@ -251,6 +282,10 @@ def simple_choice_component(
         dtype = values.dtype if output is None or output.dtype is None else output.dtype
         full = np.full(len(all_ids), 0 if output is None else output.fill, dtype=dtype)
         full[slice(None) if rows_choosing is None else rows_choosing] = values
+        if output is not None and output.categories is not None:
+            import pandas as pd
+
+            full = pd.Categorical(full, categories=output.categories)
         return {view.table: {output_column: full}}
 
     return Component(
@@ -292,3 +327,35 @@ def _trace(ctx, ids, rows, cols, terms_fn, labels, formulas, coef, utils, probs,
     header = (["id"] + [f"utility_{a}" for a in alts] + [f"probability_{a}" for a in alts]
               + ["random_draw", "choice_position", "choice"])
     ctx.tracer.write(ctx.step, "choices", header, choice_rows)
+
+
+def _joined_preprocessor(ctx, pre: Preprocessor, bound, keys: np.ndarray) -> dict:
+    """
+    Run a preprocessor on the joined table's rows (those passing ``pre.rows``),
+    then give each chooser its row's results, as 1.x's merge of the annotated
+    table does (choosers whose row isn't there get missing values).
+    """
+    from .annotate import _update
+    from .runtime import TableLookup, plain
+
+    ids = ctx.ids(pre.on)
+    rows = np.arange(len(ids)) if pre.rows is None else \
+        np.flatnonzero(pre.rows.test(np.asarray(plain(ctx.column(pre.on, pre.rows.column)))))
+    c = {k: np.asarray(plain(ctx.column(pre.on, k)))[rows] for k in bound.columns_used() - {INDEX}}
+    c[INDEX] = ids[rows]
+    with np.errstate(all="ignore"):  # 1.x logs numpy warnings and carries on
+        v = bound.function(c, None, len(rows), TableLookup(ctx), None, {})
+    import pandas as pd
+
+    pos = pd.Index(ids[rows]).get_indexer(keys)
+    found = pos >= 0
+    out = {}
+    for target in bound.targets:
+        values = _update(c.get(target), np.asarray(v[target]))
+        if found.all():
+            out[target] = values[pos]
+        else:
+            col = np.full(len(keys), np.nan)
+            col[found] = values[pos[found]]
+            out[target] = col
+    return out

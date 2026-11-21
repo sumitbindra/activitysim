@@ -115,6 +115,20 @@ def non_mandatory_tour_scheduling(configs_dirs: Sequence[str | Path],
                                      "non_mandatory", max_rows, keep_utilities)
 
 
+def joint_tour_scheduling(configs_dirs: Sequence[str | Path],
+                          settings_file: str = "joint_tour_scheduling.yaml",
+                          max_rows: int = 1_000_000, keep_utilities: bool = False) -> Component:
+    """
+    1.x's joint_tour_scheduling: as the other scheduling steps, by rounds of
+    tour number, except that a joint tour's options must fit all its
+    participants (its timetable is theirs combined, built each round), the
+    previous tour is the household's, and each round's choices are booked in
+    every participant's timetable.
+    """
+    return tour_scheduling_component(configs_dirs, "joint_tour_scheduling", settings_file,
+                                     "joint", max_rows, keep_utilities)
+
+
 def mandatory_tour_scheduling(configs_dirs: Sequence[str | Path],
                               settings_file: str = "mandatory_tour_scheduling.yaml",
                               max_rows: int = 1_000_000, keep_utilities: bool = False) -> Component:
@@ -224,12 +238,17 @@ def tour_scheduling_component(
             for seg, b in bound_alts.items():
                 check_roles(f"{step} option derived values", b.translated, {"alt": set(OPTION_COLUMNS)})
         columns = (spec_columns - option_columns(model is not None) - set(PREVIOUS_COLUMNS)
-                   - alts_targets - temps - made_here) | ls_columns | base | {"person_id"}
+                   - alts_targets - temps - made_here - {"tour_id"}) | ls_columns | base | {"person_id"}
         view_needs = VIEW.resolve(columns, available)
         for t, c in view_needs.items():
             needs.setdefault(t, set()).update(c)
         needs["tours"] |= {c for c in OUTPUT_COLUMNS if c in tour_cols}  # values of other tours
         needs["person_windows"] = set(periods)
+        if category == "joint":
+            if "joint_tour_participants" not in available:
+                raise MissingInputError("needs the joint_tour_participants table")
+            needs["tours"].add("household_id")
+            needs.setdefault("joint_tour_participants", set()).update({"tour_id", "person_id", "participant_num"})
         if skims:
             needs[SKIMS] = skims
         resolved.update(needs={t: sorted(c) for t, c in needs.items()}, bound_pre=bound_pre,
@@ -246,8 +265,10 @@ def tour_scheduling_component(
         # chooser columns, in table order. Category columns stay categorical
         # (as in 1.x): comparing them with a string compares integer codes.
         cols = {c: v[table_rows] for c, v in VIEW.gather(ctx, resolved["view_needs"]).items()}
-        for c in ("tour_num", "tour_type", "person_id", "tour_category"):
+        for c in ("tour_num", "tour_type", "person_id", "tour_category") + \
+                (("household_id",) if category == "joint" else ()):
             cols[c] = ctx.column("tours", c)[table_rows]
+        cols["tour_id"] = ids[table_rows]  # 1.x: the tour's own ID is a chooser column too
         if cfg.segment_fn is not None:
             seg_cols = {c: plain(cols[c]) for c in cfg.segment_fn[1].columns}
             with np.errstate(all="ignore"):
@@ -271,9 +292,20 @@ def tour_scheduling_component(
 
         tt = TimeTable.from_columns(ctx.ids("person_windows"),
                                     {p: ctx.column("person_windows", p) for p in periods}, alts)
-        # each person's previous tour of this category in this step; 1.x starts with option 0
-        previous = np.zeros(len(tt.ids), dtype=np.int64)
-        person_rows = tt.rows(cols["person_id"])
+        joint = category == "joint"
+        if joint:
+            # the household's previous joint tour (1.x starts with option 0), per household
+            participants = ctx.table_frame("joint_tour_participants")
+            hh = np.asarray(cols["household_id"])
+            owners = pd.Index(pd.unique(hh))
+            previous = np.zeros(len(owners), dtype=np.int64)
+            prev_rows = owners.get_indexer(hh)
+            person_rows = np.full(n, -1, dtype=np.int64)  # rows in each round's tour timetable
+        else:
+            # each person's previous tour of this category in this step; 1.x starts with option 0
+            previous = np.zeros(len(tt.ids), dtype=np.int64)
+            person_rows = tt.rows(cols["person_id"])
+            prev_rows = person_rows
         chosen = np.full(n, -1, dtype=np.int64)
         traced = set(ctx.tracer.targets("tours", tour_ids).tolist())
         kept = info["utilities"] = {}
@@ -281,8 +313,13 @@ def tour_scheduling_component(
         per_batch = max(1, max_rows // n_alts)
         seg_values = None if segment_column is None else np.asarray(plain(cols[segment_column]))
 
+        person_tt = tt
         for tour_num in np.unique(cols["tour_num"]):
             in_round = cols["tour_num"] == tour_num
+            if joint:  # this round's tours, each with its participants' windows combined
+                round_idx = np.flatnonzero(in_round)
+                tt = joint_round_timetable(person_tt, tour_ids[round_idx], participants, alts)
+                person_rows[round_idx] = tt.rows(tour_ids[round_idx])
             for seg, (terms_fn, coefs, _) in compiled.items():
                 sel = np.flatnonzero(in_round if seg is None else in_round & (seg_values == seg))
                 logsum_plan = None
@@ -300,9 +337,15 @@ def tour_scheduling_component(
                         ctx, batch, tour_ids, cols, person_rows, previous, tt, alts,
                         terms_fn, coefs, shift, traced, logsum_plan, resolved["bound_alts"].get(seg),
                         kept.setdefault(int(tour_num), []) if keep_utilities else None, width,
+                        prev_rows=prev_rows,
                     )
                     tt.assign(person_rows[batch], chosen[batch])
-                    previous[person_rows[batch]] = chosen[batch]
+                    previous[prev_rows[batch]] = chosen[batch]
+            if joint:  # book the round's choices in every participant's timetable (1.x: assign)
+                mine = participants[participants.tour_id.isin(tour_ids[round_idx])]
+                tdds = pd.Series(chosen[round_idx], index=tour_ids[round_idx]).reindex(mine.tour_id).to_numpy()
+                person_tt.assign(person_tt.rows(mine.person_id.to_numpy()), tdds)
+                tt = person_tt
             unscheduled = in_round & (chosen < 0)
             if unscheduled.any():
                 values = np.asarray(plain(cols[segment_column or "tour_type"]))[unscheduled]
@@ -315,7 +358,7 @@ def tour_scheduling_component(
                       else np.full(len(ids), np.nan))
             values[rows_in_table] = chosen if c == "tdd" else alts[c][chosen]
             out[c] = values
-        return {"tours": out, "person_windows": tt.to_columns()}
+        return {"tours": out, "person_windows": person_tt.to_columns()}
 
     component = Component(
         name=step,
@@ -576,6 +619,23 @@ def _load_legacy(configs_dirs, settings_file, step, category) -> _Config:
                    pre_tables, alts_specs, model, tdd_segments, destination)
 
 
+def joint_round_timetable(persons: TimeTable, tour_ids, participants: pd.DataFrame, alts) -> TimeTable:
+    """
+    1.x's build_joint_tour_timetables: a timetable with a row per joint tour,
+    each its participants' windows combined (bitwise or), participant by
+    participant number.
+    """
+    windows = np.zeros((len(tour_ids), len(persons.periods)), dtype=np.int8)
+    rows = pd.Index(np.asarray(tour_ids))
+    mine = participants[participants.tour_id.isin(rows)]
+    for _, nth in mine.groupby("participant_num", sort=True):
+        r = rows.get_indexer(nth.tour_id.to_numpy())
+        if len(np.unique(r)) != len(r):
+            raise ValueError("a tour with two participants of the same number")
+        windows[r] = np.bitwise_or(windows[r], persons.windows[persons.rows(nth.person_id.to_numpy())])
+    return TimeTable(np.asarray(tour_ids), windows, persons.periods, persons.alts)
+
+
 def _read_tdd_segments(path) -> pd.DataFrame:
     """tour_departure_and_duration_segments.csv, as 1.x reads it (start and end as 8-bit)."""
     df = pd.read_csv(path, comment="#")
@@ -599,7 +659,7 @@ def _segment_times(tdd_segments: pd.DataFrame, purpose) -> dict[str, tuple]:
 
 
 def _schedule_batch(ctx, batch, tour_ids, cols, person_rows, previous, tt, alts, terms_fn, coefs,
-                    shift, traced, logsum_plan, bound_alts, keep, width=None):
+                    shift, traced, logsum_plan, bound_alts, keep, width=None, prev_rows=None):
     """Choose an option for each tour in ``batch`` (positions among the tours being scheduled)."""
     rows_p = person_rows[batch]
     fits = tt.available(rows_p)                        # (tours, options)
@@ -623,7 +683,7 @@ def _schedule_batch(ctx, batch, tour_ids, cols, person_rows, previous, tt, alts,
             v = bound_alts.function(dict(c), None, n, None, None, {})
         for name in bound_alts.targets:
             c[name] = np.asarray(v[name])
-    prev = previous[rows_p][tour_ix]
+    prev = previous[(person_rows if prev_rows is None else prev_rows)[batch]][tour_ix]
     c["start_previous"] = alts["start"][prev]
     c["end_previous"] = alts["end"][prev]
     for name, values in cols.items():
