@@ -209,6 +209,12 @@ What it shows:
   zones (and their logsum rows) set the run's peak, 1.55 GB; at 10,000 the
   peak is still reading the input files (1.26 GB).
 
+**Since these tables** (`future_experiments.md`): trip destination's
+sampling copies out only the columns its spec reads, and takes each stop's
+sizes as its purpose's column of the size table. Same results; at 50,000
+households the step went from 68 to 71 s to 46 to 48 s (from 1.x's saved
+state, skim file warm), its own memory peak from about 1.1 to 1.0 GB.
+
 **Per step, fresh processes** (the example data: MTC, 5,000 households, and
 ARC for its two steps; each step from 1.x's saved state in a new process,
 median of 3 runs; `profile_step.py`):

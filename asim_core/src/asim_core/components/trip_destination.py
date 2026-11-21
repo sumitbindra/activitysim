@@ -109,6 +109,50 @@ class SizeTerms:
             raise ValueError(f"size terms: no trip size terms for purposes {bad}")
         return self.values[rows, cols]
 
+    def for_batch(self, zone_rows: np.ndarray, repeated: Mapping, zones: np.ndarray):
+        """
+        The size terms for one batch of the sample (every stop x every zone,
+        zones in the table's order): see ``_BatchSizeTerms``. ``repeated``: for
+        each column copied out to the rows, (the rows' values, the stops' values).
+        """
+        if not np.array_equal(self.zones, np.asarray(zones)):
+            return self
+        return _BatchSizeTerms(self, zone_rows, repeated)
+
+
+class _BatchSizeTerms:
+    """
+    ``get(zones, purposes)`` for a batch of the sample. When ``zones`` is the
+    batch's zone column (every zone, in the table's order, for each stop) and
+    ``purposes`` a column copied out from the stops, a stop's sizes are its
+    purpose's column of the table: taken whole, once per batch (the spec asks
+    twice), instead of matching every row's zone and purpose. Other calls go to
+    the table's ``get``. The values are the same.
+    """
+
+    def __init__(self, table: SizeTerms, zone_rows: np.ndarray, repeated: Mapping):
+        self.table = table
+        self.zone_rows = zone_rows
+        self.repeated = dict(repeated)
+        self._cache: dict = {}
+        self.fast_calls = 0
+
+    def get(self, zones, purposes) -> np.ndarray:
+        if zones is self.zone_rows:
+            for name, (rows_values, stop_values) in self.repeated.items():
+                if purposes is rows_values:
+                    if name not in self._cache:
+                        cols = self.table._cols.get_indexer(np.asarray(stop_values, dtype=object))
+                        if (cols < 0).any():
+                            bad = sorted(set(np.asarray(stop_values, dtype=object)[cols < 0].tolist()), key=str)
+                            raise ValueError(f"size terms: no trip size terms for purposes {bad}")
+                        out = self.table.values.T[cols].reshape(-1)  # (stops, zones), row by row
+                        out.flags.writeable = False
+                        self._cache[name] = out
+                    self.fast_calls += 1
+                    return self._cache[name]
+        return self.table.get(zones, purposes)
+
 
 def trip_destination(configs_dirs: Sequence[str | Path], settings_file: str = "trip_destination.yaml",
                      max_rows: int = 1_000_000) -> Component:
@@ -172,6 +216,9 @@ def trip_destination(configs_dirs: Sequence[str | Path], settings_file: str = "t
         return d, d.utility_terms()
 
     sample_defs = {seg: load("SAMPLE_SPEC", seg) for seg in spec_purposes}
+    # the stops' columns each sample spec reads: only these are copied out to every zone
+    sample_reads = {seg: (set(d.columns_used()), any(SAMPLE_SKIMS[a][2] for a, _, _ in d.skim_uses()))
+                    for seg, (d, _) in sample_defs.items()}
     choice_defs = {seg: load("SPEC", seg) for seg in spec_purposes}
 
     model = trip_mode_choice_model(configs_dirs, settings["LOGSUM_SETTINGS"]) if settings.get("LOGSUM_SETTINGS") \
@@ -305,7 +352,8 @@ def trip_destination(configs_dirs: Sequence[str | Path], settings_file: str = "t
                     z, ls = choose_destinations(ctx, purpose, sel, ids[rows], cols, zones, size_terms, objs,
                                                 sample_defs[purpose][1], choice_defs[purpose][1], model,
                                                 resolved["bound"], sample_size, max_rows, alt_col, orig_col,
-                                                primary_orig, primary_dest, periods, stats)
+                                                primary_orig, primary_dest, periods, stats,
+                                                sample_reads=sample_reads[purpose])
                     chosen[sel] = z
                     seg_logsums[sel] = ls
                 bad = chosen == NO_DESTINATION
@@ -352,7 +400,7 @@ def trip_destination(configs_dirs: Sequence[str | Path], settings_file: str = "t
 
 def choose_destinations(ctx, purpose, sel, trip_ids, cols, zones, size_terms, objs, sample_terms, choice_terms,
                         model, bound, sample_size, max_rows, alt_col, orig_col, primary_orig, primary_dest,
-                        periods, stats):
+                        periods, stats, sample_reads=None):
     """1.x's choose_trip_destination for one round's trips of one primary purpose."""
     seg_ids = trip_ids[sel]
     c_seg = {k: v[sel] for k, v in cols.items()}
@@ -363,7 +411,7 @@ def choose_destinations(ctx, purpose, sel, trip_ids, cols, zones, size_terms, ob
     logsums = np.full(len(sel), np.nan)
     # 1. sample
     sample = sample_zones(ctx, seg_ids, c_seg, pos, zones, objs, sample_terms, sample_size, max_rows, alt_col,
-                          periods)
+                          periods, reads=sample_reads)
     stats["sample_rows"] += len(sample["tour"])
     if not len(sample["tour"]):
         return chosen, logsums
@@ -406,27 +454,39 @@ def _skims(ctx, pos_rows, dest_pos, period_labels, periods):
     return SkimLookup(ctx, periods, zones["o"], zones["d"], labels, wrappers=SAMPLE_SKIMS, zones=zones)
 
 
-def sample_zones(ctx, seg_ids, c_seg, pos, zones, objs, terms, sample_size, max_rows, alt_col, periods):
-    """1.x's interaction_sample for trips: every zone, zero-probability trips dropped, then the draws."""
+def sample_zones(ctx, seg_ids, c_seg, pos, zones, objs, terms, sample_size, max_rows, alt_col, periods,
+                 reads=None):
+    """
+    1.x's interaction_sample for trips: every zone, zero-probability trips
+    dropped, then the draws. ``reads``: (the stops' columns the sample spec
+    reads, whether it uses time-of-day skims); only those columns are copied
+    out to every zone (None: every column).
+    """
     terms_fn, coefs, _ = terms
     n_alts = len(zones)
     sample_size = min(sample_size, n_alts)  # 1.x caps the draws at the number of zones
     dest_pos_alts = ctx.skim_positions(zones)
     per_batch = max(1, max_rows // n_alts)
+    columns, uses_period = reads if reads is not None else (None, True)
+    copied = [k for k in c_seg if k != alt_col and (columns is None or k in columns or (uses_period and k == PERIOD))]
     parts = []
     for b in range(0, len(seg_ids), per_batch):
         batch = np.arange(b, min(b + per_batch, len(seg_ids)))
         n_b = len(batch)
         rows = np.repeat(batch, n_alts)
         c = {alt_col: np.tile(zones, n_b)}
-        for name, values in c_seg.items():
-            if name not in c:
-                c[name] = values[rows]
+        for name in copied:
+            c[name] = c_seg[name][rows]
         s = _skims(ctx, {k: v[rows] for k, v in pos.items()}, np.tile(dest_pos_alts, n_b),
                    c.get(PERIOD), periods)
+        batch_objs = objs
+        if isinstance(getattr(objs, "size_terms", None), SizeTerms):  # sizes by position (same values)
+            batch_objs = SimpleNamespace(**vars(objs))
+            batch_objs.size_terms = objs.size_terms.for_batch(
+                c[alt_col], {name: (c[name], c_seg[name][batch]) for name in copied}, zones)
         n = n_b * n_alts
         with np.errstate(all="ignore"):
-            utils = ctx.engine.interaction_utilities(FormulaValues(terms_fn, c, n, objs, s), coefs, n)
+            utils = ctx.engine.interaction_utilities(FormulaValues(terms_fn, c, n, batch_objs, s), coefs, n)
         probs, bad = ctx.engine.probabilities(utils.reshape(n_b, n_alts), shift=False)  # allow_zero_probs
         good = np.flatnonzero(~bad)
         if not len(good):

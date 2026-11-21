@@ -124,7 +124,11 @@ a new cache; two processes building the same cache at once.
   sample spec reads (about six, of every column the stops carry), and take
   each stop's sizes as its purpose's column of the size table (the zones are
   all zones in order; today 133 million zone IDs and purpose names are
-  matched, twice per batch). Perhaps 39 s → 10 to 15 s (to be measured).
+  matched, twice per batch). **Done**: both changes made, results still
+  exactly 1.x's (MTC, MWCOG, ARC, full MTC at 10,000 and 50,000
+  households); trip destination at 50,000 households went from 68 to 71 s
+  to 46 to 48 s (two runs each, skim file warm), its own memory peak from
+  1.08 to 1.13 GB to 0.98 to 1.01 GB.
 - **Read the skims a step uses before it runs.** The same trip destination
   run took 181 s with the skim file not in memory and 80 s with it read
   first (`cat` of the whole 6.7 GB file: 6 s). The difference is the first
