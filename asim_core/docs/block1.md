@@ -14,12 +14,17 @@ replayed from 1.x.)
 - **Every new step matches 1.x exactly** on all four test runs: MTC,
   MWCOG and ARC (their example data) and MTC's full zone system with
   10,000 sampled households, each step from 1.x's saved state and end to
-  end (`run_milestone1.py`: ALL EXACT).
-  <!-- 50k -->
+  end (`run_milestone1.py`: ALL EXACT; MWCOG 1,511 compared columns, ARC
+  1,351, full MTC 713), and on full MTC with 50,000 households.
 - **Run on its own** (`harness/run_standalone.py`: the ten steps from the
   input files in one process, nothing from 1.x, then compared with 1.x's
-  tables after mandatory tour scheduling): MTC 181 of 181 columns exact.
-  <!-- standalone full -->
+  tables after mandatory tour scheduling): 181 of 181 columns exact on MTC,
+  on full MTC with 10,000 households (2.6 million values) and with 50,000
+  (12.7 million values).
+- **Speed** (one process, full MTC): the ten steps take 21 s against 88 s
+  in 1.x at 10,000 households, and 67 s against 320 s at 50,000 (1.x's
+  times include about 34 to 53 s of loading skims; at 50,000 households 1.x
+  ran with numexpr off, as exact matching needs, which slows it down).
 - **1.x finding #15**: CDAP ranks children by person type, not youngest
   first as its comments and CTRAMP say; in the 50,000-household full MTC
   run, 616 preschoolers get their day pattern from fixed proportions instead
@@ -148,7 +153,64 @@ checked against pandas doing what 1.x's formula does
 
 ## Profiles
 
-<!-- profiles -->
+**One process, the ten steps from the input files** (`run_standalone.py`;
+seconds, MB). asim_core's memory is its own (the skims are a memory-mapped
+file shared with other processes: "with skim pages" adds the pages of that
+file the step held). 1.x's column is the same step inside its full run, as
+shipped (numexpr on) at 10,000 households, and with numexpr off (the run
+asim_core matches exactly) at 50,000; 1.x's `initialize_landuse` includes
+loading the skims into memory, and 1.x holds about 8 GB throughout.
+
+Full MTC, 10,000 households:
+
+| Step | asim_core s | asim_core own MB | with skim pages | 1.x s |
+|---|---|---|---|---|
+| initialize_landuse | 0.04 | 187 | 299 | 34.28 |
+| initialize_households | 4.88 | 1,255 | 1,370 | 3.51 |
+| compute_accessibility | 0.57 | 581 | 877 | 1.87 |
+| school_location | 2.72 | 617 | 2,587 | 8.59 |
+| workplace_location | 6.29 | 662 | 3,463 | 16.39 |
+| auto_ownership_simulate | 0.07 | 429 | 3,231 | 0.17 |
+| free_parking | 0.05 | 429 | 3,231 | 0.16 |
+| cdap_simulate | 0.46 | 430 | 3,233 | 4.41 |
+| mandatory_tour_frequency | 0.17 | 430 | 3,234 | 0.67 |
+| mandatory_tour_scheduling | 5.60 | 733 | 7,076 | 18.10 |
+| **ten steps** | **20.9** | | | **88.2** |
+
+Full MTC, 50,000 households:
+
+| Step | asim_core s | asim_core own MB | with skim pages | 1.x s (numexpr off) |
+|---|---|---|---|---|
+| initialize_landuse | 0.02 | 128 | 234 | 53.30 |
+| initialize_households | 5.11 | 1,231 | 1,344 | 7.97 |
+| compute_accessibility | 0.51 | 689 | 978 | 2.33 |
+| school_location | 8.98 | 877 | 2,844 | 42.97 |
+| workplace_location | 26.91 | 1,011 | 3,808 | 108.97 |
+| auto_ownership_simulate | 0.18 | 669 | 3,466 | 0.49 |
+| free_parking | 0.24 | 669 | 3,466 | 0.64 |
+| cdap_simulate | 1.53 | 715 | 3,512 | 7.24 |
+| mandatory_tour_frequency | 0.63 | 751 | 3,549 | 1.32 |
+| mandatory_tour_scheduling | 22.80 | 1,072 | 7,414 | 95.25 |
+| **ten steps** | **66.9** | | | **320.5** |
+
+What it shows:
+
+- **The new steps are small next to location choice and scheduling**:
+  CDAP is 0.5 s (1.x: 4.4 s) and mandatory tour frequency 0.2 s at 10,000
+  households; together with free parking under 4% of asim_core's time.
+- **`initialize_households` is the one step slower than 1.x**: 4.9 s
+  against 3.4 s at 10,000 households. Both parse all 2.9 million
+  households and 7.6 million persons with the same pandas call (1.x's log:
+  1.2 s and 2.0 s); <!-- init-gap -->. Its memory peak, 1.25 GB, is the
+  full files parsed before sampling; 1.x's whole run holds 8 GB or more.
+- **CDAP's cost is in pandas**, as in 1.x: ranking, building the
+  household chooser tables, and the extra members' proportions are 1.x's
+  pandas code, kept so ties and merges come out the same. The pattern
+  utilities themselves are one matrix product per household size.
+
+**Per step, fresh processes** (MTC example; each step from 1.x's saved
+state, median of 3): see `work/milestone1/summary.md` (made by
+`run_milestone1.py`); <!-- mtc-fresh -->
 
 ## Reproducing
 
