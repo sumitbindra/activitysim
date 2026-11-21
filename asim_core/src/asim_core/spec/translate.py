@@ -72,8 +72,9 @@ class NotConstant(FormulaError):
 NP_FUNCTIONS = {
     "where", "minimum", "maximum", "clip", "isin",
     "log", "log1p", "log10", "log2", "exp", "sqrt", "abs", "floor", "ceil",
+    "sin", "cos", "absolute",
 }
-NP_VALUES = {"inf", "nan"}  # np.inf, np.nan
+NP_VALUES = {"inf", "nan", "pi"}  # np.inf, np.nan, np.pi
 ASTYPE_NAMES = {"int", "float", "bool"}  # .astype(int) etc.
 # 1.x's time-window functions formulas may call (components/overlap.py)
 WINDOW_FUNCTIONS = {"hh_time_window_overlap", "person_time_window_overlap", "person_max_window"}
@@ -204,6 +205,7 @@ class CountingLambda:
     query: StringLambda
     as_int8: bool
     n_args: int
+    offset: int = 0  # added to each key's count before the reindex (missing keys stay 0)
 
 
 def string_lambda(formula: str) -> StringLambda | None:
@@ -844,7 +846,7 @@ class _Translator:
 
     def _count_where(self, node: ast.Call, cl: CountingLambda, keys: str) -> str:
         table, mask = self._count_mask(node, cl)
-        extra = "" if cl.as_int8 else ", as_int8=False"
+        extra = ("" if cl.as_int8 else ", as_int8=False") + (f", offset={cl.offset}" if cl.offset else "")
         return f"t.count_where({table!r}, {cl.key!r}, {keys}, {mask}{extra})"
 
     def view_expr(self, node: ast.AST):

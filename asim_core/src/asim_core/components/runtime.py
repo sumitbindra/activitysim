@@ -72,7 +72,7 @@ class TableLookup:
         """A whole column of another table, in its row order."""
         return np.asarray(plain(self._column(table, column)))
 
-    def count_where(self, table: str, key: str, keys, mask, as_int8: bool = True):
+    def count_where(self, table: str, key: str, keys, mask, as_int8: bool = True, offset: int = 0):
         """
         For each key, how many rows of the table with that key in ``key`` have
         ``mask``, as 8-bit integers (0 if none): 1.x's
@@ -80,7 +80,7 @@ class TableLookup:
         without ``as_int8``, as pandas gives them (64-bit, floats if a key has none).
         """
         by = np.asarray(plain(self._column(table, key)))[np.asarray(mask, dtype=bool)]
-        counts = pd.Series(by).value_counts()
+        counts = pd.Series(by).value_counts() + offset  # ARC: (... .size() - 1).reindex(...)
         out = counts.reindex(np.asarray(keys)).fillna(0).to_numpy()
         return out.astype(np.int8) if as_int8 else out
 

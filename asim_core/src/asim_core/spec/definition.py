@@ -620,6 +620,12 @@ def counting_lambda(formula: str):
     if n is None or not target.endswith(".index") or target[:-len(".index")] not in params:
         return None
     counted = params.index(target[:-len(".index")])
+    offset = 0
+    # (X.query(q).groupby(k).size() - 1).reindex(...): the counts shifted before the reindex
+    if (isinstance(n, _ast.BinOp) and isinstance(n.op, (_ast.Sub, _ast.Add)) and isinstance(n.right, _ast.Constant)
+            and isinstance(n.right.value, int) and not isinstance(n.right.value, bool)):
+        offset = n.right.value if isinstance(n.op, _ast.Add) else -n.right.value
+        n = n.left
     grouped = call(n, "size", 0)
     n = call(grouped, "groupby", 1)
     if n is None or not isinstance(grouped.args[0], _ast.Constant) or not isinstance(grouped.args[0].value, str):
@@ -636,7 +642,7 @@ def counting_lambda(formula: str):
                              f"{_ast.unparse(queried_call.args[0])}")
     except (SyntaxError, ValueError):
         return None
-    return CountingLambda(key, queried, counted, others, query, as_int8, len(params))
+    return CountingLambda(key, queried, counted, others, query, as_int8, len(params), offset)
 
 
 @dataclass

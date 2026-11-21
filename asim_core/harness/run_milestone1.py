@@ -70,11 +70,13 @@ from asim_core.components import (  # noqa: E402
     school_location,
     stop_frequency,
     tour_mode_choice,
+    trip_departure_choice,
     trip_destination,
     trip_mode_choice,
     trip_purpose,
     trip_purpose_and_destination,
     trip_scheduling,
+    trip_scheduling_choice,
     workplace_location,
 )
 from asim_core.spec.translate import FormulaError  # noqa: E402
@@ -94,7 +96,7 @@ PORTED = [initialize_landuse, initialize_households, compute_accessibility, scho
           non_mandatory_tour_scheduling, tour_mode_choice, atwork_subtour_frequency,
           atwork_subtour_destination, atwork_subtour_scheduling, atwork_subtour_mode_choice,
           stop_frequency, trip_purpose, trip_destination, trip_purpose_and_destination, trip_scheduling,
-          trip_mode_choice]
+          trip_scheduling_choice, trip_departure_choice, trip_mode_choice]
 # steps that read the input files: they also take the data folders (and the sample size 1.x ran with)
 READS_INPUTS = {initialize_landuse, initialize_households}
 NOT_BUILT: dict[str, str] = {}  # component -> why it could not be built for this example
@@ -126,7 +128,7 @@ def build_components(configs, asim1_run=None, data_dirs=None):
                 out.append(make(configs, data_dirs))
             else:
                 out.append(make(configs))
-        except (NotImplementedError, FormulaError, ValueError) as err:
+        except (NotImplementedError, FormulaError, ValueError, FileNotFoundError) as err:
             NOT_BUILT[make.__name__] = str(err).splitlines()[0][:300]
             print(f"not ported for this example: {make.__name__}: {NOT_BUILT[make.__name__]}")
     return out
