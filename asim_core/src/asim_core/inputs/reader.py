@@ -113,18 +113,32 @@ def _csv_header(path: Path, encoding: str) -> list[str]:
     return reader.schema.names
 
 
-def _read_csv_like_asim1(path: Path, spec: InputTable) -> pa.Table:
-    """pandas' reader, as 1.x calls it: the same floats to the last bit."""
-    for encoding in ("utf8", "cp1252"):
+def _read_csv_frame_like_asim1(path: Path, spec: InputTable) -> pd.DataFrame:
+    """
+    pandas' reader called as 1.x calls it (``pd.read_csv(path, comment='#',
+    dtype=...)``, cp1252 if utf-8 fails, then the dtypes cast): the same
+    floats to the last bit, and the same column types (pandas infers them
+    per block of rows by default, which matters for columns mixing numbers
+    and text); then the columns the table keeps.
+    """
+    for encoding in ("utf-8", "cp1252"):
         try:
-            header = pd.read_csv(path, comment="#", nrows=0, encoding=encoding).columns.tolist()
-            df = pd.read_csv(path, comment="#", encoding=encoding, low_memory=False,
-                             usecols=_wanted_raw_columns(spec, header), dtype=spec.dtypes)
-            return pa.Table.from_pandas(df[[c for c in header if c in df.columns]], preserve_index=False)
+            df = pd.read_csv(path, comment="#", dtype=spec.dtypes, **({} if encoding == "utf-8"
+                                                                     else {"encoding": encoding}))
+            break
         except UnicodeDecodeError:
             if encoding == "cp1252":
                 raise
-    raise AssertionError("unreachable")
+    for c, dtype in (spec.dtypes or {}).items():
+        df[c] = df[c].astype(dtype)
+    wanted = _wanted_raw_columns(spec, list(df.columns))
+    if wanted is not None:
+        df = df[[c for c in df.columns if c in set(wanted)]]
+    return df
+
+
+def _read_csv_like_asim1(path: Path, spec: InputTable) -> pa.Table:
+    return pa.Table.from_pandas(_read_csv_frame_like_asim1(path, spec), preserve_index=False)
 
 
 def _read_file(path: Path, spec: InputTable, like_asim1: bool = False) -> pa.Table:
@@ -190,6 +204,41 @@ def read_table(spec: InputTable, data_dirs: Sequence[str | Path], like_asim1: bo
     return table, path
 
 
+def read_frame(spec: InputTable, data_dirs: Sequence[str | Path], like_asim1: bool = True
+               ) -> tuple[pd.DataFrame, Path]:
+    """
+    ``read_table`` as a pandas DataFrame, for steps that work in pandas (the
+    initialize steps): the same columns, renames and checks, without the
+    round trip through Arrow (twice the time and memory for millions of rows).
+    """
+    path = find_data_file(spec.filename or f"{spec.tablename}.csv", data_dirs)
+    name = path.name.lower()
+    if name.endswith((".parquet", ".pq")) or (not like_asim1 and not name.endswith((".h5", ".hdf5"))):
+        df = _read_file(path, spec, like_asim1).to_pandas()
+    elif name.endswith((".h5", ".hdf5")):
+        df = pd.read_hdf(path, spec.h5_tablename or spec.tablename)
+    else:
+        df = _read_csv_frame_like_asim1(path, spec)
+    if spec.drop_columns:
+        df = df.drop(columns=[c for c in df.columns if c in set(spec.drop_columns)])
+    if spec.rename_columns:
+        df.columns = [spec.rename_columns.get(n, n) for n in df.columns]
+    names = list(df.columns)
+    dup = sorted({n for n in names if names.count(n) > 1})
+    if dup:
+        raise ReadProblem(f"{spec.tablename} ({path.name}): columns named more than once after renaming: {dup}")
+    id_col = spec.id_column
+    if id_col is not None and id_col not in names:
+        raise ReadProblem(f"{spec.tablename} ({path.name}): ID column '{id_col}' not in the file "
+                          f"(columns after renaming: {names})")
+    if spec.keep_columns:
+        missing = [c for c in spec.keep_columns if c not in names]
+        if missing:
+            raise ReadProblem(f"{spec.tablename} ({path.name}): keep_columns not in the file: {missing}")
+        df = df[([id_col] if id_col else []) + [c for c in spec.keep_columns if c != id_col]]
+    return df, path
+
+
 def table_columns(spec: InputTable, data_dirs: Sequence[str | Path], recode: bool = True) -> list[str]:
     """
     The columns ``to_pandas`` gives this table (the ID is the index, not a
@@ -246,7 +295,8 @@ def to_pandas(tables: dict[str, pa.Table], specs: Sequence[InputTable], recode: 
     """
     out: dict[str, pd.DataFrame] = {}
     for spec in recode_order(specs):
-        df = tables[spec.tablename].to_pandas()
+        t = tables[spec.tablename]  # an Arrow table, or a DataFrame from read_frame (changed in place)
+        df = t.to_pandas() if isinstance(t, pa.Table) else t
         if recode and spec.recode_columns:
             for col, how in spec.recode_columns.items():
                 if how == "zero-based":

@@ -43,7 +43,7 @@ import numpy as np
 import pandas as pd
 
 from ..component import Component, StepContext
-from ..inputs.reader import InputTable, input_tables_from_settings, read_table, table_columns, to_pandas
+from ..inputs.reader import InputTable, input_tables_from_settings, read_frame, table_columns, to_pandas
 from ..random import hash32
 from ..spec.legacy import find_config_file, load_assignment_spec, load_global_constants, load_top_settings, read_yaml
 from ..store import Table
@@ -90,6 +90,12 @@ def _spec(specs: Sequence[InputTable], name: str) -> InputTable:
 def _read(specs, names: set[str], data_dirs, csv_reader: str, recode: bool) -> dict[str, pd.DataFrame]:
     """Input tables as 1.x's read_input_table gives them (recodes applied, in table order).
     A table recoded from another (households' zones from land use) reads that one too."""
+    frames, wanted = _read_frames(specs, names, data_dirs, csv_reader, recode)
+    return to_pandas(frames, wanted, recode=recode)
+
+
+def _read_frames(specs, names: set[str], data_dirs, csv_reader: str, recode: bool):
+    """The files as read (renamed, kept columns), before recodes and IDs; and their specs."""
     wanted = [s for s in specs if s.tablename in names]
     if recode:
         for s in list(wanted):
@@ -98,8 +104,12 @@ def _read(specs, names: set[str], data_dirs, csv_reader: str, recode: bool) -> d
                 if parent and parent not in {w.tablename for w in wanted}:
                     wanted.insert(0, _spec(specs, parent))
     like_asim1 = CSV_READERS[csv_reader]
-    tables = {s.tablename: read_table(s, data_dirs, like_asim1)[0] for s in wanted}
-    return to_pandas(tables, wanted, recode=recode)
+    return {s.tablename: read_frame(s, data_dirs, like_asim1)[0] for s in wanted}, wanted
+
+
+def _zero_based(spec: InputTable, recode: bool) -> bool:
+    """True if a recode of this table depends on all its rows (zero-based numbering)."""
+    return recode and any(how == "zero-based" for how in (spec.recode_columns or {}).values())
 
 
 def _targets(annotations: Sequence[Annotation], table: str) -> list[str]:
@@ -213,8 +223,24 @@ def initialize_households(configs_dirs: Sequence[str | Path], data_dirs: Sequenc
         return needs
 
     def run(ctx: StepContext):
-        dfs = _read(specs, {"households", "persons"}, data_dirs, csv_reader, recode)
-        hh, persons = sample_households(dfs["households"], dfs["persons"], sample_size, trace, base_seed)
+        frames, wanted = _read_frames(specs, {"households", "persons"}, data_dirs, csv_reader, recode)
+        hh_spec, per_spec = _spec(specs, "households"), _spec(specs, "persons")
+        total = len(frames["households"])
+        rows = choose_households(frames["households"][hh_spec.id_column].to_numpy().astype(np.int64),
+                                 sample_size, trace, base_seed)
+        # the sample's rows are picked right after reading, so the rest works on them only; the
+        # same rows as 1.x picks after its whole read (unless a recode numbers all rows)
+        early, persons_done = rows is not None and not _zero_based(hh_spec, recode), False
+        if early:
+            frames["households"] = frames["households"].take(rows)
+            p = frames["persons"]
+            if not _zero_based(per_spec, recode) and "household_id" not in (per_spec.recode_columns or {}):
+                kept = frames["households"][hh_spec.id_column].to_numpy().astype(np.int64)
+                frames["persons"] = p[p.household_id.isin(kept)].copy()  # the sample only: small
+                persons_done = True
+        dfs = to_pandas(frames, wanted, recode=recode)
+        hh = dfs["households"] if early or rows is None else dfs["households"].take(rows)
+        hh, persons = finish_sample(hh, dfs["persons"], sample_size, total, rows is not None, persons_done)
         ctx.create_table(Table.from_pandas("households", hh))
         ctx.create_table(Table.from_pandas("persons", persons))
         made: dict = {}
@@ -245,22 +271,41 @@ def initialize_households(configs_dirs: Sequence[str | Path], data_dirs: Sequenc
 def sample_households(hh_full: pd.DataFrame, persons_full: pd.DataFrame, sample_size: int, trace=None,
                       base_seed: int = 0) -> tuple[pd.DataFrame, pd.DataFrame]:
     """1.x's households and persons tables: the sample, sample_rate, the sampled households' persons."""
-    total = len(hh_full)
-    sliced = True
+    rows = choose_households(hh_full.index.to_numpy(), sample_size, trace, base_seed)
+    hh = hh_full if rows is None else hh_full.take(rows)
+    return finish_sample(hh, persons_full, sample_size, len(hh_full), rows is not None)
+
+
+def choose_households(household_ids: np.ndarray, sample_size: int, trace=None, base_seed: int = 0):
+    """
+    The positions (in file order) of the households 1.x keeps, in its order;
+    None for all. 1.x: the traced household only, if ``households_sample_size``
+    is 1; else ``sample_size`` households drawn without replacement by NumPy's
+    RandomState seeded with the base seed and ``hash32('sample_households')``,
+    the traced household replacing the first one drawn if it wasn't.
+    """
+    total = len(household_ids)
     if trace and sample_size == 1:
-        hh = hh_full[hh_full.index.isin([trace])]
-    elif total > sample_size > 0:
-        # 1.x's external rng for the pseudo-step 'sample_households'
+        return np.flatnonzero(household_ids == trace)
+    if total > sample_size > 0:
         prng = np.random.RandomState([base_seed, hash32("sample_households")])
-        hh = hh_full.take(prng.choice(total, size=sample_size, replace=False))
-        if trace and trace not in hh.index and trace in hh_full.index:
-            hh = pd.concat([hh_full.loc[[trace]], hh[1:]])  # 1.x: replaces the first one
-    else:
-        hh, sliced = hh_full, False
+        rows = prng.choice(total, size=sample_size, replace=False)
+        if trace and trace not in household_ids[rows]:
+            where = np.flatnonzero(household_ids == trace)
+            if len(where):
+                rows = np.concatenate([where, rows[1:]])
+        return rows
+    return None
+
+
+def finish_sample(hh: pd.DataFrame, persons_full: pd.DataFrame, sample_size: int, total: int, sliced: bool,
+                  persons_done: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """sample_rate, the sampled households' persons (in file order) and 1.x's checks."""
     if "sample_rate" not in hh.columns:
         hh = hh.copy()
         hh["sample_rate"] = 1 if sample_size == 0 else sample_size / total
-    persons = persons_full[persons_full.household_id.isin(hh.index)] if sliced else persons_full
+    persons = persons_full[persons_full.household_id.isin(hh.index)] if sliced and not persons_done \
+        else persons_full
     if hh.index.duplicated().any() or persons.index.duplicated().any():
         raise InitializeError("household or person IDs used more than once")
     without_hh = ~persons.household_id.isin(hh.index)

@@ -75,7 +75,8 @@ def compare_column(
         else:
             status = "different"
     else:
-        eq = ours == ref
+        # missing text is missing whether NaN (pandas in memory) or None (after a Parquet round trip)
+        eq = (ours == ref) | (pd.isna(ours) & pd.isna(ref))
         mismatched = int((~eq).sum())
         max_diff = None
         status = "exact" if mismatched == 0 else "different"

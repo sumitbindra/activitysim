@@ -46,6 +46,9 @@ def main(argv=None) -> int:
     p.add_argument("--through", default="mandatory_tour_scheduling", help="the last step to run")
     p.add_argument("--out", default=str(REPO / "asim_core/work/standalone"))
     p.add_argument("--read-skim-cache", choices=["settings", "true", "false"], default="settings")
+    p.add_argument("--asim1-profile-run", default=None,
+                   help="take 1.x's step times from this run instead (e.g. 1.x as shipped, when the run "
+                        "compared with was made with numexpr off)")
     args = p.parse_args(argv)
 
     example = Path(args.example_dir).resolve()
@@ -89,7 +92,7 @@ def main(argv=None) -> int:
     profiler.write_csv(out / "profile.csv")
 
     ours = pd.DataFrame([r.__dict__ for r in profiler.records])
-    theirs = load_asim1_profile(Path(args.asim1_out))
+    theirs = load_asim1_profile(Path(args.asim1_profile_run or args.asim1_out))
     table = ours[["step", "wall_s", "cpu_s", "anon_peak_mb", "peak_mb"]].rename(
         columns={"wall_s": "asim_core_s", "cpu_s": "asim_core_cpu_s", "anon_peak_mb": "asim_core_own_peak_mb",
                  "peak_mb": "asim_core_peak_mb"})
@@ -118,8 +121,9 @@ def main(argv=None) -> int:
     if report.warnings:
         lines += ["Warnings:", ""] + [f"- {w['step']}: {w['message']}" for w in report.warnings] + [""]
     lines += [
-        f"Per step, one process (seconds; memory in MB; 1.x from its full run, where "
-        f"`initialize_landuse` includes loading skims). asim_core run total: {run_s:.1f} s.",
+        f"Per step, one process (seconds; memory in MB; 1.x from its full run "
+        f"`{Path(args.asim1_profile_run or args.asim1_out).name}`, where `initialize_landuse` includes "
+        f"loading skims). asim_core run total: {run_s:.1f} s.",
         "",
         md_table(table.round(2)),
         "",
