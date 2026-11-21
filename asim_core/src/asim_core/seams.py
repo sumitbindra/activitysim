@@ -50,6 +50,10 @@ SEAMS = {
                       "nested_logsums(utils, alternatives, nests) -> (n,) array",
     "logsum_keys": "which scheduling option rows share a mode choice logsum: "
                    "logsum_keys(read_columns, has_segments) -> option columns to group by",
+    "sample_columns": "which of the choosers' columns sampling copies out to every alternative (trip "
+                      "destination): sample_columns(available, read, alt_col, period_col, uses_period) -> names",
+    "size_lookup": "size terms for sampling's chooser x alternative rows (trip destination): "
+                   "size_lookup(table, zone_rows, repeated, zones) -> object with .get(zones, purposes)",
     "sample": "probabilities and k random draws per row -> k sampled alternatives (with "
               "replacement): sample(probs, rands) -> (positions, probabilities as float32)",
     "choose": "probabilities and one random draw per row -> chosen position: "
@@ -157,3 +161,20 @@ class Engine:
 
     def __repr__(self) -> str:
         return f"Engine({self.changed or 'reference'})"
+
+
+def describe() -> str:
+    """Every seam and its implementations: the names ``Engine`` and ``--seams`` take."""
+    lines = []
+    for seam, what in SEAMS.items():
+        lines.append(f"{seam}: {what}")
+        for i in implementations(seam):
+            tag = "reference (the default)" if i.reference else i.agreement
+            lines.append(f"    {i.name:<16} {tag}: {i.description}")
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":  # python -m asim_core.seams
+    from asim_core import seams as _seams  # the registry the implementations registered with
+
+    print(_seams.describe())

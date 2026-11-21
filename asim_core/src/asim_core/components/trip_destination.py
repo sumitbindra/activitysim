@@ -101,57 +101,17 @@ class SizeTerms:
 
     def get(self, zones, purposes) -> np.ndarray:
         rows = self._index.get_indexer(np.asarray(zones))
-        cols = self._cols.get_indexer(np.asarray(purposes, dtype=object))
         if (rows < 0).any():
             raise ValueError(f"size terms: zones not in the land use: {np.asarray(zones)[rows < 0][:5].tolist()}")
+        return self.values[rows, self.column_positions(purposes)]
+
+    def column_positions(self, purposes) -> np.ndarray:
+        """Each purpose's column position (an error for purposes without size terms)."""
+        cols = self._cols.get_indexer(np.asarray(purposes, dtype=object))
         if (cols < 0).any():
             bad = sorted(set(np.asarray(purposes, dtype=object)[cols < 0].tolist()), key=str)
             raise ValueError(f"size terms: no trip size terms for purposes {bad}")
-        return self.values[rows, cols]
-
-    def for_batch(self, zone_rows: np.ndarray, repeated: Mapping, zones: np.ndarray):
-        """
-        The size terms for one batch of the sample (every stop x every zone,
-        zones in the table's order): see ``_BatchSizeTerms``. ``repeated``: for
-        each column copied out to the rows, (the rows' values, the stops' values).
-        """
-        if not np.array_equal(self.zones, np.asarray(zones)):
-            return self
-        return _BatchSizeTerms(self, zone_rows, repeated)
-
-
-class _BatchSizeTerms:
-    """
-    ``get(zones, purposes)`` for a batch of the sample. When ``zones`` is the
-    batch's zone column (every zone, in the table's order, for each stop) and
-    ``purposes`` a column copied out from the stops, a stop's sizes are its
-    purpose's column of the table: taken whole, once per batch (the spec asks
-    twice), instead of matching every row's zone and purpose. Other calls go to
-    the table's ``get``. The values are the same.
-    """
-
-    def __init__(self, table: SizeTerms, zone_rows: np.ndarray, repeated: Mapping):
-        self.table = table
-        self.zone_rows = zone_rows
-        self.repeated = dict(repeated)
-        self._cache: dict = {}
-        self.fast_calls = 0
-
-    def get(self, zones, purposes) -> np.ndarray:
-        if zones is self.zone_rows:
-            for name, (rows_values, stop_values) in self.repeated.items():
-                if purposes is rows_values:
-                    if name not in self._cache:
-                        cols = self.table._cols.get_indexer(np.asarray(stop_values, dtype=object))
-                        if (cols < 0).any():
-                            bad = sorted(set(np.asarray(stop_values, dtype=object)[cols < 0].tolist()), key=str)
-                            raise ValueError(f"size terms: no trip size terms for purposes {bad}")
-                        out = self.table.values.T[cols].reshape(-1)  # (stops, zones), row by row
-                        out.flags.writeable = False
-                        self._cache[name] = out
-                    self.fast_calls += 1
-                    return self._cache[name]
-        return self.table.get(zones, purposes)
+        return cols
 
 
 def trip_destination(configs_dirs: Sequence[str | Path], settings_file: str = "trip_destination.yaml",
@@ -459,16 +419,17 @@ def sample_zones(ctx, seg_ids, c_seg, pos, zones, objs, terms, sample_size, max_
     """
     1.x's interaction_sample for trips: every zone, zero-probability trips
     dropped, then the draws. ``reads``: (the stops' columns the sample spec
-    reads, whether it uses time-of-day skims); only those columns are copied
-    out to every zone (None: every column).
+    reads, whether it uses time-of-day skims). Which columns are copied out to
+    every zone, and how size terms are looked up, are seams (``sample_columns``,
+    ``size_lookup``).
     """
     terms_fn, coefs, _ = terms
     n_alts = len(zones)
     sample_size = min(sample_size, n_alts)  # 1.x caps the draws at the number of zones
     dest_pos_alts = ctx.skim_positions(zones)
     per_batch = max(1, max_rows // n_alts)
-    columns, uses_period = reads if reads is not None else (None, True)
-    copied = [k for k in c_seg if k != alt_col and (columns is None or k in columns or (uses_period and k == PERIOD))]
+    columns, uses_period = reads if reads is not None else (set(c_seg), True)
+    copied = ctx.engine.sample_columns(list(c_seg), columns, alt_col, PERIOD, uses_period)
     parts = []
     for b in range(0, len(seg_ids), per_batch):
         batch = np.arange(b, min(b + per_batch, len(seg_ids)))
@@ -480,10 +441,10 @@ def sample_zones(ctx, seg_ids, c_seg, pos, zones, objs, terms, sample_size, max_
         s = _skims(ctx, {k: v[rows] for k, v in pos.items()}, np.tile(dest_pos_alts, n_b),
                    c.get(PERIOD), periods)
         batch_objs = objs
-        if isinstance(getattr(objs, "size_terms", None), SizeTerms):  # sizes by position (same values)
+        if isinstance(getattr(objs, "size_terms", None), SizeTerms):  # the size_lookup seam
             batch_objs = SimpleNamespace(**vars(objs))
-            batch_objs.size_terms = objs.size_terms.for_batch(
-                c[alt_col], {name: (c[name], c_seg[name][batch]) for name in copied}, zones)
+            batch_objs.size_terms = ctx.engine.size_lookup(
+                objs.size_terms, c[alt_col], {name: (c[name], c_seg[name][batch]) for name in copied}, zones)
         n = n_b * n_alts
         with np.errstate(all="ignore"):
             utils = ctx.engine.interaction_utilities(FormulaValues(terms_fn, c, n, batch_objs, s), coefs, n)

@@ -29,6 +29,8 @@ nothing is significantly slower.
 | `skim_access` | how a step holds the skims it reads | `memory_map` | `prefault`, `in_memory` ([skim_experiments.md](skim_experiments.md)) |
 | `skim_reuse` | whether a model's formulas share the skim values they read | `as_written`: every lookup as the formulas are written | `once`: each skim named more than once looked up once per batch, shared until its last use ([skim_experiments.md](skim_experiments.md)) |
 | `skim_lookup` | skim values for origin/destination zones | `flat_take`: a one-dimensional gather, positions shared by a step's skims (the default since the skim experiment) | `index_2d` (two-dimensional indexing, the default before) |
+| `sample_columns` | which of the choosers' columns trip destination's sampling copies out to every zone | `spec_reads`: only the columns the sample spec reads, as 1.x's `drop_unused_columns` (the default since the trip destination measurement) | `all_columns`: every column the stops carry (the default before; the same results) |
+| `size_lookup` | size terms for trip destination's sampling rows (every stop × every zone) | `by_position`: each stop's sizes taken whole as its purpose's column of the size table (the default since the trip destination measurement) | `match`: every row's zone and purpose matched, as 1.x's `DataFrameMatrix.get` (the default before; the same results) |
 | `utilities` | formula values and coefficients → utilities | `matmul`: one matrix product, as 1.x | `accumulate`; `jax`: formulas and sum compiled with JAX ([jax_experiment.md](jax_experiment.md)) |
 | `interaction_utilities` | one utility per chooser-alternative row | `sequential`, as 1.x | `jax` (as above) |
 | `probabilities` | utilities → probabilities (multinomial logit) | `asim1` | |
@@ -42,6 +44,32 @@ List them with:
 ```bash
 python asim_core/harness/run_experiments.py --list
 ```
+
+or, with each implementation's description:
+
+```bash
+PYTHONPATH=asim_core/src python -m asim_core.seams
+```
+
+**When a change becomes the default, the way it worked before stays as an
+alternative**, so an agency can run both and compare. Any run script takes
+the choices as a flag (`--seams`, JSON; seams not named use the default):
+
+```bash
+python asim_core/harness/run_milestone1.py --seams '{"sample_columns": "all_columns", "size_lookup": "match"}'
+```
+
+```bash
+python asim_core/harness/run_standalone.py --through trip_destination --seams '{"skim_lookup": "index_2d"}'
+```
+
+```bash
+python asim_core/harness/profile_step.py --engine asim_core --step trip_destination --scratch /tmp/td --out td.csv --seams '{"size_lookup": "match"}'
+```
+
+`run_milestone1.py` checks every step against 1.x with the choices given;
+`run_standalone.py` runs the steps together and compares the last tables;
+`profile_step.py` times one step in fresh processes.
 
 ## How results are compared
 

@@ -33,6 +33,7 @@ from asim_core.asim1 import Asim1State  # noqa: E402
 from asim_core.compare import compare_column, write_comparisons  # noqa: E402
 from asim_core.profiler import Profiler  # noqa: E402
 from asim_core.runner import Runner  # noqa: E402
+from asim_core.seams import Engine  # noqa: E402
 from asim_core.spec.legacy import load_top_settings  # noqa: E402
 from asim_core.store import Store  # noqa: E402
 from run_milestone1 import NOT_BUILT, build_components, load_asim1_profile, md_table, skim_store  # noqa: E402
@@ -49,6 +50,10 @@ def main(argv=None) -> int:
     p.add_argument("--asim1-profile-run", default=None,
                    help="take 1.x's step times from this run instead (e.g. 1.x as shipped, when the run "
                         "compared with was made with numexpr off)")
+    p.add_argument("--seams", default="{}",
+                   help='choices for the seams, as JSON, e.g. \'{"sample_columns": "all_columns", '
+                        '"size_lookup": "match"}\' (python -m asim_core.seams lists them); '
+                        'unnamed seams use the reference')
     args = p.parse_args(argv)
 
     example = Path(args.example_dir).resolve()
@@ -75,7 +80,8 @@ def main(argv=None) -> int:
     profiler = Profiler(split_memory=True)
     store = Store()
     t0 = time.perf_counter()
-    report = Runner([components[s] for s in steps], out / "run", base_seed=base_seed, skims=skims).run(
+    report = Runner([components[s] for s in steps], out / "run", base_seed=base_seed, skims=skims,
+                    engine=Engine(json.loads(args.seams))).run(
         steps, store, profiler, start_note="input files only; every step computed")
     run_s = time.perf_counter() - t0
 

@@ -128,7 +128,9 @@ a new cache; two processes building the same cache at once.
   exactly 1.x's (MTC, MWCOG, ARC, full MTC at 10,000 and 50,000
   households); trip destination at 50,000 households went from 68 to 71 s
   to 46 to 48 s (two runs each, skim file warm), its own memory peak from
-  1.08 to 1.13 GB to 0.98 to 1.01 GB.
+  1.08 to 1.13 GB to 0.98 to 1.01 GB. They are the defaults of two seams,
+  `sample_columns` (`spec_reads`) and `size_lookup` (`by_position`); the
+  way it worked before is `all_columns` and `match`, also exactly 1.x's.
 - **Read the skims a step uses before it runs.** The same trip destination
   run took 181 s with the skim file not in memory and 80 s with it read
   first (`cat` of the whole 6.7 GB file: 6 s). The difference is the first

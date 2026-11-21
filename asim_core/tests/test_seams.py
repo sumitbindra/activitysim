@@ -70,3 +70,43 @@ def test_counter_random_looks_uniform():
     chi2 = (((counts - expected) ** 2) / expected).sum()
     assert chi2 < 45  # 19 degrees of freedom; 45 is far in the tail
     assert abs(np.corrcoef(draws[:-1], draws[1:])[0, 1]) < 0.01  # neighbouring rows unrelated
+
+
+def _size_table():
+    from asim_core.components.trip_destination import SizeTerms
+
+    zones = np.array([3, 5, 9, 11])
+    return SizeTerms(zones, ["work", "shopping", "escort"],
+                     np.arange(12, dtype=np.float64).reshape(4, 3) + 0.5), zones
+
+
+def test_size_lookup_by_position_gives_the_matched_values():
+    table, zones = _size_table()
+    purposes = np.array(["shopping", "work", "shopping"], dtype=object)  # three choosers
+    zone_rows = np.tile(zones, 3)
+    rows_purposes = np.repeat(purposes, 4)
+    expected = Engine({"size_lookup": "match"}).size_lookup(table, zone_rows, {}, zones).get(zone_rows, rows_purposes)
+    fast = Engine().size_lookup(table, zone_rows, {"purpose": (rows_purposes, purposes)}, zones)
+    got = fast.get(zone_rows, rows_purposes)
+    assert np.array_equal(got, expected) and fast.fast_calls == 1
+    assert fast.get(zone_rows, rows_purposes) is got  # asked twice by the spec: taken once
+    # anything else (other zones, purposes not copied out) is matched row by row
+    other = np.array(["escort"] * 12, dtype=object)
+    assert np.array_equal(fast.get(zone_rows, other), table.get(zone_rows, other)) and fast.fast_calls == 2
+    # zones not in the table's order: every row matched
+    assert Engine().size_lookup(table, zone_rows, {}, zones[::-1]) is table
+    bad = np.array(["school"], dtype=object)
+    bad_rows = np.repeat(bad, 4)
+    with pytest.raises(ValueError, match="no trip size terms"):
+        Engine().size_lookup(table, zones, {"purpose": (bad_rows, bad)}, zones).get(zones, bad_rows)
+
+
+def test_sample_columns_choices():
+    available = ["dest", "purpose", "income", "trip_period", "age"]
+    reads = {"purpose", "income"}
+    assert Engine().sample_columns(available, reads, "dest", "trip_period", True) == ["purpose", "income",
+                                                                                      "trip_period"]
+    assert Engine().sample_columns(available, reads, "dest", "trip_period", False) == ["purpose", "income"]
+    assert Engine({"sample_columns": "all_columns"}).sample_columns(available, reads, "dest", "trip_period",
+                                                                     False) == ["purpose", "income",
+                                                                                "trip_period", "age"]

@@ -88,6 +88,9 @@ from asim_core.spec.legacy import load_top_settings  # noqa: E402
 from asim_core.store import Store  # noqa: E402
 
 
+# the seam choices for this run (--seams); the reference unless named
+ENGINE = [Engine()]
+
 PORTED = [initialize_landuse, initialize_households, compute_accessibility, school_location,
           workplace_location, auto_ownership, free_parking, cdap_simulate, mandatory_tour_frequency,
           mandatory_tour_scheduling, joint_tour_frequency, joint_tour_composition,
@@ -171,7 +174,7 @@ def step_check(comp, st: Asim1State, out: Path, base_seed: int, skims, trace_ids
     table = comp.info.get("trace_table")
     if trace_ids is None and table in store:  # default: trace the first row
         trace_ids = {table: [store[table].index[0]]}
-    report = Runner([comp], out, trace_ids=trace_ids, base_seed=base_seed, skims=skims).run(
+    report = Runner([comp], out, trace_ids=trace_ids, base_seed=base_seed, skims=skims, engine=ENGINE[0]).run(
         [comp.name], store, Profiler(), start_note=f"1.x state after {prev}"
     )
     STEP_WARNINGS.extend(report.warnings)
@@ -234,7 +237,7 @@ def utility_check(comp, st: Asim1State, example: Path, configs_names, out: Path)
 
 
 def end_to_end(components, st: Asim1State, out: Path, base_seed: int, skims):
-    runner = Runner(components, out, replay=st, base_seed=base_seed, skims=skims)
+    runner = Runner(components, out, replay=st, base_seed=base_seed, skims=skims, engine=ENGINE[0])
     store = Store()
     report = runner.run(
         st.steps, store, Profiler(),
@@ -450,7 +453,12 @@ def main(argv=None) -> int:
     p.add_argument("--model-files", action="store_true",
                    help="run the ported steps from asim_core's model files (asim_core/configs/<example>, "
                         "made by harness/check_model_files.py) instead of today's files")
+    p.add_argument("--seams", default="{}",
+                   help='choices for the seams, as JSON, e.g. \'{"sample_columns": "all_columns", '
+                        '"size_lookup": "match"}\' (python -m asim_core.seams lists them); '
+                        'unnamed seams use the reference')
     args = p.parse_args(argv)
+    ENGINE[0] = Engine(json.loads(args.seams))
 
     example = Path(args.example_dir).resolve()
     configs = [example / c for c in args.configs]

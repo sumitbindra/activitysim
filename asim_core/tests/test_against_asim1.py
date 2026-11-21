@@ -257,6 +257,24 @@ def test_block3_steps_match_1x_exactly(step, tmp_path, mtc_skims):
             assert result.status == "exact", result
 
 
+@pytest.mark.skipif(not BASELINE.exists(), reason="no ActivitySim 1.x baseline run")
+def test_trip_destination_original_sampling_matches_1x_exactly(tmp_path, mtc_skims):
+    """The way sampling worked before (every column copied, sizes matched row by row), behind --seams."""
+    from asim_core import components
+    from asim_core.seams import Engine
+
+    st = Asim1State(BASELINE)
+    comp = components.trip_destination(CONFIGS)
+    store = st.load_store(st.previous_step(comp.name))
+    engine = Engine({"sample_columns": "all_columns", "size_lookup": "match"})
+    Runner([comp], tmp_path / "run", skims=mtc_skims, engine=engine).run([comp.name], store)
+    ref = st.read("trips", comp.name)
+    assert list(store["trips"].index) == list(ref.index)
+    for col in comp.provides["trips"]:
+        result = compare_column(comp.name, store["trips"], col, ref[col])
+        assert result.status == "exact", result
+
+
 def test_trip_ids_follow_1x_rule():
     """1.x's trip IDs: tour_id x 2 x (most trips per leg) + trip number, inbound after outbound."""
     import pandas as pd
