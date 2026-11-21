@@ -100,10 +100,31 @@ a new cache; two processes building the same cache at once.
   attempts) and is no faster than 1.x (25 s against 21 s at 50,000
   households, [block3.md](block3.md)). The rounds could work on positions
   (each trip's probability row found once), keeping the draws in order.
-- **Trip destination's logsums, once per distinct input.** Each sampled
-  zone gets two trip mode choice logsums (origin → stop, stop → leg
-  destination); trips of the same tour leg, period and person share many of
-  them. As tour scheduling's logsums (computed once per distinct input),
-  the translator knows which columns the logsum formulas read. The step
-  takes 85 s at 50,000 households (how much of it is logsums: not measured
-  yet).
+- **Trip destination: measured, logsums are not worth deduplicating.** Full
+  MTC, 50,000 households, skim file warm, timers around the step's parts
+  (results still 1.x's): 80 s in all; sampling 44 s (55%: every zone's
+  utility for each of 91,524 stops, 135 million rows, then 30 draws each),
+  logsums 30 s (14 + 15 s, of which the trip mode choice preprocessor 5 s),
+  choice 2 s, the rest 4 s. Of 2,094,154 logsum rows each way, only 42 (od)
+  and 28 (dp) repeat another row's inputs: the person's value of time, the
+  trip number and the zones make nearly every row different. Even the zone
+  pairs with their period are 86 to 90% distinct, and 98% of stops have
+  their own sample inputs (origin, leg destination, purpose, direction, tour
+  mode). Deduplicating saves nothing here.
+- **Trip destination's sampling reads whole rows and columns of skims.**
+  Each stop is paired with every zone, so its origin-to-zone distances are
+  one row of the skim matrix and its zone-to-leg-destination distances one
+  column, but they are looked up as 135 million separate pairs. Taking the
+  row (contiguous) once per stop, and the column from a transposed copy of
+  the few skims the sample spec reads (DIST, DISTWALK, DISTBIKE), could cut
+  most of the 44 s. First measure how the 44 s splits between skim lookups,
+  formula arithmetic, probabilities and draws. Related: the sample spec looks
+  up DISTWALK and DISTBIKE for every row, though only walk and bike tours'
+  rows use them.
+- **Read the skims a step uses before it runs.** The same trip destination
+  run took 181 s with the skim file not in memory and 80 s with it read
+  first (`cat` of the whole 6.7 GB file: 6 s). The difference is the first
+  logsum pass (104 s against 14 s): random page faults on the ~100
+  time-of-day skims it reads. A sequential read of the skims a run declares,
+  at the start, would avoid this after a reboot or when other jobs have
+  pushed the file out of memory.
