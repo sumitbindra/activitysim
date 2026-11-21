@@ -77,7 +77,7 @@ def tours_merged_columns(settings: Mapping, trip_columns: set[str]) -> list[str]
 def trip_mode_choice(configs_dirs: Sequence[str | Path], settings_file: str = "trip_mode_choice.yaml") -> Component:
     configs_dirs = [Path(d) for d in configs_dirs]
     settings = read_yaml(find_config_file(configs_dirs, settings_file))
-    for key in ("CHOOSER_COLS_TO_KEEP", "LEGACY_COEFFICIENTS"):
+    for key in ("CHOOSER_COLS_TO_KEEP",):
         if settings.get(key):
             raise NotImplementedError(f"{settings_file}: {key} is not supported yet")
     model = trip_mode_choice_model(configs_dirs, settings_file)

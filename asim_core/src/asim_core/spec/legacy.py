@@ -147,7 +147,12 @@ def load_choice_model(
     if not spec_file.lower().endswith(".csv"):
         spec_file += ".csv"
     spec_path = find_config_file(configs_dirs, spec_file)
-    coef_path = find_config_file(configs_dirs, str(settings["COEFFICIENTS"]))
+    legacy_path = None
+    if settings.get("COEFFICIENTS") is None and settings.get("LEGACY_COEFFICIENTS"):
+        legacy_path = find_config_file(configs_dirs, str(settings["LEGACY_COEFFICIENTS"]))
+        coef_path = legacy_path
+    else:
+        coef_path = find_config_file(configs_dirs, str(settings["COEFFICIENTS"]))
 
     # spec: same reading rules as ActivitySim 1.x read_model_spec
     spec = pd.read_csv(spec_path, comment="#")
@@ -163,6 +168,20 @@ def load_choice_model(
             coefs[alt] = str(cell).strip()
         label = row["Label"] if "Label" in spec.columns and not pd.isna(row["Label"]) else None
         terms.append(Term(label=label, formula=str(row["Expression"]).strip(), coefficients=coefs))
+
+    if legacy_path is not None:
+        coefficients, template = read_legacy_coefficients(legacy_path, settings.get("CONSTANTS") or {})
+        source_files = [settings_path.name, spec_path.name, legacy_path.name]
+        constants = dict(load_global_constants(configs_dirs))
+        constants.update(settings.get("CONSTANTS") or {})
+        constants.update(extra_constants or {})
+        return ChoiceModelDefinition(
+            name=name or Path(settings_file).stem, logit_type=logit_type,
+            nests=settings.get("NESTS") if logit_type == "NL" else None, alternatives=alternatives,
+            constants=constants, terms=terms, coefficients=coefficients, coefficient_template=template,
+            formulas_see_coefficients=formulas_see_coefficients, skim_accessors=list(skim_accessors),
+            source_files=source_files,
+        )
 
     # coefficients: same checks as ActivitySim 1.x read_model_coefficients
     coef_df = pd.read_csv(coef_path, comment="#", index_col="coefficient_name")
@@ -204,6 +223,26 @@ def load_choice_model(
         skim_accessors=list(skim_accessors),
         source_files=source_files,
     )
+
+
+def read_legacy_coefficients(path: Path, constants: Mapping) -> tuple[dict, dict]:
+    """
+    1.x's LEGACY_COEFFICIENTS: one table of coefficient names by segment, each
+    value evaluated in order (1.x's assign.evaluate_constants: Python eval, with
+    the segment's earlier values and the model's CONSTANTS). Returned as
+    coefficients named ``name@segment`` and a template mapping each name to them.
+    """
+    df = pd.read_csv(path, comment="#", index_col="coefficient_name")
+    coefficients: dict[str, Coefficient] = {}
+    template: dict[str, dict[str, str]] = {}
+    for seg in df.columns:
+        values: dict = {}
+        for k, v in df[seg].items():
+            values[k] = eval(str(v), values.copy(), dict(constants))  # noqa: S307 (1.x evaluates them so)
+        for k, v in values.items():
+            coefficients[f"{k}@{seg}"] = Coefficient(value=float(v), constrain=False)
+            template.setdefault(str(k), {})[str(seg)] = f"{k}@{seg}"
+    return coefficients, template
 
 
 def read_coefficient_template(path: Path) -> dict[str, dict[str, str]]:
@@ -305,7 +344,8 @@ def load_interaction_model(
     if not spec_file.lower().endswith(".csv"):
         spec_file += ".csv"
     spec_path = find_config_file(configs_dirs, spec_file)
-    coef_path = find_config_file(configs_dirs, coefficients_file)
+    # without a coefficients file (1.x allows it), every cell must be a number
+    coef_path = find_config_file(configs_dirs, coefficients_file) if coefficients_file else None
     spec = pd.read_csv(spec_path, comment="#").dropna(subset=["Expression"])
     value_cols = [c for c in spec.columns if c not in _SPEC_META_COLUMNS]
     if value_column is not None and len(value_cols) == 1 and value_cols[0] in ("coefficient", value_column):
@@ -327,13 +367,20 @@ def load_interaction_model(
         target = None
         if expr.startswith("_") and "@" in expr:  # _name@formula: a temporary (1.x)
             target, expr = expr[:expr.index("@")], expr[expr.index("@") + 1:]
+        if coef_path is None:
+            try:
+                float(cell)
+            except ValueError:
+                raise ValueError(f"{spec_path.name}: no coefficients file, but the cell '{cell}' isn't a number "
+                                 f"(1.x needs every cell to be one then)") from None
         terms.append(InteractionTerm(label=label, formula=expr, coefficient=cell, target=target))
     return InteractionModelDefinition(
         name=name or Path(spec_file).stem,
         terms=terms,
-        coefficients=read_coefficients(coef_path),
+        coefficients=read_coefficients(coef_path) if coef_path is not None else {},
+        float32_coefficients=coef_path is not None,
         constants=constants or {},
         objects={k: list(v) for k, v in (objects or {}).items()},
         skim_accessors=list(skim_accessors),
-        source_files=[spec_path.name, coef_path.name],
+        source_files=[spec_path.name] + ([coef_path.name] if coef_path is not None else []),
     )

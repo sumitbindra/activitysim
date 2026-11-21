@@ -414,6 +414,9 @@ class InteractionModelDefinition(BaseModel):
     objects: dict[str, list[str]] = {}
     # names that look up skims, e.g. skims['DIST']
     skim_accessors: list[str] = []
+    # 1.x rounds coefficients to 32-bit when it evaluates them from a coefficients file;
+    # a spec without one (all cells numbers) keeps them 64-bit
+    float32_coefficients: bool = True
     language: Language = "asim1"
     scope: LanguageScope | None = None  # for asim_core's language
     source_files: list[str] = []
@@ -464,7 +467,7 @@ class InteractionModelDefinition(BaseModel):
         """Each row's coefficient, rounded to 32-bit as 1.x does (temporaries included)."""
         values = {k: c.value for k, c in self.coefficients.items()}
         return np.array([_eval_cell(t.coefficient, values) for t in self.terms],
-                        dtype=np.float32)
+                        dtype=np.float32 if self.float32_coefficients else np.float64)
 
     def kept(self) -> np.ndarray:
         """Rows that are computed: 1.x drops rows whose coefficient is zero."""

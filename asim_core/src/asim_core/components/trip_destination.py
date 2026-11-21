@@ -166,7 +166,7 @@ def trip_destination(configs_dirs: Sequence[str | Path], settings_file: str = "t
     objects = {"size_terms": ["get"]}
 
     def load(spec_key, seg):
-        d = load_interaction_model(configs_dirs, settings[spec_key], settings["COEFFICIENTS"], constants,
+        d = load_interaction_model(configs_dirs, settings[spec_key], settings.get("COEFFICIENTS"), constants,
                                    objects=objects, name=f"{STEP}_{spec_key.lower()}_{seg}", value_column=seg,
                                    skim_accessors=list(SAMPLE_SKIMS))
         return d, d.utility_terms()

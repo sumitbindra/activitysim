@@ -233,3 +233,44 @@ def test_block2_steps_match_1x_exactly(step, tmp_path, mtc_skims):
         for col in cols:
             result = compare_column(comp.name, store[table], col, ref[col])
             assert result.status == "exact", result
+
+
+BLOCK3 = ["stop_frequency", "trip_purpose", "trip_destination", "trip_purpose_and_destination", "trip_scheduling",
+          "trip_mode_choice"]
+
+
+@pytest.mark.skipif(not BASELINE.exists(), reason="no ActivitySim 1.x baseline run")
+@pytest.mark.parametrize("step", BLOCK3)
+def test_block3_steps_match_1x_exactly(step, tmp_path, mtc_skims):
+    from asim_core import components
+
+    st = Asim1State(BASELINE)
+    comp = getattr(components, step)(CONFIGS)
+    store = st.load_store(st.previous_step(comp.name))
+    Runner([comp], tmp_path / "run", skims=mtc_skims).run([comp.name], store)
+    for table, cols in comp.provides.items():
+        ref = st.read(table, comp.name)
+        assert list(store[table].index) == list(ref.index), table
+        assert sorted(store[table].column_names) == sorted(ref.columns), table  # e.g. trips' failed dropped
+        for col in cols:
+            result = compare_column(comp.name, store[table], col, ref[col])
+            assert result.status == "exact", result
+
+
+def test_trip_ids_follow_1x_rule():
+    """1.x's trip IDs: tour_id x 2 x (most trips per leg) + trip number, inbound after outbound."""
+    import pandas as pd
+    from asim_core.components.stop_frequency import initialize_from_tours
+
+    alts = pd.DataFrame({"out": [0, 1, 3], "in": [0, 2, 1]}, index=pd.Index(["0out_0in", "1out_2in", "3out_1in"],
+                                                                            name="alt"))
+    tours = pd.DataFrame({"stop_frequency": ["1out_2in", "0out_0in", "3out_1in"], "person_id": [1, 2, 3],
+                          "household_id": [10, 20, 30], "primary_purpose": ["work", "shopping", "school"],
+                          "origin": [5, 6, 7], "destination": [8, 9, 10]},
+                         index=pd.Index([100, 7, 55], name="tour_id"))
+    trips = initialize_from_tours(tours, alts, 4)
+    assert list(trips.index) == [801, 802, 805, 806, 807, 57, 61, 441, 442, 443, 444, 445, 446]
+    t = trips.loc[[801, 802, 805, 806, 807]]
+    assert list(t.outbound) == [True, True, False, False, False]
+    assert list(t.trip_count) == [2, 2, 3, 3, 3]
+    assert list(t.origin) == [5, 5, 8, 8, 8] and list(t.destination) == [8, 8, 5, 5, 5]  # stops are chosen later

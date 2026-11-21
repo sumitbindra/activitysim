@@ -492,8 +492,15 @@ class _Translator:
         if isinstance(node, ast.IfExp):
             test = self.fold(node.test)
             if test is _NOT_CONSTANT:
+                # a condition on coefficient values (one value per segment): decided when the
+                # terms are evaluated, as 1.x's Python eval does
+                names = {n.id for n in ast.walk(node.test) if isinstance(n, ast.Name)}
+                if names and names <= set(self.coefficient_names) | set(self.constants):
+                    return (f"({self.visit(node.body)} if bool({self.visit(node.test)}) "
+                            f"else {self.visit(node.orelse)})")
                 self.fail(node, "the condition of 'x if condition else y' must be decided "
-                                "when the model loads (constants and column names only)")
+                                "when the model loads (constants and column names only), or depend "
+                                "on coefficients only")
             return self.visit(node.body if test else node.orelse)
 
         if isinstance(node, ast.BinOp):
