@@ -201,16 +201,35 @@ What it shows:
 - **`initialize_households` is the one step slower than 1.x**: 4.9 s
   against 3.4 s at 10,000 households. Both parse all 2.9 million
   households and 7.6 million persons with the same pandas call (1.x's log:
-  1.2 s and 2.0 s); <!-- init-gap -->. Its memory peak, 1.25 GB, is the
+  1.2 s and 2.0 s). Most of the difference is how long that call takes from
+  run to run (2.7 s for both files at best here, up to 4.7 s); copying the
+  kept columns adds about 0.5 s. A one-time step, worth a later look. Its memory peak, 1.25 GB, is the
   full files parsed before sampling; 1.x's whole run holds 8 GB or more.
 - **CDAP's cost is in pandas**, as in 1.x: ranking, building the
   household chooser tables, and the extra members' proportions are 1.x's
   pandas code, kept so ties and merges come out the same. The pattern
   utilities themselves are one matrix product per household size.
 
-**Per step, fresh processes** (MTC example; each step from 1.x's saved
-state, median of 3): see `work/milestone1/summary.md` (made by
-`run_milestone1.py`); <!-- mtc-fresh -->
+**Per step, fresh processes** (MTC's example data, 5,000 households; each
+step from 1.x's saved state in a new process, median of 3 runs;
+`run_milestone1.py`, which writes the full table to
+`work/milestone1/summary.md`):
+
+| Step | asim_core s | 1.x s | asim_core extra MB | 1.x extra MB |
+|---|---|---|---|---|
+| initialize_landuse | 0.013 | 0.075 | 1 | 2 |
+| initialize_households | 0.114 | 0.367 | 25 | 29 |
+| free_parking | 0.026 | 0.191 | 8 | 21 |
+| cdap_simulate | 0.236 | 5.244 | 20 | 29 |
+| mandatory_tour_frequency | 0.148 | 0.511 | 18 | 33 |
+
+CDAP's step is 22 times faster here, but much of that is a cost moved,
+not removed: 1.x builds its interaction specs inside the step (one pandas
+row at a time: 2.5 s for household sizes 2 to 5 in its log); asim_core
+builds them with the same code when the model loads (2.8 s, not counted
+above). Without it, the step itself is about 10 times faster. The specs
+depend only on the configs, so they could be built once and saved: a later
+improvement.
 
 ## Reproducing
 
