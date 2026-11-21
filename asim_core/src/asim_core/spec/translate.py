@@ -723,6 +723,10 @@ class _Translator:
                 lop = ">=" if inclusive in ("both", "left") else ">"
                 hop = "<=" if inclusive in ("both", "right") else "<"
                 return f"(({target} {lop} {lo}) & ({target} {hop} {hi}))"
+            if method in ("isnull", "isna", "notnull", "notna"):
+                if node.args or kw:
+                    self.fail(node, f"{method}() takes no arguments")
+                return f"{'~' if method.startswith('not') else ''}_isnull({target})"
             if method == "fillna":
                 if len(node.args) != 1 or kw:
                     self.fail(node, "fillna() takes one value")
@@ -1335,6 +1339,11 @@ def _where(x, cond, other):
     return np.where(cond, x, other)
 
 
+def _isnull(x):
+    """pandas' isnull: missing values (NaN, None) of a column."""
+    return np.asarray(pd.isna(np.asarray(x)))
+
+
 def _fillna(x, value):
     x = np.asarray(x)
     if x.dtype.kind != "f":
@@ -1497,7 +1506,7 @@ RUNTIME_NAMESPACE = {"np": np, "_clip": _clip, "_fillna": _fillna, "_map": _map,
                      "_pandas_eval": _pandas_eval, "_as_int8": _as_int8, "_shift": _shift,
                      "_other_than": _other_than, "_where": _where, "_column_of": _column_of,
                      "_reindex_columns": _reindex_columns, "_series_reindex": _series_reindex,
-                     "_reindex_i": _reindex_i, "_DfView": _DfView, "_period_label": _period_label}
+                     "_reindex_i": _reindex_i, "_DfView": _DfView, "_isnull": _isnull, "_period_label": _period_label}
 
 
 def build_function(name: str, items: list[tuple[str, Translated]], doc: str = "") -> str:

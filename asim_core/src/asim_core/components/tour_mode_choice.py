@@ -199,9 +199,25 @@ class BoundModel:
 
 
 class TourModeChoiceModel:
-    def __init__(self, configs_dirs: Sequence[str | Path], settings_file: str = "tour_mode_choice.yaml"):
+    """
+    1.x's mode choice model (tour or trip). ``skim_wrappers``: the skim
+    lookups formulas can use (accessor -> (from, to, period column));
+    ``names``: the names the step gives the formulas for its origin and
+    destination columns, ``names(dest, orig) -> {name: value}`` (tour mode
+    choice: ``orig_col_name``, ...; trip mode choice: ``ORIGIN``, ...);
+    ``orig``/``dest``: the default origin and destination columns.
+    """
+
+    def __init__(self, configs_dirs: Sequence[str | Path], settings_file: str = "tour_mode_choice.yaml",
+                 skim_wrappers: Mapping | None = None, names=None, orig: str = ORIG, dest: str = DEST,
+                 name: str = "tour_mode_choice", choice_column: str = "tour_mode"):
         configs_dirs = [Path(d) for d in configs_dirs]
         path = find_config_file(configs_dirs, settings_file)
+        self.skim_wrappers = dict(skim_wrappers or SKIM_WRAPPERS)
+        self.names = names or skim_locals
+        self.default_orig, self.default_dest = orig, dest
+        self.model_name = name
+        self._choice_column = choice_column
         self.language = "asim1"
         self.parameters: dict = {}  # this step's parameter values (model files)
         self.purpose = None         # (function, columns) for model files
@@ -276,21 +292,22 @@ class TourModeChoiceModel:
 
     def _load_legacy(self, configs_dirs, settings_file):
         settings = read_yaml(find_config_file(configs_dirs, settings_file))
-        self.choice_column = "tour_mode"
+        self.choice_column = self._choice_column
         unsupported = [f"{k} ({why})" for k, why in _UNSUPPORTED.items() if settings.get(k)]
         if unsupported:
             raise NotImplementedError(f"{settings_file}: not supported yet: {', '.join(unsupported)}")
         self.settings_file = settings_file
+        names = self.names(self.default_dest, self.default_orig)
         self.definition = load_choice_model(
-            configs_dirs, settings_file, name="tour_mode_choice",
+            configs_dirs, settings_file, name=self.model_name,
             handled=["preprocessor", "nontour_preprocessor"],
-            formulas_see_coefficients=True, skim_accessors=list(SKIM_WRAPPERS),
-            extra_constants=skim_locals(DEST),
+            formulas_see_coefficients=True, skim_accessors=list(self.skim_wrappers),
+            extra_constants=names,
         )
         if self.definition.logit_type != "NL":
-            raise NotImplementedError("multinomial tour mode choice is not supported yet")
+            raise NotImplementedError("multinomial mode choice is not supported yet")
         uses_names = set().union(*(t.constants for t in self.definition.translated))
-        self._spec_uses_dest_name = bool(uses_names & {"dest_col_name", "orig_col_name"})
+        self._spec_uses_dest_name = bool(uses_names & set(names))
         self.logsum_column = settings.get("MODE_CHOICE_LOGSUM_COLUMN_NAME")
         self.alternatives = self.definition.alternatives
         self.periods = time_periods_from_settings(configs_dirs)
@@ -307,11 +324,11 @@ class TourModeChoiceModel:
             self.preprocessor_tables = list(pre.get("TABLES") or [])
             constants = dict(load_global_constants(configs_dirs))
             constants.update(settings.get("CONSTANTS") or {})
-            constants.update(skim_locals(DEST))
+            constants.update(names)
             spec_file = str(pre["SPEC"])
             self.preprocessor = load_assignment_spec(
                 configs_dirs, spec_file if spec_file.endswith(".csv") else spec_file + ".csv",
-                constants, skim_accessors=list(SKIM_WRAPPERS), name="tour_mode_choice_preprocessor",
+                constants, skim_accessors=list(self.skim_wrappers), name=f"{self.model_name}_preprocessor",
                 tables=self.preprocessor_tables,
                 coefficients=sorted(self.definition.coefficient_names),
                 settings=load_top_settings(configs_dirs),
@@ -340,10 +357,11 @@ class TourModeChoiceModel:
 
     # --- binding ------------------------------------------------------------------
 
-    def bind(self, df_columns: set[str], tables: Mapping[str, set[str]], dest: str = DEST,
-             orig: str = ORIG, parameters: Mapping | None = None,
+    def bind(self, df_columns: set[str], tables: Mapping[str, set[str]], dest: str | None = None,
+             orig: str | None = None, parameters: Mapping | None = None,
              roles: Mapping[str, set[str]] | None = None,
-             period_labels: Mapping[str, Iterable[str]] | None = None) -> BoundModel:
+             period_labels: Mapping[str, Iterable[str]] | None = None,
+             names: Mapping | None = None) -> BoundModel:
         """
         Work out, for choosers with ``df_columns`` and skims from ``orig`` to
         ``dest`` (column names), what the model reads: chooser columns, other
@@ -356,8 +374,10 @@ class TourModeChoiceModel:
         (see ``fixed_period_labels``); time-of-day skims are then declared for
         those periods only. By default, for every period.
         """
+        dest = self.default_dest if dest is None else dest
+        orig = self.default_orig if orig is None else orig
         self.bind_log.append((set(df_columns), dest, orig))
-        if (dest, orig) != (DEST, ORIG) and self._spec_uses_dest_name:
+        if (dest, orig) != (self.default_dest, self.default_orig) and self._spec_uses_dest_name:
             raise NotImplementedError("the mode choice spec uses dest_col_name or orig_col_name; "
                                       "only the default origin and destination are supported")
         bound = None
@@ -366,7 +386,8 @@ class TourModeChoiceModel:
         skim_uses = set(self._spec_skims)
         table_cols: set[tuple[str, str]] = set()
         if self.preprocessor is not None:
-            extra = dict(skim_locals(dest, orig))
+            extra = dict(self.names(dest, orig))
+            extra.update(names or {})  # more values the step gives the formulas
             if self.language == "asim_core":
                 values = dict(self.parameters if parameters is None else parameters)
                 missing = sorted(set(self.parameters) - set(values))
@@ -390,7 +411,7 @@ class TourModeChoiceModel:
         skims: set[str] = set()
         period_columns: set[str] = set()
         for accessor, key, how in skim_uses:
-            period_col = SKIM_WRAPPERS[accessor][2]
+            period_col = self.skim_wrappers[accessor][2]
             if period_col is None:
                 skims.add(key)
             elif how != "get":
@@ -446,8 +467,9 @@ class TourModeChoiceModel:
             raise ValueError(f"tour mode choice: no coefficients for segment '{segment}' "
                              f"(template segments: {list(self.segments)})")
         seg = self.segments[segment]
+        period_cols = {w[2] for w in self.skim_wrappers.values() if w[2]}
         s = SkimLookup(ctx, self.periods, ctx.skim_positions(c[bound.orig]), ctx.skim_positions(c[bound.dest]),
-                       {p: c[p] for p in ("out_period", "in_period") if p in c})
+                       {p: c[p] for p in sorted(period_cols) if p in c}, wrappers=self.skim_wrappers)
         # the preprocessor and the formulas may share the skim values they read
         pre_fn = bound.preprocessor.function if bound.preprocessor is not None else None
         s = ctx.engine.skim_reuse(s, [getattr(pre_fn, "_asim_source", None),
@@ -650,8 +672,9 @@ class SkimLookup:
     """
 
     def __init__(self, ctx: StepContext, periods, orig: np.ndarray, dest: np.ndarray,
-                 period_labels: Mapping[str, np.ndarray]):
+                 period_labels: Mapping[str, np.ndarray], wrappers: Mapping | None = None):
         self.ctx = ctx
+        self.wrappers = SKIM_WRAPPERS if wrappers is None else wrappers
         self.zones = {"orig": orig, "dest": dest}
         # positions shared by every skim looked up for the same zone pairs (and periods)
         self._pairs: dict = {}
@@ -671,7 +694,7 @@ class SkimLookup:
         return self._pairs[(o_role, d_role)]
 
     def __call__(self, accessor: str, key: str, how: str = "get"):
-        o_role, d_role, period_col = SKIM_WRAPPERS[accessor]
+        o_role, d_role, period_col = self.wrappers[accessor]
         pairs = self.pairs(o_role, d_role)
         if period_col is None:
             if how == "reverse":

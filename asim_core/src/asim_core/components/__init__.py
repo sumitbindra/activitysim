@@ -14,7 +14,9 @@ from .non_mandatory_tour_frequency import non_mandatory_tour_frequency
 from .location_choice import school_location, workplace_location
 from .simple_choice import ChooserView, simple_choice_component
 from .stop_frequency import stop_frequency
+from .trip_mode_choice import trip_mode_choice
 from .trip_purpose import trip_purpose
+from .trip_scheduling import trip_scheduling
 from .tour_destination import atwork_subtour_destination, joint_tour_destination, non_mandatory_tour_destination
 from .tour_mode_choice import atwork_subtour_mode_choice, tour_mode_choice
 from .tour_scheduling import (
@@ -29,4 +31,4 @@ __all__ = ["atwork_subtour_destination", "atwork_subtour_frequency", "atwork_sub
            "joint_tour_participation", "joint_tour_scheduling",
            "mandatory_tour_frequency",
            "mandatory_tour_scheduling", "non_mandatory_tour_destination", "non_mandatory_tour_frequency", "non_mandatory_tour_scheduling",
-           "school_location", "stop_frequency", "tour_mode_choice", "trip_purpose", "workplace_location"]
+           "school_location", "stop_frequency", "tour_mode_choice", "trip_mode_choice", "trip_purpose", "trip_scheduling", "workplace_location"]
