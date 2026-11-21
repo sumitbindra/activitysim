@@ -16,7 +16,7 @@ model.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 import pandas as pd
@@ -116,11 +116,13 @@ def load_choice_model(
     skim_accessors: Sequence[str] = (),
     extra_constants: dict | None = None,
     spec_key: str = "SPEC",
+    overrides: Mapping | None = None,
 ) -> ChoiceModelDefinition:
     """
     ``handled`` lists settings the calling component deals with itself (e.g.
     ``preprocessor``), so they aren't reported as unsupported. ``spec_key``:
     the setting naming the spec file (CDAP: INDIV_AND_HHSIZE1_SPEC).
+    ``overrides``: settings replacing the file's (a segment's spec and coefficients).
     ``formulas_see_coefficients``: formulas may use coefficient names as values
     (1.x allows this in mode choice models). ``skim_accessors`` are the skim
     lookups formulas may use (e.g. ``odt_skims``). ``extra_constants`` are
@@ -129,6 +131,7 @@ def load_choice_model(
     configs_dirs = [Path(d) for d in configs_dirs]
     settings_path = find_config_file(configs_dirs, settings_file)
     settings = read_yaml(settings_path)
+    settings.update(overrides or {})  # e.g. one segment's SPEC and COEFFICIENTS (1.x: SPEC_SEGMENTS)
 
     unsupported = [f"{k} ({why})" for k, why in _NOT_YET_SUPPORTED.items()
                    if settings.get(k) and k not in handled]

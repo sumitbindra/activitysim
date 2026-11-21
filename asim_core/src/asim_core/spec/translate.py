@@ -199,7 +199,7 @@ class CountingLambda:
 
     key: str
     queried: int
-    counted: int
+    counted: int | None  # None: the lambda gives the counts per key (a Series), for reindex_i()
     others: tuple
     query: StringLambda
     as_int8: bool
@@ -467,7 +467,10 @@ class _Translator:
                 name = self.fold(node.slice)
                 if isinstance(name, str):
                     return self.column(name)
-                self.fail(node, "df[...] needs a column name")
+                view = self.view_expr(node)
+                if view is not None:
+                    return view[0]
+                self.fail(node, "df[...] needs a column name or a condition on the rows")
             if isinstance(node.value, ast.Name) and node.value.id in self.skim_accessors:
                 return self.skim(node)
             if isinstance(node.value, ast.Name) and node.value.id in self.table_columns:
@@ -593,6 +596,17 @@ class _Translator:
         # a counting lambda defined by an earlier row: _PERSON_COUNT('16 <= age', persons, households)
         if isinstance(func, ast.Name) and func.id in self.count_functions:
             return self.count_call(node, self.count_functions[func.id])
+        # network_los.skim_time_period_label(times): each time's skim time period label (1.x: pd.cut)
+        if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "network_los"
+                and func.attr == "skim_time_period_label"):
+            periods = self.constants.get("network_los")
+            if periods is None or not hasattr(periods, "labels"):
+                self.fail(node, "network_los.skim_time_period_label() needs the skim time periods, "
+                                "which this step doesn't give its formulas")
+            if len(node.args) != 1 or node.keywords:
+                self.fail(node, "skim_time_period_label() takes the times (other arguments are not supported)")
+            self.used_constants.add("network_los")
+            return f"_period_label({self.visit(node.args[0])}, {list(periods.periods)!r}, {list(periods.labels)!r})"
         # methods of objects the model provides, e.g. tt.previous_tour_ends(...)
         if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
                 and func.value.id in self.objects):
@@ -736,6 +750,10 @@ class _Translator:
                     self.fail(node, "shift() takes a whole number of rows")
                 return f"_shift({target}, {periods})"
             if method == "map":
+                # na_action='ignore' leaves missing values missing, as a dictionary does anyway
+                if kw.keys() == {"na_action"} and isinstance(kw["na_action"], ast.Constant) \
+                        and kw["na_action"].value == "ignore":
+                    kw = {}
                 if len(node.args) != 1 or kw:
                     self.fail(node, "map() takes one dictionary")
                 return f"_map({target}, {_literal(self.mapping(node.args[0]))})"
@@ -762,6 +780,12 @@ class _Translator:
         without 1.x's ``astype(np.int8)``). The query is a pandas query on the
         table's columns, its text worked out when the model loads.
         """
+        if cl.counted is None:
+            self.fail(node, "this counting function gives counts per key: use it as reindex_i(f(...), ids)")
+        return self._count_where(node, cl, self.column(INDEX))
+
+    def _count_mask(self, node: ast.Call, cl: CountingLambda) -> tuple[str, str]:
+        """The queried table and the query as NumPy code (its text worked out at load time)."""
         if len(node.args) != cl.n_args or node.keywords:
             self.fail(node, f"the counting function takes {cl.n_args} arguments")
         values = [self.fold(node.args[i]) for i in cl.others]
@@ -773,11 +797,13 @@ class _Translator:
             self.fail(node, f"the counting function's query can't be built: {err}")
         if not isinstance(query_text, str):
             self.fail(node, "the counting function's query must be text")
-        table_node, df_node = node.args[cl.queried], node.args[cl.counted]
+        table_node = node.args[cl.queried]
         if not (isinstance(table_node, ast.Name) and table_node.id in self.table_columns):
             self.fail(node, "the queried argument must be a table the model lists")
-        if not (isinstance(df_node, ast.Name) and df_node.id in self.df_names):
-            self.fail(node, "the counted-for argument must be the table being annotated")
+        if cl.counted is not None:
+            df_node = node.args[cl.counted]
+            if not (isinstance(df_node, ast.Name) and df_node.id in self.df_names):
+                self.fail(node, "the counted-for argument must be the table being annotated")
         table = table_node.id
         if self.table_columns[table] is None:
             raise NeedsColumns(f"formula {self.formula!r}: needs the columns of table '{table}'")
@@ -789,8 +815,12 @@ class _Translator:
         if cl.key not in self.table_columns[table]:
             self.fail(node, f"table '{table}' has no column '{cl.key}'")
         self.tables.add((table, cl.key))
+        return table, mask
+
+    def _count_where(self, node: ast.Call, cl: CountingLambda, keys: str) -> str:
+        table, mask = self._count_mask(node, cl)
         extra = "" if cl.as_int8 else ", as_int8=False"
-        return f"t.count_where({table!r}, {cl.key!r}, {self.column(INDEX)}, {mask}{extra})"
+        return f"t.count_where({table!r}, {cl.key!r}, {keys}, {mask}{extra})"
 
     def view_expr(self, node: ast.AST):
         """
@@ -808,6 +838,10 @@ class _Translator:
             if node.value.id in self.views and node.value.id in self.assigned:
                 base, prov = self.view_expr(node.value)
                 return f"{base}.filter({self.visit(node.slice)})", prov
+            if node.value.id in self.df_names:  # some of the rows being annotated: df[mask]
+                if self.df_columns is None:
+                    raise NeedsColumns(f"formula {self.formula!r}: needs the columns of the rows annotated")
+                return f"_DfView(c, {self.visit(node.slice)})", {col: DF_ROWS for col in self.df_columns}
             if node.value.id in self.table_columns and not (node.value.id in self.df_names):
                 table = node.value.id
                 prov = self.provenance(table)  # raises NeedsColumns until the columns are known
@@ -832,7 +866,10 @@ class _Translator:
         table = prov.get(name)
         if table is None:
             self.fail(node, f"no column '{name}' among {sorted(prov)}")
-        self.tables.add((table, name))
+        if table is DF_ROWS:
+            self.column(name)  # a column of the rows annotated, read from c
+        else:
+            self.tables.add((table, name))
         return table
 
     def merge_view(self, node: ast.Call):
@@ -1050,6 +1087,12 @@ class _Translator:
             self.fail(node, "reindex_i() takes a table column (or group size) and the IDs to look up")
         arg = node.args[0]
         keys = self.visit(node.args[1])
+        # f(query, table) where f gives the counts per key: reindex_i(_HH_PERSON_COUNT('age < 5', persons), ids)
+        if (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Name) and arg.func.id in self.count_functions
+                and self.count_functions[arg.func.id].counted is None):
+            table, mask = self._count_mask(arg, self.count_functions[arg.func.id])
+            return f"_as_int8(t.count_where({table!r}, {self.count_functions[arg.func.id].key!r}, {keys}, {mask}, " \
+                   f"as_int8=False))"
         # V.groupby('col').size(), V some rows of a table (a view)
         if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute) and arg.func.attr == "size" \
                 and isinstance(arg.func.value, ast.Call) and isinstance(arg.func.value.func, ast.Attribute) \
@@ -1349,6 +1392,36 @@ def _as_int8(x):
     return x.astype(np.int8)
 
 
+DF_ROWS = object()  # provenance of a view's columns that are the annotated rows' own
+
+
+class _DfView:
+    """Some of the rows being annotated (1.x: ``df[df.tour_type == 'shopping']``): their columns from ``c``."""
+
+    def __init__(self, c, mask):
+        self.c = c
+        self.mask = np.asarray(mask, dtype=bool)
+
+    def col(self, name: str) -> np.ndarray:
+        return np.asarray(self.c[name])[self.mask]
+
+    def filter(self, mask) -> _DfView:
+        keep = np.zeros(len(self.mask), dtype=bool)
+        keep[np.flatnonzero(self.mask)[np.asarray(mask, dtype=bool)]] = True
+        return _DfView(self.c, keep)
+
+    def group_size(self, key: str) -> pd.Series:
+        k = self.col(key)
+        return pd.Series(k).groupby(k).size()
+
+
+def _period_label(times, periods, labels):
+    """1.x's network_los.skim_time_period_label for a column: pd.cut, then text."""
+    if np.ndim(times) == 0:
+        raise ValueError("skim_time_period_label() of a single value is not supported")
+    return np.asarray(pd.cut(np.asarray(times), periods, labels=labels, ordered=False).astype(str), dtype=object)
+
+
 class TableView:
     """Some rows of another table (1.x: ``tours[tours.tour_category == 'joint']``), by position."""
 
@@ -1424,7 +1497,7 @@ RUNTIME_NAMESPACE = {"np": np, "_clip": _clip, "_fillna": _fillna, "_map": _map,
                      "_pandas_eval": _pandas_eval, "_as_int8": _as_int8, "_shift": _shift,
                      "_other_than": _other_than, "_where": _where, "_column_of": _column_of,
                      "_reindex_columns": _reindex_columns, "_series_reindex": _series_reindex,
-                     "_reindex_i": _reindex_i}
+                     "_reindex_i": _reindex_i, "_DfView": _DfView, "_period_label": _period_label}
 
 
 def build_function(name: str, items: list[tuple[str, Translated]], doc: str = "") -> str:

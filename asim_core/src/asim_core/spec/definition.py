@@ -577,7 +577,7 @@ def counting_lambda(formula: str):
         node = _ast.parse(text, mode="eval").body
     except SyntaxError:
         return None
-    if not isinstance(node, _ast.Lambda) or len(node.args.args) < 3 or node.args.defaults:
+    if not isinstance(node, _ast.Lambda) or len(node.args.args) < 2 or node.args.defaults:
         return None
     params = [a.arg for a in node.args.args]
 
@@ -587,6 +587,21 @@ def counting_lambda(formula: str):
         return n.func.value if ok else None
 
     body = node.body
+    # the counts per key, without a reindex: lambda exp, persons: persons.query(exp).groupby('household_id').size()
+    n = call(body, "size", 0)
+    g = call(n, "groupby", 1) if n is not None else None
+    q = call(g, "query", 1) if g is not None else None
+    if (q is not None and isinstance(q, _ast.Name) and q.id in params and isinstance(n.args[0], _ast.Constant)
+            and isinstance(n.args[0].value, str)):
+        queried = params.index(q.id)
+        others = tuple(i for i in range(len(params)) if i != queried)
+        try:
+            query = StringLambda(f"lambda {', '.join(params[i] for i in others)}: {_ast.unparse(g.args[0])}")
+        except (SyntaxError, ValueError):
+            return None
+        return CountingLambda(n.args[0].value, queried, None, others, query, False, len(params))
+    if len(params) < 3:
+        return None
     as_int8 = False
     n = call(body, "astype", 1)
     if n is not None:
