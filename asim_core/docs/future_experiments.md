@@ -84,10 +84,13 @@ a new cache; two processes building the same cache at once.
   done with positions (each member's row by household and rank); the ranks
   only with care for ties.
 - **Random numbers in general.** Matching 1.x means reseeding a generator
-  for every row, about 3.3 µs per row; no faster exact way in pure NumPy is
-  known. The `counter` alternative (not 1.x's numbers) is the fast option
-  for those who accept different numbers; it grows in importance with
-  steps that draw for every trip.
+  for every row, about 2 µs per row. **Done**: the same numbers can be
+  worked out for all rows at once in NumPy (each row's first 113 draws in a
+  step), bit for bit; now the default (`vectorized`), the row-by-row loop
+  kept as `asim1` (`experiments.md`). Whole model, full MTC, 50,000
+  households: 148 s → 134 to 139 s. Left: normal draws and rows past 113
+  draws (row by row still). The `counter` alternative (not 1.x's numbers)
+  remains for those who accept different numbers.
 - **Joint tour participation with positions instead of pandas.** 1.8 s at
   50,000 households against 2.6 s in 1.x: the closest of the block 2 steps
   ([block2.md](block2.md)). Building the candidates (a merge of joint tours

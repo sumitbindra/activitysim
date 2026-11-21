@@ -1,8 +1,7 @@
 """
 Random numbers for a step: the ``random`` seam.
 
-The reference implementation (``asim1``) reproduces ActivitySim 1.x exactly.
-Every row (household, person, tour, ...) gets its own random stream for each
+Both exact implementations reproduce ActivitySim 1.x exactly. Every row (household, person, tour, ...) gets its own random stream for each
 step. The stream's seed depends only on:
 
     (base_seed + hash(channel name) + hash(step name) + row ID) mod 2**32
@@ -11,12 +10,15 @@ and the stream restarts at the beginning of every step. Nothing has to be
 saved from a previous run to reproduce the draws: a component that makes the
 same draws, in the same order, for the same rows, under the same step name,
 gets exactly the numbers ActivitySim 1.x used (see activitysim/core/random.py).
-It uses NumPy's legacy ``RandomState`` (Mersenne Twister, a frozen and stable
-API) reseeded for every row, which is slow: a Python loop over rows.
+1.x uses NumPy's legacy ``RandomState`` (Mersenne Twister, a frozen and
+stable API) reseeded for every row, in a Python loop over rows: ``asim1``
+here, which does the same. The reference, ``vectorized``, works the same
+numbers out for all rows at once (the default since the random draws
+measurement; about 7 times faster at a million rows).
 
-Alternatives keep the same per-row, per-step independence (results never
-depend on row order, batching or which other rows are present) but draw
-different numbers, so they can only match 1.x statistically.
+``counter`` keeps the same per-row, per-step independence (results never
+depend on row order, batching or which other rows are present) but draws
+different numbers, so it can only match 1.x statistically.
 """
 
 from __future__ import annotations
@@ -42,8 +44,9 @@ def row_seeds(base_seed: int, channel: str, step: str, ids) -> np.ndarray:
     return (base_seed + hash32(channel) + hash32(step) + ids) % _MAX_SEED
 
 
-@register("random", "asim1", reference=True,
-          description="ActivitySim 1.x per-row Mersenne Twister streams, reseeded for every row")
+@register("random", "asim1", agreement="exact",
+          description="ActivitySim 1.x per-row Mersenne Twister streams, reseeded for every row in a loop, as "
+                      "1.x (the default until the random draws measurement; the same numbers)")
 class StepRandom:
     """The random streams for one step. Created fresh by the runner for each step."""
 
@@ -151,7 +154,7 @@ def _first_doubles(seeds: np.ndarray, k: int) -> np.ndarray:
     return ((a * 67108864.0 + b) / 9007199254740992.0).T
 
 
-@register("random", "vectorized", agreement="exact",
+@register("random", "vectorized", reference=True,
           description="1.x's per-row streams, the same numbers, worked out for all rows at once (each row's "
                       "first 113 uniform draws in a step; later ones, and normal draws, row by row as asim1)")
 class VectorizedRandom(StepRandom):

@@ -110,8 +110,10 @@ def test_vectorized_draws_are_the_reference_bit_for_bit():
     np.testing.assert_array_equal(first, StepRandom("s")._draw(seeds, np.zeros(len(seeds), dtype=np.int64), 3))
 
 
-def test_vectorized_is_an_exact_seam_choice():
+def test_vectorized_is_the_default_and_the_loop_an_exact_choice():
+    from asim_core.random import VectorizedRandom
     from asim_core.seams import Engine
 
-    engine = Engine({"random": "vectorized"})
-    assert engine.agreement == "exact" and engine.changed == {"random": "vectorized"}
+    assert Engine().random is VectorizedRandom
+    engine = Engine({"random": "asim1"})  # row by row, as 1.x: the default before
+    assert engine.agreement == "exact" and engine.changed == {"random": "asim1"} and engine.random is StepRandom

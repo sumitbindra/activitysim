@@ -37,7 +37,7 @@ nothing is significantly slower.
 | `nested_probabilities` | utilities and a nest tree → probabilities (nested logit) | `asim1` | |
 | `sample` | probabilities and draws → sampled alternatives | `binary_search`: 1.x's picks, about log2(alternatives) comparisons per draw (the default since the JAX experiment) | `inverse_cdf`: the same picks, compared as 1.x does, every alternative per draw (the default before) |
 | `choose` | probabilities and random draws → choices | `sequential`, as 1.x | |
-| `random` | per-row random draws for a step | `asim1`: 1.x's streams, exactly | `counter` |
+| `random` | per-row random draws for a step | `vectorized`: 1.x's streams, the same numbers, worked out for all rows at once (the default since the random draws measurement) | `asim1` (reseeded row by row as 1.x, the default before; the same numbers); `counter` (different numbers) |
 
 List them with:
 
@@ -155,7 +155,7 @@ Each piece on its own, synthetic data, 1,000,000 rows (single runs):
 
 | Piece | Implementation | Seconds | Extra memory (MB) |
 |---|---|---|---|
-| random | `asim1` (reference) | 2.28 | 66 |
+| random | `asim1` (the reference then) | 2.28 | 66 |
 | random | `counter` | 0.13 | 77 |
 | utilities, 29 terms × 5 alternatives | `matmul` (reference) | 0.12 | 260 |
 | utilities, 29 terms × 5 alternatives | `accumulate` | 0.29 | 45 |
@@ -181,3 +181,40 @@ What this says:
 
 The example is small, so step times are indicative only. The synthetic
 benchmarks show how each piece's cost grows with size.
+
+## Random draws: 1.x's numbers for all rows at once
+
+1.x gives every row its own random stream for each step and reseeds NumPy's
+Mersenne Twister for every row, in a Python loop: about 2 µs per row, and
+78 to 90% of a simple choice step's time (free parking, auto ownership,
+MWCOG's person steps; half of CDAP). A freshly seeded generator's first 113
+numbers depend only on part of its seeding (words 0 to 2k and 397 to
+396 + 2k for k numbers) and one pass of its twist, so `vectorized` works
+the seeding, twist and number assembly out for all rows together in NumPy,
+in batches of 65,536 rows. Rows past their first 113 draws in a step, and
+normal draws (preprocessors' lognormal values), still go row by row.
+
+- **The same numbers, bit for bit**: against `asim1` (first draws, more
+  draws later in the step, subsets of rows, past the first 113, normal then
+  uniform) and against 1.x's own `random_for_df` (5 rows in the tests; a
+  million rows: identical).
+- **The same results everywhere**: every step of MTC, MWCOG (100 and all
+  households), ARC and full MTC (10,000 and 50,000 households) exactly
+  1.x's, from saved state and end to end; full MTC at 50,000 households
+  from the input files: 219 of 219 columns.
+- **Faster**: a million rows, one draw each, 2.06 s → 0.28 s (1.x's
+  `random_for_df`: 2.42 s); 30 draws per row (destination sampling) 1.6
+  times. The whole model, full MTC, 50,000 households, skim file warm:
+
+| `--seams` | Run 1 | Run 2 |
+|---|---|---|
+| `{"random": "asim1"}` (row by row, the default before) | 148.2 s | 148.4 s |
+| `{}` (the default: `vectorized`) | 139.1 s | 134.3 s |
+
+  The largest gains per step: trip mode choice 6.6 → 4.8 to 5.2 s, trip
+  scheduling 19.4 → 17.3 to 18.6 s, CDAP 1.1 → 0.5 s, auto ownership and
+  free parking 0.2 → 0.05 s. Trip destination hardly changes: its time is
+  not in the draws.
+- Not done: normal draws (1.x's polar method rejects some pairs, so rows
+  use different amounts of their stream) and rows past 113 draws.
+

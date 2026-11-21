@@ -41,6 +41,7 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 18 | Trip scheduling's default logic (`logic_version` 1) retries a tour's inbound trips without its outbound ones, so they can never be scheduled and are all forced to the window's edge after 100 attempts | Bug (default setting) | Measured (MTC full zones, 50,000 households: 11,289 trips forced, 474 with `logic_version: 2`) | Not reported |
 | 19 | MTC's stop frequency counts the household's shopping and maintenance tours, then looks them up by person ID | Model specification | Measured (MTC full zones, 50,000 households: 2,735 tours get another stop frequency when corrected) | Not reported |
 | 20 | ARC's trip scheduling specs: stop counts one too low, terms for a tour type that doesn't exist ('at_work'), inbound stop times checked against the outbound leg | Model specification | Measured (ARC example: 51 of 157 tours with stops get another split; 27 departures change) | Not reported |
+| 21 | Random numbers: a generator reseeded per row in a Python loop; the same numbers can be worked out for all rows at once | Speed | Measured (bit for bit against `random_for_df`) | Not reported |
 
 ---
 
@@ -792,6 +793,28 @@ exactly, with the files as shipped and corrected, the same random numbers).
 **Suggested change.** Count the stops (trips before a direction's last)
 without `- 1`; test the tour category for at-work subtours; split the first
 departure term by direction.
+
+---
+
+## 21. Random numbers: reseeded row by row, though all rows can be done at once
+
+**Evidence: measured** (1.x's `SimpleChannel.random_for_df` against
+asim_core's `vectorized` draws, a million rows).
+
+**What happens.** Every step's draws reseed NumPy's `RandomState` for each
+row in a Python loop (`activitysim/core/random.py`, `_generators_for_df`):
+2.42 s for a million rows, one draw each. In simple choice steps this is
+most of the step's time (78 to 90% in asim_core's ports of free parking,
+auto ownership and MWCOG's person steps, which otherwise do what 1.x does).
+
+**Suggested change.** A freshly seeded Mersenne Twister's first 113 doubles
+depend only on seeding words 0 to 2k and 397 to 396 + 2k (k doubles) and
+one pass of the twist. The seeding recurrence, that pass, tempering and
+`random_sample`'s double assembly can run for all rows at once in NumPy
+(about 40 lines; `asim_core/src/asim_core/random.py`, `_first_doubles`),
+with rows past 113 draws left on the loop. Same numbers, bit for bit (a
+million rows compared); 0.26 s instead of 2.42 s. Results are unchanged, so
+no model output moves.
 
 ---
 
