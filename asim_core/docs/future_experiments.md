@@ -111,16 +111,20 @@ a new cache; two processes building the same cache at once.
   pairs with their period are 86 to 90% distinct, and 98% of stops have
   their own sample inputs (origin, leg destination, purpose, direction, tour
   mode). Deduplicating saves nothing here.
-- **Trip destination's sampling reads whole rows and columns of skims.**
-  Each stop is paired with every zone, so its origin-to-zone distances are
-  one row of the skim matrix and its zone-to-leg-destination distances one
-  column, but they are looked up as 135 million separate pairs. Taking the
-  row (contiguous) once per stop, and the column from a transposed copy of
-  the few skims the sample spec reads (DIST, DISTWALK, DISTBIKE), could cut
-  most of the 44 s. First measure how the 44 s splits between skim lookups,
-  formula arithmetic, probabilities and draws. Related: the sample spec looks
-  up DISTWALK and DISTBIKE for every row, though only walk and bike tours'
-  rows use them.
+- **Trip destination's sampling: measured; skims are not the cost.** The
+  same run, sampling only (39 s; 133 million stop × zone rows), with
+  timers around its parts: building the rows (every column the stops carry,
+  copied for every zone) 17.2 s (44%); utilities 18.1 s (46%), of which
+  `size_terms.get` 10.3 s, skim fetches 3.5 s (zone → leg destination, a
+  column of the matrix, 2.6 s; origin → zone, a row, 0.9 s) and formula
+  arithmetic 4.2 s; probabilities, draws, picks and deduplication 3.6 s
+  (picks only 1.0 s, so binary-search sampling would not help). Fetching
+  whole rows and columns of skims would save at most about 3 s. Two exact
+  changes would remove most of the rest: copy out only the columns the
+  sample spec reads (about six, of every column the stops carry), and take
+  each stop's sizes as its purpose's column of the size table (the zones are
+  all zones in order; today 133 million zone IDs and purpose names are
+  matched, twice per batch). Perhaps 39 s → 10 to 15 s (to be measured).
 - **Read the skims a step uses before it runs.** The same trip destination
   run took 181 s with the skim file not in memory and 80 s with it read
   first (`cat` of the whole 6.7 GB file: 6 s). The difference is the first
