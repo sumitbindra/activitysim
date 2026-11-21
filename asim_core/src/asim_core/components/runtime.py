@@ -128,6 +128,13 @@ class TableLookup:
 
         return TableView(self, table, np.flatnonzero(np.asarray(mask, dtype=bool)))
 
+    def merged_view(self, table: str, key: str, other: str, other_columns):
+        """1.x's pd.merge(table[[...]], other[[...]], left_on=key, right_index=True, how='left')."""
+        from ..spec.translate import TableView
+
+        return TableView(self, table, np.arange(len(self.ctx.ids(table))),
+                         {c: (other, key) for c in other_columns})
+
     def group_size(self, table: str, key: str, keys):
         """1.x's T.groupby(key).size().reindex(keys): rows per key, missing (a float) where none."""
         counts = pd.Series(np.asarray(plain(self._column(table, key)))).groupby(

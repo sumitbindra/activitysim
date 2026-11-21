@@ -47,6 +47,8 @@ from asim_core.asim1 import Asim1State  # noqa: E402
 from asim_core.compare import compare_column, value_shares, write_comparisons  # noqa: E402
 from asim_core.inputs import check_inputs  # noqa: E402
 from asim_core.components import (  # noqa: E402
+    atwork_subtour_destination,
+    atwork_subtour_frequency,
     auto_ownership,
     cdap_simulate,
     compute_accessibility,
@@ -81,7 +83,8 @@ PORTED = [initialize_landuse, initialize_households, compute_accessibility, scho
           mandatory_tour_scheduling, joint_tour_frequency, joint_tour_composition,
           joint_tour_participation, joint_tour_destination, joint_tour_scheduling,
           non_mandatory_tour_frequency, non_mandatory_tour_destination,
-          non_mandatory_tour_scheduling, tour_mode_choice]
+          non_mandatory_tour_scheduling, tour_mode_choice, atwork_subtour_frequency,
+          atwork_subtour_destination]
 # steps that read the input files: they also take the data folders (and the sample size 1.x ran with)
 READS_INPUTS = {initialize_landuse, initialize_households}
 NOT_BUILT: dict[str, str] = {}  # component -> why it could not be built for this example

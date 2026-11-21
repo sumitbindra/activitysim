@@ -117,19 +117,33 @@ def joint_tour_destination(
     return tour_destination_component(configs_dirs, settings_file, "joint_tour_destination", "joint", max_rows)
 
 
+def atwork_subtour_destination(
+    configs_dirs: Sequence[str | Path],
+    settings_file: str = "atwork_subtour_destination.yaml",
+    max_rows: int = 1_000_000,
+) -> Component:
+    """1.x's atwork_subtour_destination: the same model for the at-work subtours, from the
+    workplace, with 1.x's defaults for settings a region may leave out ("future settings")."""
+    return tour_destination_component(
+        configs_dirs, settings_file, "atwork_subtour_destination", "atwork", max_rows,
+        defaults={"SIZE_TERM_SELECTOR": "atwork", "SEGMENTS": ["atwork"], "ORIG_ZONE_ID": "workplace_zone_id"})
+
+
 def tour_destination_component(
     configs_dirs: Sequence[str | Path],
     settings_file: str,
     step: str,
     category: str,
     max_rows: int = 1_000_000,
+    defaults: dict | None = None,
 ) -> Component:
-    """A destination for each tour of ``category`` (1.x's run_tour_destination)."""
+    """A destination for each tour of ``category`` (1.x's run_tour_destination). ``defaults``:
+    values for settings the file leaves out (1.x's future_component_settings)."""
     STEP, CATEGORY = step, category  # noqa: N806 (the module's names, for this step)
     configs_dirs = [Path(d) for d in configs_dirs]
     path = find_config_file(configs_dirs, settings_file)
     cfg = _load_model_file(path, configs_dirs) if is_model_file(path) else \
-        _load_legacy(configs_dirs, settings_file, step)
+        _load_legacy(configs_dirs, settings_file, step, defaults)
     segments, segment_col, orig_col, alt_col = cfg.segments, cfg.segment_col, cfg.orig_col, cfg.alt_col
     chooser_id, sample_size, logsum_column = cfg.chooser_id, cfg.sample_size, cfg.logsum_column
     size_weights, size_columns, shift = cfg.size_weights, cfg.size_columns, cfg.shift
@@ -324,9 +338,12 @@ class _Config:
     max_rows: int | None = None
 
 
-def _load_legacy(configs_dirs, settings_file, step=STEP) -> _Config:
+def _load_legacy(configs_dirs, settings_file, step=STEP, defaults=None) -> _Config:
     """Today's settings, specs and coefficients."""
-    settings = read_settings(configs_dirs, settings_file)
+    settings = dict(read_settings(configs_dirs, settings_file))
+    for key, value in (defaults or {}).items():
+        if settings.get(key) is None:
+            settings[key] = value
     top = load_top_settings(configs_dirs)
     unsupported = [f"{k} ({why})" for k, why in _UNSUPPORTED.items() if settings.get(k)]
     method = (settings.get("compute_settings") or {}).get("sample_method") or top.get("sample_method")

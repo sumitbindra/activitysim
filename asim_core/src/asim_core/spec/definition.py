@@ -515,21 +515,47 @@ class InteractionModelDefinition(BaseModel):
 RANDOM_MARKER = "rng.lognormal_for_df(df,"  # as 1.x's assign_variables looks for it
 
 
-def _view_of(formula: str, tables: set[str], views: dict) -> str | None:
-    """The table whose rows the formula selects (``tours[tours.x == 'y']``, or a view's), else None."""
+_NOT_A_VIEW = object()
+
+
+def _view_of(formula: str, table_columns: dict, views: dict):
+    """
+    For a formula selecting rows of a table (``tours[tours.x == 'y']``, a
+    view's rows, or 1.x's ``pd.merge(A[[...]], B[[...]], left_on=..., ...)``):
+    each column it has, mapped to its table (None if the tables' columns
+    aren't known yet). Else _NOT_A_VIEW.
+    """
     import ast as _ast
 
     try:
         node = _ast.parse(formula.strip().lstrip("@").strip(), mode="eval").body
     except SyntaxError:
-        return None
+        return _NOT_A_VIEW
+
+    def prov(table):
+        cols = table_columns.get(table)
+        return None if cols is None else {c: table for c in cols}
+
+    if isinstance(node, _ast.Call) and isinstance(node.func, _ast.Attribute) and node.func.attr == "merge" \
+            and isinstance(node.func.value, _ast.Name) and node.func.value.id == "pd" and len(node.args) == 2:
+        out: dict = {}
+        for arg in node.args:
+            if not (isinstance(arg, _ast.Subscript) and isinstance(arg.value, _ast.Name)
+                    and arg.value.id in table_columns and isinstance(arg.slice, _ast.List)):
+                return _NOT_A_VIEW
+            if table_columns.get(arg.value.id) is None:
+                return None
+            for e in arg.slice.elts:
+                if isinstance(e, _ast.Constant) and isinstance(e.value, str):
+                    out.setdefault(e.value, arg.value.id)
+        return out
     if not (isinstance(node, _ast.Subscript) and isinstance(node.value, _ast.Name)):
-        return None
-    if isinstance(node.slice, _ast.Constant) and isinstance(node.slice.value, str):
-        return None  # a column
+        return _NOT_A_VIEW
+    if isinstance(node.slice, (_ast.Constant, _ast.List)):
+        return _NOT_A_VIEW  # a column, or columns
     if node.value.id in views:
         return views[node.value.id]
-    return node.value.id if node.value.id in tables else None
+    return prov(node.value.id) if node.value.id in table_columns else _NOT_A_VIEW
 
 
 def counting_lambda(formula: str):
@@ -759,12 +785,12 @@ class AssignmentSpec(BaseModel):
                     assigned.discard(a.target)
                     items.append((a.target, a.description, value))
                     continue
-            view_of = _view_of(a.formula, set(table_columns), views)
+            view_of = _view_of(a.formula, table_columns, views)
             try:
                 tr = translate(a.formula, constants, python_mode=True, assigned=assigned,
                                random_index=random_index, **kw)
                 items.append((a.target, a.description, tr))
-                if view_of is not None and a.target.startswith("_"):
+                if view_of is not _NOT_A_VIEW and a.target.startswith("_"):
                     views[a.target] = view_of
             except NeedsColumns:
                 raise

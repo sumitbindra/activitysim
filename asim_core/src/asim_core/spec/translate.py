@@ -457,10 +457,7 @@ class _Translator:
                 return self.table_column(node, node.value.id, node.attr)
             # a column of some rows of a table: _JOINT_TOURS.tour_type
             if isinstance(node.value, ast.Name) and node.value.id in self.views and node.value.id in self.assigned:
-                table = self.views[node.value.id]
-                if node.attr not in (self.table_columns.get(table) or ()):
-                    self.fail(node, f"table '{table}' has no column '{node.attr}'")
-                self.tables.add((table, node.attr))
+                table = self.view_column(node, self.views[node.value.id], node.attr)
                 self.names.add(node.value.id)
                 return f"v[{node.value.id!r}].col({node.attr!r})"
             self.fail(node, "unsupported attribute")
@@ -638,7 +635,9 @@ class _Translator:
         if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "pd":
             if func.attr == "cut":
                 return self.cut(node)
-            self.fail(node, f"pd.{func.attr} is not supported (only pd.cut)")
+            if func.attr == "merge":
+                return self.merge_view(node)[0]
+            self.fail(node, f"pd.{func.attr} is not supported (only pd.cut and pd.merge)")
         # rng.lognormal_for_df(df, mu=..., sigma=..., broadcast=True, scale=...)
         if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "rng":
             return self.lognormal(node)
@@ -803,17 +802,77 @@ class _Translator:
             return f"v[{node.id!r}]", self.views[node.id]
         if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
             key = self.fold(node.slice)
-            if isinstance(key, str):
-                return None  # a column, not rows
+            if isinstance(key, (str, list)):
+                return None  # a column, or columns, not rows
             if node.value.id in self.views and node.value.id in self.assigned:
-                base, table = self.view_expr(node.value)
-                return f"{base}.filter({self.visit(node.slice)})", table
+                base, prov = self.view_expr(node.value)
+                return f"{base}.filter({self.visit(node.slice)})", prov
             if node.value.id in self.table_columns and not (node.value.id in self.df_names):
                 table = node.value.id
-                if self.table_columns[table] is None:
-                    raise NeedsColumns(f"formula {self.formula!r}: needs the columns of table '{table}'")
-                return f"t.view({table!r}, {self.whole_columns(node.slice, table)})", table
+                prov = self.provenance(table)  # raises NeedsColumns until the columns are known
+                return f"t.view({table!r}, {self.whole_columns(node.slice, table)})", prov
+        if isinstance(node, ast.Call):
+            merged = self.merge_view(node)
+            if merged is not None:
+                return merged
         return None
+
+    def provenance(self, table: str) -> dict:
+        """Each column of a table, mapped to the table (for a view of its rows)."""
+        cols = self.table_columns.get(table)
+        if cols is None:
+            raise NeedsColumns(f"formula {self.formula!r}: needs the columns of table '{table}'")
+        return {c: table for c in cols}
+
+    def view_column(self, node, prov, name: str) -> str:
+        """The table a view's column comes from (recorded as read)."""
+        if prov is None:
+            raise NeedsColumns(f"formula {self.formula!r}: needs the columns of the tables it selects from")
+        table = prov.get(name)
+        if table is None:
+            self.fail(node, f"no column '{name}' among {sorted(prov)}")
+        self.tables.add((table, name))
+        return table
+
+    def merge_view(self, node: ast.Call):
+        """
+        1.x's ``pd.merge(A[['k', ...]], B[[...]], left_on='k', right_index=True,
+        how='left')``: A's rows, in order, with B's columns for A's key; as
+        (code, provenance), or None if it isn't that.
+        """
+        func = node.func
+        if not (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "pd"
+                and func.attr == "merge"):
+            return None
+        kw = {k.arg: self.fold(k.value) for k in node.keywords}
+        sides = []
+        for arg in node.args:
+            cols = self.fold(arg.slice) if isinstance(arg, ast.Subscript) else None
+            if not (isinstance(arg, ast.Subscript) and isinstance(arg.value, ast.Name)
+                    and arg.value.id in self.table_columns and isinstance(cols, list)
+                    and all(isinstance(c, str) for c in cols)):
+                self.fail(node, "pd.merge() is supported as pd.merge(A[[columns]], B[[columns]], left_on=..., "
+                                "right_index=True, how='left')")
+            sides.append((arg.value.id, cols))
+        if len(sides) != 2 or kw != {"left_on": kw.get("left_on"), "right_index": True, "how": "left"} \
+                or not isinstance(kw.get("left_on"), str):
+            self.fail(node, "pd.merge() is supported as pd.merge(A[[columns]], B[[columns]], left_on=..., "
+                            "right_index=True, how='left')")
+        (left, lcols), (right, rcols) = sides
+        key = kw["left_on"]
+        lprov, rprov = self.provenance(left), self.provenance(right)
+        for table, cols, prov in ((left, lcols, lprov), (right, rcols, rprov)):
+            missing = [c for c in cols if c not in prov]
+            if missing:
+                self.fail(node, f"table '{table}' has no columns {missing}")
+        if key not in lcols:
+            self.fail(node, f"the key '{key}' must be one of the left table's columns")
+        if set(lcols) & set(rcols):
+            self.fail(node, "columns in both tables (pandas would rename them) are not supported")
+        self.tables.add((left, key))
+        prov = {c: left for c in lcols}
+        prov.update({c: right for c in rcols})
+        return f"t.merged_view({left!r}, {key!r}, {right!r}, {rcols!r})", prov
 
     def group_size_expr(self, node: ast.AST):
         """``X.groupby('key').size()`` on a view (or table): code giving 1.x's counts per key, or None."""
@@ -827,11 +886,9 @@ class _Translator:
         view = self.view_expr(g.func.value)
         if view is None:
             return None
-        code, table = view
+        code, prov = view
         key = self.fold(g.args[0])
-        if key not in (self.table_columns.get(table) or ()):
-            self.fail(node, f"table '{table}' has no column '{key}'")
-        self.tables.add((table, key))
+        self.view_column(node, prov, key)
         return f"{code}.group_size({key!r})"
 
     def window_function(self, node: ast.Call, name: str) -> str:
@@ -1044,6 +1101,8 @@ class _Translator:
         lookup = self._lookup
         if lookup is None or lookup[0] != table:
             self.fail(node, f"columns of '{table}' can only be used inside reindex()")
+        if self.table_columns[table] is None:
+            raise NeedsColumns(f"formula {self.formula!r}: needs the columns of table '{table}'")
         if name not in self.table_columns[table]:
             self.fail(node, f"table '{table}' has no column '{name}'")
         self.tables.add((table, name))
@@ -1292,16 +1351,20 @@ def _as_int8(x):
 class TableView:
     """Some rows of another table (1.x: ``tours[tours.tour_category == 'joint']``), by position."""
 
-    def __init__(self, lookup, table: str, positions):
+    def __init__(self, lookup, table: str, positions, joins: dict | None = None):
         self.lookup = lookup
         self.table = table
         self.positions = np.asarray(positions, dtype=np.int64)
+        self.joins = dict(joins or {})  # column -> (other table, key column of this one)
 
     def col(self, name: str) -> np.ndarray:
+        if name in self.joins:  # another table's column, for this table's key (a left merge)
+            other, key = self.joins[name]
+            return np.asarray(self.lookup(other, name, self.col(key)))
         return np.asarray(self.lookup.col(self.table, name))[self.positions]
 
     def filter(self, mask) -> TableView:
-        return TableView(self.lookup, self.table, self.positions[np.asarray(mask, dtype=bool)])
+        return TableView(self.lookup, self.table, self.positions[np.asarray(mask, dtype=bool)], self.joins)
 
     def group_size(self, key: str) -> pd.Series:
         """pandas' ``df.groupby(key).size()`` on these rows: rows per key."""
