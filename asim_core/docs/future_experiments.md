@@ -88,3 +88,10 @@ a new cache; two processes building the same cache at once.
   known. The `counter` alternative (not 1.x's numbers) is the fast option
   for those who accept different numbers; it grows in importance with
   steps that draw for every trip.
+- **Joint tour participation with positions instead of pandas.** 1.8 s at
+  50,000 households against 2.6 s in 1.x: the closest of the block 2 steps
+  ([block2.md](block2.md)). Building the candidates (a merge of joint tours
+  with household members) and each round's check of which parties are
+  complete (a groupby over tour and composition) are 1.x's pandas code. Both
+  could work on row positions (members by household, candidates by tour),
+  keeping the draw order so the results stay 1.x's.
