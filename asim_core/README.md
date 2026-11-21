@@ -16,7 +16,7 @@ picked by a setting and tested with the experiment harness. Speed-ups come
 from those experiments. Sharrow is not used; 1.x with sharrow is only a
 baseline in the reports.
 
-Status: thirty-one components are ported and match 1.x exactly:
+Status: thirty-five components are ported and match 1.x exactly:
 `initialize_landuse` and `initialize_households` (reading, household
 sampling, annotations, size tables), `compute_accessibility` (with skims),
 `school_location` and `workplace_location` (sampling, logsums, annotations
@@ -36,13 +36,14 @@ tour, mode choice from the workplace), and the trip steps: stop frequency
 (and the trips, with 1.x's trip IDs), trip purpose, trip destination (two
 mode choice logsums per sampled zone), trip purpose and destination, trip
 scheduling (MTC, MWCOG) or trip scheduling choice and trip departure choice
-(ARC), and trip mode choice. They were checked on three regions' example
+(ARC), and trip mode choice; and MWCOG's own four: work from home, transit
+pass subsidy and ownership, telecommute frequency. They were checked on three regions' example
 models: MTC, MWCOG and ARC (all 24,061 households), and on MTC's full zone
-system. **Every model step of the three regions runs in asim_core**; MTC's
-and ARC's whole model runs from the input files alone
+system. **Every model step of the three regions runs in asim_core**, and
+each region's whole model runs from the input files alone
 ([docs/block1.md](docs/block1.md), [docs/block2.md](docs/block2.md),
-[docs/block3.md](docs/block3.md)); only the output and summary steps (and
-MWCOG's four region-specific steps) are still taken from 1.x.
+[docs/block3.md](docs/block3.md), [docs/block4.md](docs/block4.md)); only the
+output and summary steps are still taken from 1.x.
 Every other step can be
 **replayed** from a 1.x run, so the model runs end to end today. Results: [docs/milestone1.md](docs/milestone1.md),
 [docs/block1.md](docs/block1.md), [docs/block2.md](docs/block2.md), [docs/block3.md](docs/block3.md),

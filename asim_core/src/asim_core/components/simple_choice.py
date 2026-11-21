@@ -120,6 +120,14 @@ class ChooserView:
         )
 
 
+# 1.x's persons_merged: each person with their household, home zone and its accessibility
+PERSONS_MERGED = ChooserView("persons", [
+    ("households", "household_id"),
+    ("land_use", "home_zone_id"),
+    ("accessibility", "home_zone_id"),
+])
+
+
 @dataclass
 class Choosers:
     """Which rows of the chooser table choose: those whose ``column`` passes ``test``."""
@@ -172,6 +180,7 @@ def simple_choice_component(
     choosers: Choosers | None = None,
     preprocessor: tuple | None = None,
     output: ChoiceOutput | None = None,
+    filter_after_preprocessor: bool = False,
 ) -> Component:
     """
     Build a component that writes the chosen alternative's position
@@ -182,7 +191,10 @@ def simple_choice_component(
     models do: only some rows choose (``choosers``); a preprocessor
     (``(AssignmentSpec, tables it reads)``) adds columns to the choosers
     first, seeing every column of the view as 1.x's merged table; and
-    ``output`` turns the choices into the written values.
+    ``output`` turns the choices into the written values. The preprocessor
+    runs on the choosers only, unless ``filter_after_preprocessor``: then on
+    every row, and the choosers are picked after (their column may be one
+    the preprocessor makes), as 1.x's transit_pass_subsidy does.
     """
     nests = definition.nest_tree()  # None for multinomial logit
     coef = definition.coefficient_matrix()
@@ -197,6 +209,8 @@ def simple_choice_component(
     pre = preprocessor
     if isinstance(pre, tuple):  # (spec, tables): on the choosers
         pre = Preprocessor(*pre)
+    if filter_after_preprocessor and pre is not None and pre.on is not None:
+        raise NotImplementedError(f"{step}: a preprocessor on a joined table, before the choosers are picked")
 
     def resolve_needs(available: Mapping[str, set[str]]) -> Needs:
         if roles is not None:  # asim_core's language: role.column names checked
@@ -222,7 +236,8 @@ def simple_choice_component(
                 extra.setdefault(pre.on, set()).update(own)
             for t, c in bound.tables_used():
                 extra.setdefault(t, set()).add(c)
-        if choosers is not None:
+        made = set(resolved["pre"].targets) if pre is not None and pre.on is None else set()
+        if choosers is not None and not (filter_after_preprocessor and choosers.column in made):
             wanted.add(choosers.column)
         resolved["view_needs"] = view_needs = view.resolve(wanted, available)
         needs = {t: set(c) for t, c in view_needs.items()}
@@ -244,24 +259,18 @@ def simple_choice_component(
     def run(ctx: StepContext):
         ids = all_ids = ctx.ids(view.table)
         cols = view.gather(ctx, resolved["view_needs"])
+        bound_pre = resolved.get("pre")
+        own_pre = bound_pre is not None and pre.on is None  # runs on the choosers' rows
+        if own_pre and filter_after_preprocessor:  # on every row, then the choosers are picked
+            cols = _preprocess(ctx, bound_pre, cols, ids)
         rows_choosing = None
         if choosers is not None:
             rows_choosing = np.flatnonzero(choosers.test(np.asarray(cols[choosers.column])))
             ids = all_ids[rows_choosing]
             cols = {c: (v[rows_choosing] if np.ndim(v) else v) for c, v in cols.items()}
-        bound_pre = resolved.get("pre")
-        if bound_pre is not None and pre.on is None:
-            from .annotate import _update
-            from .runtime import TableLookup
-
-            c = {k: cols[k] for k in bound_pre.columns_used() - {INDEX}}
-            c[INDEX] = ids
-            with np.errstate(all="ignore"):  # 1.x logs numpy warnings and carries on
-                v = bound_pre.function(c, None, len(ids), TableLookup(ctx), None, {})
-            cols = dict(cols)
-            for target in bound_pre.targets:
-                cols[target] = _update(cols.get(target), np.asarray(v[target]))
-        elif bound_pre is not None:
+        if own_pre and not filter_after_preprocessor:
+            cols = _preprocess(ctx, bound_pre, cols, ids)
+        elif bound_pre is not None and pre.on is not None:
             cols = dict(cols)
             cols.update(_joined_preprocessor(ctx, pre, bound_pre, np.asarray(cols[dict(view.joins)[pre.on]])))
         utils, probs, bad = compute(cols, len(ids), ctx.engine)
@@ -327,6 +336,21 @@ def _trace(ctx, ids, rows, cols, terms_fn, labels, formulas, coef, utils, probs,
     header = (["id"] + [f"utility_{a}" for a in alts] + [f"probability_{a}" for a in alts]
               + ["random_draw", "choice_position", "choice"])
     ctx.tracer.write(ctx.step, "choices", header, choice_rows)
+
+
+def _preprocess(ctx, bound, cols: Mapping[str, object], ids: np.ndarray) -> dict:
+    """The choosers' columns with a preprocessor's results added (it runs on these rows)."""
+    from .annotate import _update
+    from .runtime import TableLookup
+
+    c = {k: cols[k] for k in bound.columns_used() - {INDEX}}
+    c[INDEX] = ids
+    with np.errstate(all="ignore"):  # 1.x logs numpy warnings and carries on
+        v = bound.function(c, None, len(ids), TableLookup(ctx), None, {})
+    cols = dict(cols)
+    for target in bound.targets:
+        cols[target] = _update(cols.get(target), np.asarray(v[target]))
+    return cols
 
 
 def _joined_preprocessor(ctx, pre: Preprocessor, bound, keys: np.ndarray) -> dict:

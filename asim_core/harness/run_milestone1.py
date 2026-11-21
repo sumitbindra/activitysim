@@ -32,6 +32,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import sys
 from pathlib import Path
 
@@ -55,6 +56,10 @@ from asim_core.components import (  # noqa: E402
     cdap_simulate,
     compute_accessibility,
     free_parking,
+    telecommute_frequency,
+    transit_pass_ownership,
+    transit_pass_subsidy,
+    work_from_home,
     initialize_households,
     initialize_landuse,
     joint_tour_composition,
@@ -92,7 +97,8 @@ from asim_core.store import Store  # noqa: E402
 ENGINE = [Engine()]
 
 PORTED = [initialize_landuse, initialize_households, compute_accessibility, school_location,
-          workplace_location, auto_ownership, free_parking, cdap_simulate, mandatory_tour_frequency,
+          workplace_location, work_from_home, transit_pass_subsidy, transit_pass_ownership, auto_ownership,
+          free_parking, telecommute_frequency, cdap_simulate, mandatory_tour_frequency,
           mandatory_tour_scheduling, joint_tour_frequency, joint_tour_composition,
           joint_tour_participation, joint_tour_destination, joint_tour_scheduling,
           non_mandatory_tour_frequency, non_mandatory_tour_destination,
@@ -106,11 +112,19 @@ NOT_BUILT: dict[str, str] = {}  # component -> why it could not be built for thi
 
 
 def asim1_sample_size(asim1_run) -> int | None:
-    """The households_sample_size a 1.x run was started with (None: settings.yaml's)."""
-    p = Path(asim1_run) / "run_info.json" if asim1_run else None
-    if p is None or not p.exists():
+    """
+    The households_sample_size a 1.x run was started with (None: settings.yaml's),
+    from run_asim1.py's run_info.json, or else 1.x's own log (a run stopped early
+    has no run_info.json).
+    """
+    if not asim1_run:
         return None
-    return json.loads(p.read_text()).get("households_sample_size")
+    p = Path(asim1_run) / "run_info.json"
+    if p.exists():
+        return json.loads(p.read_text()).get("households_sample_size")
+    log = Path(asim1_run) / "activitysim.log"
+    found = re.search(r"SETTING households_sample_size: (\d+)", log.read_text()) if log.exists() else None
+    return int(found.group(1)) if found else None
 
 
 def build_components(configs, asim1_run=None, data_dirs=None):

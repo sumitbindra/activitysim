@@ -8,7 +8,8 @@ Eight more 1.x steps are ported: the six trip steps of MTC and MWCOG
 model step of the three example regions runs in asim_core**; what is
 still taken from 1.x is the output and summary steps (writing tables and
 trip matrices, the data dictionary, skim usage, `summarize`) and, for
-MWCOG, its four region-specific steps.
+MWCOG, its four region-specific steps. (Those four are ported since:
+[block4.md](block4.md).)
 
 ## Summary
 

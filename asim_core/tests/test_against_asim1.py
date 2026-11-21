@@ -329,3 +329,63 @@ def test_trip_ids_follow_1x_rule():
     assert list(t.outbound) == [True, True, False, False, False]
     assert list(t.trip_count) == [2, 2, 3, 3, 3]
     assert list(t.origin) == [5, 5, 8, 8, 8] and list(t.destination) == [8, 8, 5, 5, 5]  # stops are chosen later
+
+
+MWCOG = REPO / "asim_core/work/mwcog/asim1_legacy/pipeline.parquetpipeline"
+MWCOG_CONFIGS = [REPO / "activitysim/examples/prototype_mwcog/configs"]
+MWCOG_STEPS = ["work_from_home", "transit_pass_subsidy", "transit_pass_ownership", "telecommute_frequency"]
+
+
+@pytest.mark.skipif(not MWCOG.exists(), reason="no ActivitySim 1.x MWCOG run")
+@pytest.mark.parametrize("step", MWCOG_STEPS)
+def test_mwcog_person_steps_match_1x_exactly(step, tmp_path):
+    from asim_core import components
+
+    st = Asim1State(MWCOG)
+    comp = getattr(components, step)(MWCOG_CONFIGS)
+    store = st.load_store(st.previous_step(comp.name))
+    Runner([comp], tmp_path / "run").run([comp.name], store)
+    if step == "work_from_home":  # also sets is_out_of_home_worker, and -1 workplaces for those at home
+        assert sorted(comp.provides["persons"]) == ["is_out_of_home_worker", "work_from_home", "workplace_zone_id"]
+    for table, cols in comp.provides.items():
+        ref = st.read(table, comp.name)
+        assert list(store[table].index) == list(ref.index), table
+        for col in cols:
+            result = compare_column(comp.name, store[table], col, ref[col])
+            assert result.status == "exact", result
+
+
+@pytest.mark.skipif(not MWCOG.exists(), reason="no ActivitySim 1.x MWCOG run")
+def test_transit_pass_subsidy_preprocessor_runs_before_the_filter(tmp_path):
+    """
+    1.x's transit_pass_subsidy runs its preprocessor on every person, then
+    picks the choosers by CHOOSER_FILTER_COLUMN_NAME, which may be a column
+    the preprocessor makes. Here: whether someone else in the household
+    works (worked out over every person). A person's draw depends only on
+    their ID, so the choosers choose as in 1.x's run, where everyone chose.
+    """
+    import numpy as np
+
+    from asim_core import components
+
+    configs = tmp_path / "configs"
+    configs.mkdir()
+    settings = (MWCOG_CONFIGS[0] / "transit_pass_subsidy.yaml").read_text()
+    (configs / "transit_pass_subsidy.yaml").write_text(
+        settings + "\nCHOOSER_FILTER_COLUMN_NAME: other_worker\npreprocessor:\n  SPEC: tps_pre\n  DF: persons\n")
+    (configs / "tps_pre.csv").write_text(
+        'Description,Target,Expression\n,other_worker,"other_than(df.household_id, df.is_worker)"\n')
+    st = Asim1State(MWCOG)
+    before = st.previous_step("transit_pass_subsidy")
+    store = st.load_store(before)
+    comp = components.transit_pass_subsidy([configs] + MWCOG_CONFIGS)
+    Runner([comp], tmp_path / "run").run([comp.name], store)
+
+    persons = st.read("persons", before)
+    workers = persons.groupby("household_id").is_worker.transform("sum")
+    other_worker = (workers - persons.is_worker.astype(int)).to_numpy() > 0
+    assert other_worker.any() and not other_worker.all()
+    everyone = st.read("persons", "transit_pass_subsidy").transit_pass_subsidy.to_numpy()
+    got = np.asarray(store["persons"]["transit_pass_subsidy"])
+    assert got.dtype == np.int64
+    assert (got == np.where(other_worker, everyone, 0)).all()
