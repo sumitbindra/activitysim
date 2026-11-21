@@ -188,6 +188,40 @@ def trip_destination(configs_dirs: Sequence[str | Path], settings_file: str = "t
     sample_cols = {alt_col, "prob", "pick_count"}
     resolved: dict = {}
 
+    def check_spec_columns(chooser_cols: set[str]):
+        """
+        Before the run: every column the specs read is one they are given, as
+        in 1.x: the trips' columns (with the preprocessor's and next_trip_id)
+        and the zone column; the choice spec also each sampled zone's prob,
+        pick_count, od_logsum and dp_logsum. Tour columns are not among them
+        (1.x merges those only for the logsums).
+        """
+        problems, unsupported = [], []
+        for key, defs, given in (("SAMPLE_SPEC", sample_defs, chooser_cols | {alt_col}),
+                                 ("SPEC", choice_defs, chooser_cols | sample_cols | {"od_logsum", "dp_logsum"})):
+            by_column: dict[str, list[str]] = {}
+            for seg, (d, _) in defs.items():
+                for c in d.columns_used() - given:
+                    by_column.setdefault(c, []).append(seg)
+            if INDEX in by_column:
+                unsupported.append(f"{settings[key]} reads df.index")
+                del by_column[INDEX]
+            if key == "SAMPLE_SPEC":  # 1.x's sample also joins each zone's size per purpose (df.<purpose>)
+                sizes = sorted(c for c in by_column if c in purposes)
+                if sizes:
+                    unsupported.append(f"{settings[key]} reads the zones' size columns {sizes} (use "
+                                       f"size_terms.get(df.{alt_col}, df.purpose))")
+                    for c in sizes:
+                        del by_column[c]
+            for c, segs in sorted(by_column.items()):
+                where = "" if len(segs) == len(defs) else f" (purposes {', '.join(segs)})"
+                problems.append(f"{settings[key]} reads '{c}'{where}")
+        if unsupported:
+            raise NotImplementedError(f"{STEP}: not supported yet: {'; '.join(unsupported)}")
+        if problems:
+            raise MissingInputError(f"{'; '.join(problems)}: not a column of the trips, nor made by the "
+                                    f"preprocessor")
+
     def resolve_needs(available: Mapping[str, set[str]]):
         trip_cols = set(available.get("trips", set()))
         missing = [c for c in TRIP_COLUMNS + ["failed"] if c not in trip_cols]
@@ -207,6 +241,7 @@ def trip_destination(configs_dirs: Sequence[str | Path], settings_file: str = "t
         for c in (PERIOD, primary_dest):
             if c not in chooser_cols:
                 raise MissingInputError(f"trips need '{c}' (1.x: made by the preprocessor)")
+        check_spec_columns(chooser_cols)
         skims: set[str] = set()
         for d, _ in [*sample_defs.values(), *choice_defs.values()]:
             for accessor, key, how in d.skim_uses():

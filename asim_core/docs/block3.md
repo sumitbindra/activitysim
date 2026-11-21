@@ -94,6 +94,18 @@ A trip with no usable zone fails (destination -1, its next trip starts
 where it did); with `CLEANUP`, failed trips are dropped as 1.x does. The
 trips table ends up sorted by trip ID, as 1.x leaves it.
 
+Before anything runs, every column the two specs read is checked against
+what 1.x gives them: the trips' columns (with the preprocessor's and
+`next_trip_id`) and the zone column, and for the choice spec also each
+sampled zone's `prob`, `pick_count`, `od_logsum` and `dp_logsum`. Tour
+columns are not among them (1.x merges those in only for the logsums). A
+missing column stops the run with every problem listed, e.g.
+`trip_destination: trip_destination_sample.csv reads 'hhsize' (purposes
+shopping); trip_destination.csv reads 'pick_cnt': not a column of the
+trips, nor made by the preprocessor`. A sample spec reading a zone's size
+column directly (`df.shopping`, which 1.x's sample joins in) is reported
+as not supported yet; `size_terms.get(...)` gives the same values.
+
 ### trip_purpose_and_destination
 
 `components/trip_purpose_and_destination.py`. 1.x retries failed trips

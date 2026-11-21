@@ -275,6 +275,43 @@ def test_trip_destination_original_sampling_matches_1x_exactly(tmp_path, mtc_ski
         assert result.status == "exact", result
 
 
+def _spec_with_rows(configs, name, rows):
+    """A copy of an MTC spec file with rows added, (expression, coefficients) each, for a configs dir put first."""
+    text = (REPO / "activitysim/examples/prototype_mtc/configs" / name).read_text().rstrip("\n")
+    before = "," * text.split("\n")[0].split(",").index("Expression")  # Label, Description: empty
+    (configs / name).write_text(text + "\n" + "\n".join(f"{before}{e},{c}" for e, c in rows) + "\n")
+
+
+@pytest.mark.skipif(not BASELINE.exists(), reason="no ActivitySim 1.x baseline run")
+def test_trip_destination_spec_columns_are_checked_before_the_run(tmp_path, mtc_skims):
+    """A column the sample or choice spec reads, which the trips don't have, stops the run before it starts."""
+    from asim_core import components
+    from asim_core.runner import StartupCheckError
+
+    st = Asim1State(BASELINE)
+    store = st.load_store(st.previous_step("trip_destination"))
+    configs = tmp_path / "configs"
+    configs.mkdir()
+    ones, shopping = ",".join(["1"] * 10), "0,0,0,0,1,0,0,0,0,0"
+    # a made-up column (every purpose); a tour column (1.x gives the specs the trips, not the tours)
+    _spec_with_rows(configs, "trip_destination_sample.csv", [("df.no_such_column", ones), ("df.hhsize", shopping)])
+    _spec_with_rows(configs, "trip_destination.csv", [("df.pick_cnt", ones)])
+    comp = components.trip_destination([configs] + CONFIGS)
+    with pytest.raises(StartupCheckError) as err:
+        Runner([comp], tmp_path / "run", skims=mtc_skims).run([comp.name], store)
+    message = str(err.value)
+    assert "trip_destination_sample.csv reads 'no_such_column'" in message
+    assert "trip_destination_sample.csv reads 'hhsize' (purposes shopping)" in message
+    assert "trip_destination.csv reads 'pick_cnt'" in message
+
+    # a zone's size column read directly: 1.x's sample joins them, asim_core does not (yet)
+    _spec_with_rows(configs, "trip_destination_sample.csv", [("df.shopping", ones)])
+    (configs / "trip_destination.csv").unlink()
+    comp = components.trip_destination([configs] + CONFIGS)
+    with pytest.raises(NotImplementedError, match=r"size columns \['shopping'\]"):
+        Runner([comp], tmp_path / "run", skims=mtc_skims).run([comp.name], store)
+
+
 def test_trip_ids_follow_1x_rule():
     """1.x's trip IDs: tour_id x 2 x (most trips per leg) + trip number, inbound after outbound."""
     import pandas as pd
