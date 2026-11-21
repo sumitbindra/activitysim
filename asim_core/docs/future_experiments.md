@@ -131,6 +131,9 @@ a new cache; two processes building the same cache at once.
   1.08 to 1.13 GB to 0.98 to 1.01 GB. They are the defaults of two seams,
   `sample_columns` (`spec_reads`) and `size_lookup` (`by_position`); the
   way it worked before is `all_columns` and `match`, also exactly 1.x's.
+  Measured again with each setting (full MTC, 50,000 households, skim file
+  warm): the default 43.7 s, own memory peak 991 MB; the way before 71.2
+  and 75.4 s, 1,132 and 1,126 MB.
 - **Read the skims a step uses before it runs.** The same trip destination
   run took 181 s with the skim file not in memory and 80 s with it read
   first (`cat` of the whole 6.7 GB file: 6 s). The difference is the first

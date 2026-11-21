@@ -71,6 +71,14 @@ python asim_core/harness/profile_step.py --engine asim_core --step trip_destinat
 `run_standalone.py` runs the steps together and compares the last tables;
 `profile_step.py` times one step in fresh processes.
 
+For example, trip destination at 50,000 households (full MTC zones, from
+1.x's saved state, skim file warm), each setting giving exactly 1.x's trips:
+
+| `--seams` | Step time | Own memory peak |
+|---|---|---|
+| `{}` (the defaults: `spec_reads`, `by_position`) | 43.7 s | 991 MB |
+| `{"sample_columns": "all_columns", "size_lookup": "match"}` (the way before) | 71.2 s, 75.4 s | 1,132 MB, 1,126 MB |
+
 ## How results are compared
 
 Each implementation declares how its results relate to the reference, and
