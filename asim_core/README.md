@@ -63,7 +63,8 @@ The harness can also test changes to 1.x itself
 tour scheduling's mode choice logsums once per distinct input leaves every
 ARC result identical, halves peak memory, and lets 1.x run all ARC
 households on a 15 GB machine. Swappable
-pieces and the first experiments: [docs/experiments.md](docs/experiments.md).
+pieces and the first experiments: [docs/experiments.md](docs/experiments.md); ideas measured but
+not tried yet: [docs/future_experiments.md](docs/future_experiments.md).
 
 On the **full MTC zone system** (1,475 zones, 826 skims, 7.2 GB; 10,000
 households) asim_core matches 1.x bit for bit once 1.x's numexpr switch is

@@ -388,6 +388,16 @@ def test_injected_skim_problems_are_caught(example, injection, tmp_path):
     assert any(words in p.message for p in r.problems), r.text()
     assert r.ok == (severity == "warning")
 
+    # the same report when the values come from the run's skim cache (which leaves out
+    # unknown periods' skims, and keeps one copy of a skim that's in two files)
+    from dataclasses import asdict
+
+    from asim_core.skims import import_omx
+
+    store = import_omx(omx_files_from_settings(configs, [data]), tmp_path / "skim_cache", periods=labels)
+    r_cache = check_inputs(configs, [data], skim_values="cache", skim_store=store)
+    assert [asdict(p) for p in r_cache.problems] == [asdict(p) for p in r.problems], r_cache.text()
+
 
 def test_skim_definitions_are_checked_when_loaded(tmp_path):
     (tmp_path / "input_tables.yaml").write_text(

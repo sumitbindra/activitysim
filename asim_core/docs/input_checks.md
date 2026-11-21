@@ -311,6 +311,31 @@ infinite and negative values; the land use zones must match the skims'
 zones. For the examples this takes 0.2–0.5 s. A region's full skims take
 longer, which is why the report is kept per version of the inputs.
 
+On full MTC (826 skims, 7.2 GB once decompressed) the checks take about
+25 s, 19 s of it decompressing the OMX file, which the skim import then does
+again. So the checks can read the values from the run's skim cache instead
+(`check_inputs(..., skim_values="cache", skim_store=store)`): the 32-bit
+values the model uses, as 64-bit for the statistics. Skims in more than one
+file (compared copy by copy) and any the cache left out (time periods the
+model doesn't use) are still read from the OMX files. With the cache in
+memory, as it is right after an import, the full MTC checks take 6 s; the
+report is the same as from the OMX files on all four test regions and in
+every injected-problem test (`tests/test_input_checks.py`). Reading the
+OMX files stays the default for `check_inputs` and `python -m
+asim_core.inputs`; the milestone script now prepares the skims first and
+checks from the cache (`--skim-check-values omx` for the other way). If the
+cache isn't in memory, reading it (6.7 GB) can take longer than
+decompressing the OMX file, but those are the pages the model's steps read
+next.
+
+**Memory after the checks.** Checking full MTC's tables (7.6 million
+persons) left the process holding 1.3 GB for the rest of the run: Arrow's
+default allocator (mimalloc) keeps what it freed, and so did the C
+allocator. The checks now read the tables with Arrow's system allocator and
+then ask the C library to return freed memory (`asim_core/memory.py`);
+after the checks the process holds 0.35 GB instead of 1.56 GB, with the
+same report.
+
 **Which skim row each zone reads** follows 1.x's rules, and is checked:
 
 | Zones | OMX file has a zone lookup | Zone → skim row | Checked |

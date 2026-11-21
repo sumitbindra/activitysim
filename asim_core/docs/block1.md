@@ -223,13 +223,15 @@ step from 1.x's saved state in a new process, median of 3 runs;
 | cdap_simulate | 0.236 | 5.244 | 20 | 29 |
 | mandatory_tour_frequency | 0.148 | 0.511 | 18 | 33 |
 
-CDAP's step is 22 times faster here, but much of that is a cost moved,
-not removed: 1.x builds its interaction specs inside the step (one pandas
+CDAP's step is 22 times faster here, partly because of where the
+interaction tables are built: 1.x builds them inside the step (one pandas
 row at a time: 2.5 s for household sizes 2 to 5 in its log); asim_core
-builds them with the same code when the model loads (2.8 s, not counted
-above). Without it, the step itself is about 10 times faster. The specs
-depend only on the configs, so they could be built once and saved: a later
-improvement.
+builds them when the model loads (not counted above). Without that, the
+step itself is about 10 times faster. asim_core first built them with 1.x's
+algorithm (2.5 s); it now builds the same tables with NumPy in 0.09 s
+(`build_cdap_spec_numpy`; tested equal to 1.x's for every household size
+and example; `cdap_simulate(..., interaction_specs="pandas")` keeps 1.x's
+way). Building all thirteen components went from 4.2 to 1.5 s per process (full MTC).
 
 ## Reproducing
 

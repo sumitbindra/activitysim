@@ -13,6 +13,7 @@ from asim_core.components.cdap import (
     _interaction_code,
     assign_cdap_rank,
     build_cdap_spec,
+    build_cdap_spec_numpy,
     read_interaction_coefficients,
 )
 from asim_core.components.tours import create_tours, set_tour_index
@@ -56,6 +57,25 @@ def test_cdap_rank_matches_1x():
     # every household's ranks are 1..n
     counts = pd.Series(ours).groupby(persons.household_id.to_numpy()).agg(["min", "max", "size"])
     assert (counts["min"] == 1).all() and (counts["max"] == counts["size"]).all()
+
+
+def _interaction(example):
+    configs = [REPO / "activitysim/examples" / example / "configs"]
+    indiv = load_choice_model(configs, "cdap.yaml", handled=["annotate_persons", "annotate_households"],
+                              spec_key="INDIV_AND_HHSIZE1_SPEC")
+    return read_interaction_coefficients(configs[0] / "cdap_interaction_coefficients.csv",
+                                         {k: c.value for k, c in indiv.coefficients.items()})
+
+
+@pytest.mark.parametrize("example", ["prototype_mtc", "prototype_mwcog", "prototype_arc"])
+def test_numpy_interaction_spec_is_the_same(example):
+    coefficients = _interaction(example)
+    for hhsize in range(1, 7):
+        ref = build_cdap_spec(coefficients, hhsize)
+        new = build_cdap_spec_numpy(coefficients, hhsize)
+        assert list(new.index) == list(ref.index) and list(new.columns) == list(ref.columns)
+        a, b = ref.astype(np.float64).values, new.astype(np.float64).values
+        assert np.array_equal(a, b) and a.flags.f_contiguous == b.flags.f_contiguous
 
 
 @pytest.mark.parametrize("example", ["prototype_mtc", "prototype_mwcog"])

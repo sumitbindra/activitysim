@@ -418,6 +418,9 @@ def main(argv=None) -> int:
                    help="cached (default): reuse earlier measurements when the code, configs, "
                         "1.x run and machine are unchanged; all: measure everything again; "
                         "none: skip profiling (the quick correctness check)")
+    p.add_argument("--skim-check-values", choices=["cache", "omx"], default="cache",
+                   help="where the input checks read skim values: the run's skim cache (default; "
+                        "the values the model uses, no second decompression) or the OMX files")
     p.add_argument("--model-files", action="store_true",
                    help="run the ported steps from asim_core's model files (asim_core/configs/<example>, "
                         "made by harness/check_model_files.py) instead of today's files")
@@ -434,10 +437,18 @@ def main(argv=None) -> int:
     base_seed = int(top.get("rng_base_seed") or 0)
     components = build_components(configs, args.asim1_out)
 
+    # skims first (imported from OMX unless an unchanged cache exists), so the input
+    # checks read the cache instead of decompressing the OMX files a second time
+    try:
+        skims = skim_store(example, configs)
+    except Exception as err:  # the checks below report what's wrong with the files
+        print(f"skims could not be prepared ({err}); checking the OMX files")
+        skims = None
     # the inputs are checked before anything runs; errors stop here
     ours = REPO / "asim_core/configs" / example.name
     inputs = check_inputs(([ours] if ours.is_dir() else []) + configs, [example / "data"],
-                          cache_dir=REPO / "asim_core/work" / example.name / "input_checks")
+                          cache_dir=REPO / "asim_core/work" / example.name / "input_checks",
+                          skim_values=args.skim_check_values, skim_store=skims)
     (out / "input_checks.txt").write_text(inputs.text() + "\n")
     if inputs.problems:  # warnings are shown too: the run goes on, but they're worth a look
         print(inputs.text(show_undefined=False))
@@ -447,7 +458,6 @@ def main(argv=None) -> int:
     if not inputs.ok:
         return 2
 
-    skims = skim_store(example, configs)
     trace_ids = {"households": [args.trace_hh_id]} if args.trace_hh_id is not None else None
 
     step_cmp, util_rows, shares = [], [], {}

@@ -440,8 +440,14 @@ class _Checker:
                          used_by=src)
 
     def check_skims(self, omx_paths: Sequence[Path], zones_recoded: bool = False,
-                    labels: Sequence[str] | None = None, refs=None) -> int:
+                    labels: Sequence[str] | None = None, refs=None, store=None) -> int:
         """
+        ``store``: a skim cache made from these OMX files (``skims.SkimStore``).
+        Its matrices are then checked instead of decompressing the OMX files a
+        second time: the 32-bit values the model uses, as 64-bit for the
+        statistics. Skims in more than one file, and any the cache left out,
+        are still read from the OMX files.
+
         Checks every skim value, and that the land use zones can be found in the
         skims as 1.x finds them: through the file's zone lookup if it has one;
         otherwise, with zones renumbered from 0 (``zones_recoded``), row i is the
@@ -466,8 +472,16 @@ class _Checker:
                 zones = np.sort(ids)
         skim_defs = self.defs.skims
         order = skim_defs.zone_order
+        in_store = set(store.names) if store is not None else set()
+
+        def from_store(name):
+            return np.asarray(store[name], dtype=np.float64)
+
         # the distance skim first: zone order, and measures given per distance
-        distance = self._read_skim(pytables, omx_paths, files_of_name=skim_defs.distance)
+        if skim_defs.distance is not None and skim_defs.distance in in_store:
+            distance = from_store(skim_defs.distance)
+        else:
+            distance = self._read_skim(pytables, omx_paths, files_of_name=skim_defs.distance)
 
         # names first: a skim in more than one file is compared between them
         files_of: dict[str, list[Path]] = {}
@@ -476,6 +490,7 @@ class _Checker:
                 for node in h.list_nodes("/data"):
                     files_of.setdefault(node.name, []).append(path)
         dups = {n for n, f in files_of.items() if len(f) > 1}
+        in_store -= dups  # copies in several files are compared as stored in each file
         digests: dict[str, list[tuple[Path, str]]] = {}
 
         n_checked = 0
@@ -491,8 +506,11 @@ class _Checker:
                         lookup = np.asarray(nodes[0][:])
                 for node_path in [n._v_pathname for n in h.list_nodes("/data")]:
                     node = h.get_node(node_path)
-                    a = node[:]
                     node_name = node.name
+                    if node_name in in_store:
+                        a = from_store(node_name)
+                    else:
+                        a = node[:]
                     node._f_close()  # frees its chunk cache (up to 16 MB per open matrix)
                     n_checked += 1
                     if shape is None:
@@ -762,18 +780,38 @@ def _find(configs_dirs, name) -> Path | None:
     return None
 
 
+def _store_matches(store, omx_paths) -> bool:
+    """True if the skim cache was made from these OMX files, as they are now."""
+    if store is None or not omx_paths:
+        return False
+    from ..skims import _source_info
+
+    return store.manifest.get("sources") == _source_info([Path(p) for p in omx_paths])
+
+
 def check_inputs(
     configs_dirs: Sequence[str | Path],
     data_dirs: Sequence[str | Path],
     cache_dir: str | Path | None = None,
     skims: bool = True,
     definitions: Definitions | None = None,
+    skim_values: str = "omx",
+    skim_store=None,
 ) -> Report:
     """
     Checks the region's input tables and skims. With ``cache_dir``, a report
     is kept per version of the inputs (files, definitions, model files,
     this code) and reused while nothing has changed.
+
+    ``skim_values``: where the skim values checked come from. ``"omx"``
+    (reference): decompressed from the OMX files. ``"cache"``: from
+    ``skim_store``, the run's skim cache made from the same files (the 32-bit
+    values the model uses), so a run that has just imported its skims doesn't
+    decompress them a second time; if the store isn't of these files, the
+    OMX files are read.
     """
+    if skim_values not in ("omx", "cache"):
+        raise ValueError(f"skim_values must be 'omx' or 'cache', not {skim_values!r}")
     from ..skims import omx_files_from_settings
     from .reader import find_data_file, input_tables_from_settings
 
@@ -783,6 +821,7 @@ def check_inputs(
     specs = input_tables_from_settings(configs_dirs)
     size_terms = _find(configs_dirs, SIZE_TERMS_FILE)
     omx = omx_files_from_settings(configs_dirs, data_dirs) if skims else []
+    store = skim_store if skim_values == "cache" and _store_matches(skim_store, omx) else None
 
     key = ""
     cache_file = None
@@ -796,6 +835,7 @@ def check_inputs(
             "size_terms": None if size_terms is None else hashlib.sha256(size_terms.read_bytes()).hexdigest(),
             "skims": [file_info(p) for p in omx],
             "configs": [str(d.resolve()) for d in configs_dirs],
+            "skim_values": "cache" if store is not None else "omx",
         }
         key = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
         cache_file = Path(cache_dir) / f"input_checks_{key}.json"
@@ -804,6 +844,25 @@ def check_inputs(
             report.cached = True
             return report
 
+    # Arrow's default allocator (mimalloc) keeps what reading the tables used
+    # (1.3 GB for full MTC's 7.6 million persons) for the rest of the process:
+    # read them with its system allocator, then hand what was freed back
+    previous_pool = pa.default_memory_pool()
+    pa.set_memory_pool(pa.system_memory_pool())
+    try:
+        report = _check(configs_dirs, data_dirs, defs, specs, size_terms, omx, store, key, t0)
+    finally:
+        pa.set_memory_pool(previous_pool)
+    from ..memory import release_freed_memory
+
+    release_freed_memory()  # what reading and checking the tables used
+    if cache_file is not None:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(report.to_json())
+    return report
+
+
+def _check(configs_dirs, data_dirs, defs, specs, size_terms, omx, store, key, t0) -> Report:
     tables, _, specs = read_tables(configs_dirs, data_dirs)
     checker = _Checker(defs, tables, specs, _ConfigIndex(configs_dirs))
     checker.run()
@@ -811,7 +870,7 @@ def check_inputs(
     from ..skims import land_use_zones_recoded, skim_period_labels
 
     n_skims = checker.check_skims(omx, land_use_zones_recoded(configs_dirs), skim_period_labels(configs_dirs),
-                                  skim_references(configs_dirs, skip=NOT_MODEL_FILES)) if omx else 0
+                                  skim_references(configs_dirs, skip=NOT_MODEL_FILES), store=store) if omx else 0
 
     undefined = {}
     for tname, table in tables.items():
@@ -826,7 +885,4 @@ def check_inputs(
         seconds=time.perf_counter() - t0,
         key=key,
     )
-    if cache_file is not None:
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        cache_file.write_text(report.to_json())
     return report
