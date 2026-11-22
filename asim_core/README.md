@@ -87,10 +87,11 @@ not tried yet: [docs/future_experiments.md](docs/future_experiments.md).
 On the **full MTC zone system** (1,475 zones, 826 skims, 7.2 GB; 10,000
 households) asim_core matches 1.x bit for bit once 1.x's numexpr switch is
 off, and its 8 steps take 18 s in one process against 71 s in 1.x
-([docs/mtc_full.md](docs/mtc_full.md)). With blocks 1 to 3, the whole model
-(29 model steps) runs from the input files in 58 s against 227 s in 1.x at
-10,000 households, and 240 s against 806 s at 50,000
-([docs/block3.md](docs/block3.md)). The first experiment there, on how
+([docs/mtc_full.md](docs/mtc_full.md)). The whole model and its output steps run
+from the input files in 166 s against 603 s in 1.x at 50,000 households (1.x
+without a resume, numexpr off), 53 s against 249 s at 10,000; step by step,
+time and memory, for full MTC and SANDAG:
+[docs/profiles_by_step.md](docs/profiles_by_step.md). The first experiment there, on how
 steps hold and look up skims, found that reading skim pages, not the
 lookups, is most of the cost
 ([docs/skim_experiments.md](docs/skim_experiments.md)).

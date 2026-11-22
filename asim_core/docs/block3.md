@@ -29,7 +29,10 @@ MWCOG, its four region-specific steps. (Those four are ported since:
 - **Speed** (one process, full MTC): the 29 model steps take 58 s against
   227 s in 1.x at 10,000 households (1.x as shipped), and 240 s against
   806 s at 50,000 (1.x with numexpr off, as exact matching needs): 3.9 and
-  3.4 times faster. Trip destination is now the largest step (85 s at
+  3.4 times faster. (Later: that 1.x run was made in three resumed parts,
+  each reloading the skims; without a resume 1.x takes 603 s at 50,000
+  households, against 166 s for asim_core today, with the output steps:
+  [profiles_by_step.md](profiles_by_step.md).) Trip destination is now the largest step (85 s at
   50,000 households; 1.x: 230 s). Trip scheduling is the one step no faster
   than 1.x (25 s against 21 s): it is 1.x's pandas code, kept for exactness,
   and a candidate for later work.
