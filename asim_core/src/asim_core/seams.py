@@ -63,6 +63,11 @@ SEAMS = {
               "choose(probs, rands) -> int32 array",
     "random": "per-row uniform random draws for a step: "
               "random(step, base_seed, positions) -> object with .uniform(channel, ids, n)",
+    "trip_attempts": "how trip scheduling works out one attempt's departures: "
+                     "trip_attempts(ctx, trips, tours, probs_spec, join_cols, base, logic_version, stats) -> object "
+                     "with .ids, .tour_id, .outbound, .drawn and .attempt(positions, last) -> departures",
+    "trip_retries": "which of trip scheduling's retried trips sit out an attempt they are certain to fail: "
+                    "trip_retries(tour_id, outbound, logic_version) -> mask of trips to hold back",
     "random_positions": "where each row's place in its random stream is kept between a step's draws: "
                         "random_positions() -> object with .take(channel, ids, n) -> positions before the "
                         "draw (each then moved on by n)",
@@ -107,6 +112,7 @@ def register(seam: str, name: str, agreement: str = "exact", description: str = 
 def _load_builtin() -> None:
     # importing these modules registers the built-in implementations
     from . import alternatives, logit, logsums, lookups, random, skim_access, skim_reuse  # noqa: F401
+    from .components import trip_scheduling  # noqa: F401  (its trip_attempts and trip_retries seams)
     # optional (registers its alternatives only if JAX is installed)
     from . import jax_backend  # noqa: F401
 

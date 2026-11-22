@@ -736,6 +736,25 @@ sets it.
 **Suggested change.** Make `logic_version: 2` the default, or set it in
 the examples.
 
+**Two more effects** (measured later with asim_core, which matches 1.x):
+
+- **Most of the step's retry time goes to these trips.** They stay in every
+  attempt until the last: about 70% of the trips in each retry (SANDAG
+  one-zone: about 9,900 of 14,500; full MTC at 50,000 households: about
+  11,300 of 16,300), drawn for and failing every time.
+- **Whether they can be scheduled depends on other tours.** The earliest
+  period is only reset when the attempt has some outbound trips
+  (`run_trip_scheduling` calls `update_tour_earliest` only then). Once no
+  tour's outbound trips are left to retry, the same inbound trips keep their
+  usual window and can be scheduled. So a trip's outcome depends on whether
+  some other tour's outbound trips are still failing. In the examples there
+  are always some until the last attempt, so the trips end at their
+  window's edge; in a small run there may not be.
+
+asim_core reproduces both, and with its `trip_retries` seam (the default)
+these trips sit out the attempts they are certain to fail, their random
+streams moved on by the draws they skip, so its departures are still 1.x's.
+
 ---
 
 ## 19. MTC stop frequency: household tour counts looked up by person ID

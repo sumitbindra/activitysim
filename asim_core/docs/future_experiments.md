@@ -98,11 +98,10 @@ a new cache; two processes building the same cache at once.
   complete (a groupby over tour and composition) are 1.x's pandas code. Both
   could work on row positions (members by household, candidates by tour),
   keeping the draw order so the results stay 1.x's.
-- **Trip scheduling in NumPy.** asim_core's port is 1.x's pandas code
-  (a merge with the probability table per round of trips, up to 100
-  attempts) and is no faster than 1.x (25 s against 21 s at 50,000
-  households, [block3.md](block3.md)). The rounds could work on positions
-  (each trip's probability row found once), keeping the draws in order.
+- **Trip scheduling in NumPy: done.** See "Trip scheduling" in
+  [experiments.md](experiments.md): three exact changes (`random_positions`,
+  `trip_retries`, `trip_attempts`), each with the way before behind
+  `--seams`.
 - **Trip destination: measured, logsums are not worth deduplicating.** Full
   MTC, 50,000 households, skim file warm, timers around the step's parts
   (results still 1.x's): 80 s in all; sampling 44 s (55%: every zone's

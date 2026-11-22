@@ -119,6 +119,13 @@ class StepRandom:
         """
         return self._next(channel, ids, n, self._draw)
 
+    def skip(self, channel: str, ids, n: int) -> None:
+        """Move each ID's stream on by ``n`` draws without drawing them, as if they had been drawn."""
+        ids = np.asarray(ids, dtype=np.int64)
+        if len(np.unique(ids)) != len(ids):
+            raise ValueError("random draws need unique IDs")
+        self.positions.take(channel, ids, n)
+
     def normal(self, channel: str, ids, n: int = 1) -> np.ndarray:
         """
         ``n`` standard normal draws for each ID, as 1.x's
