@@ -117,3 +117,29 @@ def test_vectorized_is_the_default_and_the_loop_an_exact_choice():
     assert Engine().random is VectorizedRandom
     engine = Engine({"random": "asim1"})  # row by row, as 1.x: the default before
     assert engine.agreement == "exact" and engine.changed == {"random": "asim1"} and engine.random is StepRandom
+
+
+def test_kept_index_positions_match_rebuilt():
+    """The random_positions seam: both ways of keeping a row's place in its stream give the same draws,
+    with calls that mix new IDs, repeated IDs and other channels (as trip scheduling's rounds do)."""
+    from asim_core.random import KeptIndexPositions, RebuiltPositions, VectorizedRandom
+
+    rng = np.random.default_rng(5)
+    calls = []
+    for _ in range(40):
+        ids = rng.choice(5000, size=int(rng.integers(1, 800)), replace=False) + 10_000
+        calls.append(("trips" if rng.random() < 0.8 else "tours", ids, int(rng.integers(1, 4))))
+    for cls in (StepRandom, VectorizedRandom):
+        kept, rebuilt = cls("s", 3, KeptIndexPositions()), cls("s", 3, RebuiltPositions())
+        for channel, ids, n in calls:
+            np.testing.assert_array_equal(kept.uniform(channel, ids, n), rebuilt.uniform(channel, ids, n))
+
+
+def test_kept_index_positions_take():
+    from asim_core.random import KeptIndexPositions
+
+    p = KeptIndexPositions()
+    np.testing.assert_array_equal(p.take("trips", np.array([7, 3]), 1), [0, 0])
+    np.testing.assert_array_equal(p.take("trips", np.array([3, 9, 7]), 2), [1, 0, 1])
+    np.testing.assert_array_equal(p.take("trips", np.array([9, 7, 3]), 1), [2, 3, 3])
+    np.testing.assert_array_equal(p.take("tours", np.array([7]), 1), [0])

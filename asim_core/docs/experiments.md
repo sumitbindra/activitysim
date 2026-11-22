@@ -39,6 +39,7 @@ nothing is significantly slower.
 | `sample` | probabilities and draws → sampled alternatives | `binary_search`: 1.x's picks, about log2(alternatives) comparisons per draw (the default since the JAX experiment) | `inverse_cdf`: the same picks, compared as 1.x does, every alternative per draw (the default before) |
 | `choose` | probabilities and random draws → choices | `sequential`, as 1.x | |
 | `random` | per-row random draws for a step | `vectorized`: 1.x's streams, the same numbers, worked out for all rows at once (the default since the random draws measurement) | `asim1` (reseeded row by row as 1.x, the default before; the same numbers); `counter` (different numbers) |
+| `random_positions` | where each row's place in its random stream is kept between a step's draws | `kept_index`: one pandas index of the IDs per channel, reused while no new IDs appear, positions updated in place (the default since the trip scheduling measurement) | `rebuilt`: a pandas Series of every ID seen so far, rebuilt on every draw (the default before; the same numbers) |
 
 List them with:
 

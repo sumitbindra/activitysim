@@ -62,7 +62,10 @@ SEAMS = {
     "choose": "probabilities and one random draw per row -> chosen position: "
               "choose(probs, rands) -> int32 array",
     "random": "per-row uniform random draws for a step: "
-              "random(step, base_seed) -> object with .uniform(channel, ids, n)",
+              "random(step, base_seed, positions) -> object with .uniform(channel, ids, n)",
+    "random_positions": "where each row's place in its random stream is kept between a step's draws: "
+                        "random_positions() -> object with .take(channel, ids, n) -> positions before the "
+                        "draw (each then moved on by n)",
 }
 
 AGREEMENT_ORDER = ["exact", "approximate", "statistical"]

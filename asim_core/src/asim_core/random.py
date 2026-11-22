@@ -44,16 +44,72 @@ def row_seeds(base_seed: int, channel: str, step: str, ids) -> np.ndarray:
     return (base_seed + hash32(channel) + hash32(step) + ids) % _MAX_SEED
 
 
+@register("random_positions", "kept_index", reference=True,
+          description="each channel's IDs in one pandas index, reused while no new IDs appear, and their "
+                      "positions in a NumPy array updated in place (the default since the trip scheduling "
+                      "measurement)")
+class KeptIndexPositions:
+    """
+    Where each row is in its stream: one index of the IDs drawn for so far
+    in each channel, and their positions. pandas keeps a lookup table with
+    an index once built, so finding a call's IDs again costs only those
+    IDs, however many the channel has seen; new IDs are appended.
+    """
+
+    def __init__(self):
+        self._channels: dict[str, tuple[pd.Index, np.ndarray]] = {}
+
+    def take(self, channel: str, ids: np.ndarray, n: int) -> np.ndarray:
+        """Each ID's position before this call (0 if new); moves each on by ``n``."""
+        index, positions = self._channels.get(channel, (pd.Index([], dtype=np.int64), np.zeros(0, np.int64)))
+        rows = index.get_indexer(ids)
+        new = rows < 0
+        current = np.zeros(len(ids), dtype=np.int64)
+        current[~new] = positions[rows[~new]]
+        if new.any():
+            start = len(index)
+            index = index.append(pd.Index(ids[new]))
+            positions = np.concatenate([positions, np.zeros(int(new.sum()), dtype=np.int64)])
+            rows[new] = np.arange(start, len(index))
+        positions[rows] = current + n
+        self._channels[channel] = (index, positions)
+        return current
+
+
+@register("random_positions", "rebuilt", agreement="exact",
+          description="each channel's positions in a pandas Series, reindexed and rebuilt from every ID seen "
+                      "so far on every draw (the default until the trip scheduling measurement; the same "
+                      "numbers)")
+class RebuiltPositions:
+    """The way positions were kept before: a Series per channel, rebuilt on each call."""
+
+    def __init__(self):
+        self._offsets: dict[str, pd.Series] = {}
+
+    def take(self, channel: str, ids: np.ndarray, n: int) -> np.ndarray:
+        offsets = self._offsets.get(channel)
+        if offsets is None:
+            offsets = pd.Series(dtype=np.int64)
+        current = offsets.reindex(ids, fill_value=0).to_numpy()
+        updated = pd.Series(current + n, index=ids)
+        self._offsets[channel] = updated.combine_first(offsets).astype(np.int64)
+        return current
+
+
 @register("random", "asim1", agreement="exact",
           description="ActivitySim 1.x per-row Mersenne Twister streams, reseeded for every row in a loop, as "
                       "1.x (the default until the random draws measurement; the same numbers)")
 class StepRandom:
-    """The random streams for one step. Created fresh by the runner for each step."""
+    """
+    The random streams for one step. Created fresh by the runner for each
+    step. ``positions`` keeps each row's place in its streams between draws
+    (the ``random_positions`` seam; its reference if not given).
+    """
 
-    def __init__(self, step: str, base_seed: int = 0):
+    def __init__(self, step: str, base_seed: int = 0, positions=None):
         self.step = step
         self.base_seed = base_seed
-        self._offsets: dict[str, pd.Series] = {}
+        self.positions = positions if positions is not None else KeptIndexPositions()
 
     def uniform(self, channel: str, ids, n: int = 1) -> np.ndarray:
         """
@@ -78,15 +134,9 @@ class StepRandom:
         ids = np.asarray(ids, dtype=np.int64)
         if len(np.unique(ids)) != len(ids):
             raise ValueError("random draws need unique IDs")
-        offsets = self._offsets.get(channel)
-        if offsets is None:
-            offsets = pd.Series(dtype=np.int64)
-        current = offsets.reindex(ids, fill_value=0).to_numpy()
+        current = self.positions.take(channel, ids, n)
         seeds = row_seeds(self.base_seed, channel, self.step, ids)
-        out = draw(seeds, current, n)
-        updated = pd.Series(current + n, index=ids)
-        self._offsets[channel] = updated.combine_first(offsets).astype(np.int64)
-        return out
+        return draw(seeds, current, n)
 
     def _draw(self, seeds: np.ndarray, offsets: np.ndarray, n: int) -> np.ndarray:
         out = np.empty((len(seeds), n), dtype=np.float64)

@@ -152,7 +152,7 @@ class StepContext:
         self._store = store
         self._needs = {t: set(cols) for t, cols in needs.items()}
         self.engine = engine
-        self.random = engine.random(component.name, base_seed)
+        self.random = engine.random(component.name, base_seed, engine.random_positions())
         self.tracer = tracer
         self._skims = skims
 
