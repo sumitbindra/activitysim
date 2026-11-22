@@ -16,7 +16,7 @@ picked by a setting and tested with the experiment harness. Speed-ups come
 from those experiments. Sharrow is not used; 1.x with sharrow is only a
 baseline in the reports.
 
-Status: thirty-five components are ported and match 1.x exactly:
+Status: forty components are ported and match 1.x exactly:
 `initialize_landuse` and `initialize_households` (reading, household
 sampling, annotations, size tables), `compute_accessibility` (with skims),
 `school_location` and `workplace_location` (sampling, logsums, annotations
@@ -37,13 +37,15 @@ tour, mode choice from the workplace), and the trip steps: stop frequency
 mode choice logsums per sampled zone), trip purpose and destination, trip
 scheduling (MTC, MWCOG) or trip scheduling choice and trip departure choice
 (ARC), and trip mode choice; and MWCOG's own four: work from home, transit
-pass subsidy and ownership, telecommute frequency. They were checked on three regions' example
+pass subsidy and ownership, telecommute frequency; and the output steps:
+trip matrices (OMX), the final tables, the data dictionary, skim usage and
+summaries, every file exactly 1.x's. They were checked on three regions' example
 models: MTC, MWCOG and ARC (all 24,061 households), and on MTC's full zone
 system. **Every model step of the three regions runs in asim_core**, and
 each region's whole model runs from the input files alone
 ([docs/block1.md](docs/block1.md), [docs/block2.md](docs/block2.md),
-[docs/block3.md](docs/block3.md), [docs/block4.md](docs/block4.md)); only the
-output and summary steps are still taken from 1.x.
+[docs/block3.md](docs/block3.md), [docs/block4.md](docs/block4.md)), from the
+input files to the output files, with nothing taken from 1.x.
 Every other step can be
 **replayed** from a 1.x run, so the model runs end to end today. Results: [docs/milestone1.md](docs/milestone1.md),
 [docs/block1.md](docs/block1.md), [docs/block2.md](docs/block2.md), [docs/block3.md](docs/block3.md),
@@ -97,7 +99,8 @@ written so they can be reported to the ActivitySim project:
 
 * **Dependencies:** only widely used libraries maintained by large
   communities: NumPy, pandas, PyArrow, Pydantic, PyYAML. Importing skims from
-  OMX also needs PyTables, once per skim file; running models doesn't.
+  OMX also needs PyTables, once per skim file, and so does writing OMX trip
+  matrices (`write_trip_matrices`); the model steps themselves don't.
   Anything else needs checking against this rule first. The package never imports ActivitySim
   1.x; only the scripts in `harness/` do, to run 1.x for comparison.
 * **Every component declares what it reads and writes.** Reading or writing

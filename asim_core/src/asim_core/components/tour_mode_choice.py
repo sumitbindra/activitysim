@@ -708,7 +708,7 @@ class SkimLookup:
         for label, rows in self.groups[period_col]:
             if not len(rows):
                 continue
-            values = self.ctx.skim(f"{key}__{label}", pairs.subset((period_col, label), rows))
+            values = self.ctx.skim(f"{key}__{label}", pairs.subset((period_col, label), rows), by_period=key)
             if out is None:
                 out = np.empty(self.n, dtype=values.dtype)
             out[rows] = values

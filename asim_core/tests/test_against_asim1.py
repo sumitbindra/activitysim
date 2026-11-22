@@ -389,3 +389,27 @@ def test_transit_pass_subsidy_preprocessor_runs_before_the_filter(tmp_path):
     got = np.asarray(store["persons"]["transit_pass_subsidy"])
     assert got.dtype == np.int64
     assert (got == np.where(other_worker, everyone, 0)).all()
+
+
+@pytest.mark.skipif(not BASELINE.exists(), reason="no ActivitySim 1.x baseline run")
+@pytest.mark.parametrize("step", ["write_trip_matrices", "write_tables", "summarize"])
+def test_output_files_match_1x_exactly(step, tmp_path, mtc_skims):
+    """The output steps from 1.x's saved state: every OMX cell, every CSV byte (checkpoints aside: they
+    need the run's steps), every summary."""
+    import sys
+
+    sys.path.insert(0, str(REPO / "asim_core/harness"))
+    from compare_outputs import HISTORY_FILES, compare_output_files
+
+    from asim_core.components.output import write_tables
+    from asim_core.components.summarize import summarize
+    from asim_core.components.trip_matrices import write_trip_matrices
+
+    make = {"write_trip_matrices": write_trip_matrices, "write_tables": write_tables, "summarize": summarize}[step]
+    st = Asim1State(BASELINE)
+    comp = make(CONFIGS)
+    store = st.load_store(st.previous_step(comp.name))
+    Runner([comp], tmp_path / "run", skims=mtc_skims, save_outputs=False).run([comp.name], store)
+    rows = compare_output_files(tmp_path / "run" / "output", BASELINE.parent, steps=[step], skip=HISTORY_FILES)
+    assert len(rows) >= 5
+    assert all(status == "exact" for _, status, _ in rows), [r for r in rows if r[1] != "exact"]

@@ -166,10 +166,11 @@ def _update(old, new):
     return new
 
 
-def load_preprocessor(configs_dirs, settings, constants, top, step, label, skim_accessors=()):
+def load_preprocessor(configs_dirs, settings, constants, top, step, label, skim_accessors=(), df_aliases=()):
     """A model's ``preprocessor`` setting (1.x: SPEC, DF, TABLES) as an assignment spec and the
     tables it reads; (None, []) if there is none. ``skim_accessors``: skim wrappers the step
-    gives the preprocessor besides ``skim_dict`` (e.g. ``od_skims``)."""
+    gives the preprocessor besides ``skim_dict`` (e.g. ``od_skims``); ``df_aliases``: other names
+    the rows go by in the formulas (summarize: ``trips_merged``)."""
     if not settings:
         return None, []
     if isinstance(settings, list):
@@ -179,7 +180,7 @@ def load_preprocessor(configs_dirs, settings, constants, top, step, label, skim_
     spec = load_assignment_spec(
         configs_dirs, spec_file if spec_file.endswith(".csv") else spec_file + ".csv",
         constants, skim_accessors=[SKIM_ACCESSOR, *skim_accessors], name=f"{step}_{label}",
-        tables=tables, settings=top, df_names=[settings.get("DF", "df")],
+        tables=tables, settings=top, df_names=[settings.get("DF", "df"), *df_aliases],
     )
     return spec, tables
 

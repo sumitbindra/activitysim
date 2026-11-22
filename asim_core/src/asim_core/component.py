@@ -29,6 +29,7 @@ import logging
 import csv
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -43,6 +44,19 @@ SKIMS = "skims"  # the name skims are declared under in ``needs``
 
 class ContractError(Exception):
     """A component read or wrote something it did not declare."""
+
+
+@dataclass(frozen=True)
+class StepRecord:
+    """
+    What a step left behind, as 1.x's checkpoint records it: when it
+    finished, and each table it wrote with the table's columns then.
+    """
+
+    step: str
+    finished: datetime
+    tables: dict[str, list[str]]
+    skims: tuple[str, ...] = ()  # the skims the step looked up, as 1.x records them (computed steps)
 
 
 class MissingInputError(Exception):
@@ -121,7 +135,16 @@ class StepContext:
         base_seed: int = 0,
         skims=None,
         warnings: list | None = None,
+        output_dir: Path | None = None,
+        history: list | None = None,
+        skim_names: tuple = (),
     ):
+        # where steps write their files (output steps: tables, trip matrices, ...)
+        self.output_dir = Path(output_dir) if output_dir else None
+        # the steps run before this one, in order (``StepRecord``s; read only)
+        self.history = tuple(history or ())
+        self._skim_names = tuple(skim_names)  # every skim the run has (skim usage)
+        self.skims_read: set[str] = set()  # the skims looked up, as 1.x records them (see skim)
         self.component = component
         self.step = component.name
         # problems worth a look that don't stop the step (see ``warn``)
@@ -179,6 +202,27 @@ class StepContext:
         self._check(table)
         return self._store[table].index
 
+    def output_path(self, name: str) -> Path:
+        """A file in the run's output folder (the folders made if needed)."""
+        if self.output_dir is None:
+            raise ContractError(f"step '{self.step}' writes files, but the runner has no output folder")
+        path = self.output_dir / name
+        path.parent.mkdir(parents=True, exist_ok=True)  # also a subfolder (summarize/...)
+        return path
+
+    def skim_names(self) -> tuple[str, ...]:
+        """Every skim the run has, read or not (skim usage reports)."""
+        return self._skim_names
+
+    def index_name(self, table: str) -> str | None:
+        """The name of a declared table's row IDs (e.g. zone_id)."""
+        self._check(table)
+        return self._store[table].index_name
+
+    def table_names(self) -> list[str]:
+        """The tables there are now, in the order they were made (output steps write them all)."""
+        return list(self._store.tables)
+
     def column(self, table: str, column: str):
         """A declared column, in the table's row order."""
         self._check(table, column)
@@ -213,12 +257,17 @@ class StepContext:
         self._check(SKIMS)
         return ZonePairs(orig_positions, dest_positions, self._skims.shape[1])
 
-    def skim(self, name: str, orig_positions, dest_positions=None) -> np.ndarray:
+    def skim(self, name: str, orig_positions, dest_positions=None, by_period: str | None = None) -> np.ndarray:
         """Values of a declared skim for origin/destination positions, or for
-        ``zone_pairs`` (then ``dest_positions`` is not given)."""
+        ``zone_pairs`` (then ``dest_positions`` is not given). ``by_period``:
+        the skim's name without its period, when each row has its own period
+        (1.x's 3-d lookup), for the skim usage record."""
         from .skims import ZonePairs
 
         self._check(SKIMS, name)
+        # skim usage as 1.x's skim_dict records it: the name for a lookup by each row's period,
+        # (name, period) for one period's skim named in full, the name for a skim without periods
+        self.skims_read.add(by_period if by_period is not None else name)
         if isinstance(orig_positions, ZonePairs):
             pairs = orig_positions
             return self.engine.skim_lookup(self._skims[name], pairs.orig, pairs.dest, pairs=pairs)

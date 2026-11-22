@@ -241,26 +241,29 @@ def initialize_households(configs_dirs: Sequence[str | Path], data_dirs: Sequenc
         dfs = to_pandas(frames, wanted, recode=recode)
         hh = dfs["households"] if early or rows is None else dfs["households"].take(rows)
         hh, persons = finish_sample(hh, dfs["persons"], sample_size, total, rows is not None, persons_done)
+        # the tables in 1.x's order (its checkpoints, data dictionary and outputs list them so)
         ctx.create_table(Table.from_pandas("households", hh))
+        skipped = Table.from_pandas("households_skipped", hh.iloc[0:0])
+        ctx.create_table(skipped)
         ctx.create_table(Table.from_pandas("persons", persons))
         made: dict = {}
         annotate.run(ctx, bound_now["bound"], made)
         out = {
             "households": _final(hh, "households", made.get("households", {})),
+            "households_skipped": skipped,
             "persons": _final(persons, "persons", made.get("persons", {})),
-            "households_skipped": Table.from_pandas("households_skipped", hh.iloc[0:0]),
-            "person_windows": Table("person_windows", persons.index.to_numpy(), persons.index.name or "person_id",
-                                    {w: np.zeros(len(persons), dtype=np.int8) for w in windows}),
         }
         for st in size_tables:
             out[st["name"]] = size_table(ctx, st, out["persons"] if scaled else None, sample_size, top)
+        out["person_windows"] = Table("person_windows", persons.index.to_numpy(), persons.index.name or "person_id",
+                                      {w: np.zeros(len(persons), dtype=np.int8) for w in windows})
         return out
 
-    provides = {"households": _columns(hh_cols, annotations, "households"),
-                "persons": _columns(per_cols, annotations, "persons"),
-                "households_skipped": hh_cols, "person_windows": windows}
+    provides = {"households": _columns(hh_cols, annotations, "households"), "households_skipped": hh_cols,
+                "persons": _columns(per_cols, annotations, "persons")}  # 1.x's order, as the tables are made
     for st in size_tables:
         provides[st["name"]] = list(st["segments"])
+    provides["person_windows"] = windows
     return Component(
         step, run, provides=provides, resolve_needs=resolve_needs,
         description="read, sample and annotate households and persons; time windows; size tables",

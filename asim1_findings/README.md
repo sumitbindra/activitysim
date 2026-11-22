@@ -42,6 +42,7 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 19 | MTC's stop frequency counts the household's shopping and maintenance tours, then looks them up by person ID | Model specification | Measured (MTC full zones, 50,000 households: 2,735 tours get another stop frequency when corrected) | Not reported |
 | 20 | ARC's trip scheduling specs: stop counts one too low, terms for a tour type that doesn't exist ('at_work'), inbound stop times checked against the outbound leg | Model specification | Measured (ARC example: 51 of 157 tours with stops get another split; 27 departures change) | Not reported |
 | 21 | Random numbers: a generator reseeded per row in a Python loop; the same numbers can be worked out for all rows at once | Speed | Measured (bit for bit against `random_for_df`) | Not reported |
+| 22 | skim_usage.txt: used and unused skims not separated; skims read for a fixed period also listed as unused | Diagnostics | Reproduced (MTC) | Not reported |
 
 ---
 
@@ -815,6 +816,27 @@ one pass of the twist. The seeding recurrence, that pass, tempering and
 with rows past 113 draws left on the loop. Same numbers, bit for bit (a
 million rows compared); 0.26 s instead of 2.42 s. Results are unchanged, so
 no model output moves.
+
+---
+
+## 22. skim_usage.txt: used and unused skims not told apart
+
+**Evidence: reproduced** (MTC, `asim_core/work/asim1_legacy/skim_usage.txt`).
+
+**What happens.** `track_skim_usage` (`activitysim/core/steps/output.py`)
+prints one header, then the skims looked up, then the skim file's names
+not looked up, with nothing between the two lists; each list is in Python
+set order, which changes from run to run. So the file can't tell a reader
+which skims are unused. Also, the comparison is made between the file's
+names (`WLK_TRN_WLK_XWAIT`) and the lookups, which for a fixed period are
+(name, period) tuples (`skim_dictionary.py`: `lookup` records the key it
+was given, `lookup_3d` the name): MTC's file lists
+`('WLK_TRN_WLK_XWAIT', 'MD')`, `'PM'`, `'AM'` as used and
+`WLK_TRN_WLK_XWAIT` again, as not used. With `resume_after`, only lookups
+after the resume are recorded (1.x's own FIXME).
+
+**Suggested change.** Print a second header before the unused skims, sort
+both lists, and compare names with names (a tuple's first item).
 
 ---
 

@@ -47,6 +47,9 @@ import pandas as pd  # noqa: E402
 from asim_core.asim1 import Asim1State  # noqa: E402
 from asim_core.compare import compare_column, value_shares, write_comparisons  # noqa: E402
 from asim_core.inputs import check_inputs  # noqa: E402
+from asim_core.components.output import track_skim_usage, write_data_dictionary, write_tables  # noqa: E402
+from asim_core.components.summarize import summarize  # noqa: E402
+from asim_core.components.trip_matrices import write_trip_matrices  # noqa: E402
 from asim_core.components import (  # noqa: E402
     atwork_subtour_destination,
     atwork_subtour_frequency,
@@ -105,7 +108,10 @@ PORTED = [initialize_landuse, initialize_households, compute_accessibility, scho
           non_mandatory_tour_scheduling, tour_mode_choice, atwork_subtour_frequency,
           atwork_subtour_destination, atwork_subtour_scheduling, atwork_subtour_mode_choice,
           stop_frequency, trip_purpose, trip_destination, trip_purpose_and_destination, trip_scheduling,
-          trip_scheduling_choice, trip_departure_choice, trip_mode_choice]
+          trip_scheduling_choice, trip_departure_choice, trip_mode_choice,
+          write_data_dictionary, track_skim_usage, write_trip_matrices, write_tables, summarize]
+# steps that write files instead of tables: their files are compared with 1.x's
+OUTPUT_STEPS = {"write_data_dictionary", "track_skim_usage", "write_trip_matrices", "write_tables", "summarize"}
 # steps that read the input files: they also take the data folders (and the sample size 1.x ran with)
 READS_INPUTS = {initialize_landuse, initialize_households}
 NOT_BUILT: dict[str, str] = {}  # component -> why it could not be built for this example
@@ -194,6 +200,11 @@ def step_check(comp, st: Asim1State, out: Path, base_seed: int, skims, trace_ids
     STEP_WARNINGS.extend(report.warnings)
     comparisons = []
     shares = {}
+    if comp.name in OUTPUT_STEPS:  # its files against 1.x's (those not needing the steps before it)
+        from compare_outputs import HISTORY_FILES, as_comparisons, compare_output_files
+
+        rows = compare_output_files(out / "output", st.path.parent, steps=[comp.name], skip=HISTORY_FILES)
+        comparisons += as_comparisons(rows, comp.name)
     for t, cols in comp.provides.items():
         ref = st.read(t, comp.name)
         for col in cols:
@@ -259,6 +270,12 @@ def end_to_end(components, st: Asim1State, out: Path, base_seed: int, skims):
     )
     final = st.steps[-1]
     comparisons = list(report.carried_over)
+    ran = [c.name for c in components if c.name in OUTPUT_STEPS]
+    if ran:  # the output steps' files against 1.x's, all of them (the whole run's history is there)
+        from compare_outputs import as_comparisons, compare_output_files
+
+        rows = compare_output_files(out / "output", st.path.parent, steps=ran)
+        comparisons += as_comparisons(rows, f"end of run ({final})")
     for comp in components:
         for t, cols in comp.provides.items():
             ref = st.read(t, final)

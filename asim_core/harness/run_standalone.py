@@ -36,7 +36,8 @@ from asim_core.runner import Runner  # noqa: E402
 from asim_core.seams import Engine  # noqa: E402
 from asim_core.spec.legacy import load_top_settings  # noqa: E402
 from asim_core.store import Store  # noqa: E402
-from run_milestone1 import NOT_BUILT, build_components, load_asim1_profile, md_table, skim_store  # noqa: E402
+from compare_outputs import compare_output_files  # noqa: E402
+from run_milestone1 import OUTPUT_STEPS, NOT_BUILT, build_components, load_asim1_profile, md_table, skim_store  # noqa: E402
 
 
 def main(argv=None) -> int:
@@ -124,6 +125,12 @@ def main(argv=None) -> int:
     bad = [c for c in comparisons if c.status != "exact"]
     if bad:
         lines += ["Not exact:", "", md_table(pd.DataFrame([c.__dict__ for c in bad])), ""]
+    files = []
+    if any(s in OUTPUT_STEPS for s in steps):  # the output steps' files against 1.x's
+        files = compare_output_files(out / "run" / "output", Path(args.asim1_out))
+        same = sum(status == "exact" for _, status, _ in files)
+        lines += [f"**Output files compared with 1.x: {same} of {len(files)} exact.**", "",
+                  md_table(pd.DataFrame(files, columns=["file", "status", "note"])), ""]
     if report.warnings:
         lines += ["Warnings:", ""] + [f"- {w['step']}: {w['message']}" for w in report.warnings] + [""]
     lines += [
@@ -138,7 +145,7 @@ def main(argv=None) -> int:
     (out / "run_info.json").write_text(json.dumps({"example": str(example), "asim1_run": str(args.asim1_out),
                                                    "through": args.through, "steps": steps}, indent=2))
     print("\n".join(lines))
-    return 0 if not bad else 1
+    return 0 if not bad and all(status == "exact" for _, status, _ in files) else 1
 
 
 if __name__ == "__main__":

@@ -118,3 +118,29 @@ def test_lognormal_broadcast_modes():
     with pytest.raises(ValueError, match="mixes lognormal draws"):
         bound("rng.lognormal_for_df(df, mu=1, sigma=0, broadcast=True)",
               "rng.lognormal_for_df(df, mu=1, sigma=0)").draws_per_call
+
+
+def test_constant_items_and_mapping_by_a_tables_column_match_python_eval():
+    """write_trip_matrices' preprocessors: time_periods['EA']['first_hour'] and trips.tour_id.map(tours.x)."""
+    periods = {"EA": {"first_hour": 3, "last_hour": 5}, "EV": {"first_hour": 19, "last_hour": 2}}
+    rows = [("tour_participants", "trips.tour_id.map(tours.number_of_participants)"),
+            ("is_ea", "trips.depart.between(time_periods['EA']['first_hour'], time_periods['EA']['last_hour'])"),
+            ("is_ev", "(trips.depart >= time_periods['EV']['first_hour']) | (trips.depart <= time_periods['EV']['last_hour'])"),
+            ("count", "is_ea * tour_participants / 2.0")]
+    s = AssignmentSpec(name="pre", assignments=[Assignment(target=t, formula=f) for t, f in rows],
+                       constants={"time_periods": periods}, tables=["tours"], df_names=["trips"])
+    rng = np.random.default_rng(3)
+    tours = pd.DataFrame({"number_of_participants": rng.integers(1, 4, 6)}, index=np.arange(10, 16))
+    trips = pd.DataFrame({"tour_id": rng.choice(tours.index, 30), "depart": rng.integers(1, 24, 30)})
+    b = s.bind(set(trips.columns), {"tours": set(tours.columns)})
+
+    def t(table, column, keys):
+        return tours[column].to_numpy()[tours.index.get_indexer(keys)]
+
+    v = b.function({c: trips[c].to_numpy() for c in trips.columns}, None, len(trips), t)
+    loc = {"trips": trips, "tours": tours, "time_periods": periods, "np": np, "pd": pd}
+    for target, formula in rows:
+        loc[target] = eval(formula, {}, loc)
+        ours, ref = np.asarray(v[target]), np.asarray(loc[target])
+        np.testing.assert_array_equal(ours, ref)
+        assert ours.dtype == ref.dtype, target

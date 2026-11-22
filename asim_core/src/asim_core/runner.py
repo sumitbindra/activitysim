@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
+from datetime import datetime
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,7 +29,7 @@ import pandas as pd
 
 from .asim1 import Asim1State
 from .compare import ColumnComparison, compare_column
-from .component import SKIMS, Component, ContractError, MissingInputError, StepContext, Tracer
+from .component import SKIMS, Component, ContractError, MissingInputError, StepContext, StepRecord, Tracer
 from .profiler import Profiler
 from .seams import Engine
 from .store import Store, Table
@@ -64,16 +65,22 @@ class Runner:
         engine: Engine | None = None,
         step_engines: dict[str, Engine] | None = None,
         skims=None,
+        output_dir: str | Path | None = None,
     ):
         """
         ``engine`` picks the implementation of each swappable piece for all
         steps (default: the reference implementations); ``step_engines``
         overrides it for individual steps. ``skims`` is a ``SkimStore`` for
-        components that declare skims.
+        components that declare skims. Steps write their files (output
+        tables, trip matrices, ...) to ``output_dir`` (default:
+        ``<out_dir>/output``).
         """
         self.skims = skims
         self.components = {c.name: c for c in components}
         self.out_dir = Path(out_dir)
+        self.output_dir = Path(output_dir) if output_dir else self.out_dir / "output"
+        self.history: list[StepRecord] = []  # one record per step run, in order
+        self._skims_read: set[str] = set()  # the last computed step's skim lookups
         self.replay = replay
         self.tracer = Tracer(self.out_dir / "trace", trace_ids)
         self.base_seed = base_seed
@@ -155,13 +162,18 @@ class Runner:
         # replayed 1.x step may add rows, whose values then come from 1.x)
         computed_cols: dict[str, dict[str, np.ndarray]] = defaultdict(dict)
         self.out_dir.mkdir(parents=True, exist_ok=True)
+        self.history = []
 
         for step, mode in plan:
             with profiler.step(step, mode):
                 if mode == COMPUTED:
-                    self._run_component(step, store, resolved[step], computed_cols, report.warnings)
+                    written = self._run_component(step, store, resolved[step], computed_cols, report.warnings)
                 else:
                     report.carried_over += self._replay_step(step, store, computed_cols)
+                    written = [t for t in self.replay.written_at(step) if t in store]
+            skims = tuple(sorted(self._skims_read)) if mode == COMPUTED else ()
+            self.history.append(StepRecord(step, datetime.now(), {t: list(store[t].column_names) for t in written},
+                                           skims))
 
         manifest = {
             "start": start_note,
@@ -178,7 +190,7 @@ class Runner:
         profiler.write_csv(self.out_dir / "profile.csv")
         return report
 
-    def _run_component(self, step, store: Store, needs, computed_cols, warnings=None) -> None:
+    def _run_component(self, step, store: Store, needs, computed_cols, warnings=None) -> list[str]:
         comp = self.components[step]
         if SKIMS in needs and not self._zones_checked and "land_use" in store:
             from .skims import check_zone_order
@@ -191,8 +203,12 @@ class Runner:
         # how the step holds its skims (swappable: memory-mapped, mapped up front, or in memory)
         skims = None if self.skims is None else engine.skim_access(self.skims, needs.get(SKIMS, ()))
         ctx = StepContext(comp, store, needs, engine, self.tracer, self.base_seed, skims=skims,
-                          warnings=warnings)
-        outputs = comp.run(ctx) or {}
+                          warnings=warnings, output_dir=self.output_dir, history=self.history,
+                          skim_names=tuple(self.skims.names) if self.skims is not None else ())
+        try:
+            outputs = comp.run(ctx) or {}
+        finally:
+            self._skims_read = set(ctx.skims_read)
         # a step can make a new table (e.g. 1.x's workplace_modeled_size): it
         # returns the whole Table, which replaces any table of that name
         for table, value in list(outputs.items()):
@@ -213,6 +229,7 @@ class Runner:
                 path = self.out_dir / "state" / step / f"{table}.parquet"
                 path.parent.mkdir(parents=True, exist_ok=True)
                 store[table].to_pandas(list(cols)).to_parquet(path)
+        return list(outputs)  # the tables the step wrote
 
     def _replay_step(self, step, store: Store, computed_cols) -> list[ColumnComparison]:
         """

@@ -351,6 +351,14 @@ class _Translator:
             if test is _NOT_CONSTANT:
                 return test
             return self.fold(node.body if test else node.orelse)
+        if isinstance(node, ast.Subscript):  # an item of a constant: time_periods['EA']['first_hour']
+            base, key = self.fold(node.value), self.fold(node.slice)
+            if isinstance(base, (dict, list, tuple)) and key is not _NOT_CONSTANT:
+                try:
+                    return base[key]
+                except (KeyError, IndexError, TypeError):
+                    self.fail(node, f"{key!r} is not in the constant")
+            return _NOT_CONSTANT
         if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Mod, ast.Add)):
             # text only ('tour_type==%s' % _Q('work')); numbers are left to run time
             left = self.fold(node.left)
@@ -465,6 +473,9 @@ class _Translator:
             self.fail(node, "unsupported attribute")
 
         if isinstance(node, ast.Subscript):
+            item = self.fold(node)
+            if isinstance(item, (bool, int, float, str)):  # an item of a constant
+                return repr(item)
             if isinstance(node.value, ast.Name) and node.value.id in self.df_names:
                 name = self.fold(node.slice)
                 if isinstance(name, str):
@@ -776,6 +787,12 @@ class _Translator:
                 if not isinstance(periods, int) or (node.args and kw) or len(node.args) > 1:
                     self.fail(node, "shift() takes a whole number of rows")
                 return f"_shift({target}, {periods})"
+            if method == "map" and len(node.args) == 1 and not kw and isinstance(node.args[0], (ast.Attribute, ast.Subscript)) \
+                    and isinstance(node.args[0].value, ast.Name) and node.args[0].value.id in self.table_columns:
+                # trips.tour_id.map(tours.number_of_participants): pandas maps by the column's index,
+                # as reindex(tours.number_of_participants, trips.tour_id) (missing IDs: missing values)
+                return self.reindex(ast.Call(func=ast.Name(id="reindex", ctx=ast.Load()),
+                                             args=[node.args[0], node.func.value], keywords=[]))
             if method == "map":
                 # na_action='ignore' leaves missing values missing, as a dictionary does anyway
                 if kw.keys() == {"na_action"} and isinstance(kw["na_action"], ast.Constant) \

@@ -88,7 +88,7 @@ CHANNEL = "tours"
 PAD_UTILITY = -999.0  # 1.x pads tours with fewer options to a rectangle with this utility
 LOGSUM_ROWS = 100_000  # logsum rows evaluated at once
 PREVIOUS_COLUMNS = ("start_previous", "end_previous")
-OUTPUT_COLUMNS = ["start", "end", "duration", "tdd"]
+OUTPUT_COLUMNS = ["tdd", "start", "end", "duration"]  # in 1.x's order (new columns go at the end of the table)
 MANDATORY_SEGMENT_COLUMN = "mandatory_tour_seg"  # 1.x's name
 # skim wrappers a scheduling preprocessor can use: the tour columns with each row's origin and
 # destination zone (1.x's atwork_subtour_scheduling: skim_dict.wrap("origin", "destination"))
