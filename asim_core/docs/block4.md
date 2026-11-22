@@ -91,7 +91,12 @@ all households).
 - **Every output file is exactly 1.x's**, with every step computed from the
   input files (`run_standalone.py`): MTC 40 of 40 files, MWCOG 27 of 27,
   ARC 16 of 16; and each output step from 1.x's saved state and end to end
-  (`run_milestone1.py`: ALL EXACT; MTC 76 file comparisons, MWCOG 50).
+  (`run_milestone1.py`: ALL EXACT; MTC 76 file comparisons, MWCOG 50, ARC
+  28). Full MTC zones: 40 of 40 at 10,000 households, against a fresh 1.x
+  run of the whole model (numexpr off, as exact matching needs); at 50,000
+  households 38 of 40, the checkpoint table and skim usage differing only
+  because that 1.x run was resumed (1.x re-records every table at the first
+  checkpoint after a resume, and records skim lookups only after it).
 - **Trip matrices**: the trips get the preprocessor's columns (counts per
   mode and period, by tour participants and occupancy), with origin to
   destination skims and the trip's period's skims (ARC's distance); a cell
@@ -136,5 +141,11 @@ python asim_core/harness/run_standalone.py --example-dir activitysim/examples/pr
 python asim_core/harness/run_standalone.py --example-dir activitysim/examples/prototype_mwcog \
   --asim1-out asim_core/work/mwcog/asim1_legacy --through write_trip_matrices --out asim_core/work/mwcog/standalone_b4o
 python -m pytest asim_core/tests -k "output_files or omx or constant_items"
+# full MTC: a fresh 1.x run of the whole model (no resume), then asim_core against it
+python asim_core/harness/run_asim1.py --example-dir asim_core/work/mtc_full/prototype_mtc_full \
+  --out asim_core/work/mtc_full/asim1_10k_fresh --households 10000 --patch no_numexpr
+python asim_core/harness/run_standalone.py --example-dir asim_core/work/mtc_full/prototype_mtc_full \
+  --asim1-out asim_core/work/mtc_full/asim1_10k_fresh --read-skim-cache true --through summarize \
+  --out asim_core/work/mtc_full/standalone_10k_outputs
 ```
 
