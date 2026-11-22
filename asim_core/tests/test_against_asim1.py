@@ -413,3 +413,30 @@ def test_output_files_match_1x_exactly(step, tmp_path, mtc_skims):
     rows = compare_output_files(tmp_path / "run" / "output", BASELINE.parent, steps=[step], skip=HISTORY_FILES)
     assert len(rows) >= 5
     assert all(status == "exact" for _, status, _ in rows), [r for r in rows if r[1] != "exact"]
+
+
+SANDAG = REPO / "asim_core/work/sandag/asim1_1zone/pipeline.parquetpipeline"
+SANDAG_EXAMPLE = REPO / "activitysim/examples/placeholder_sandag"
+SANDAG_CONFIGS = [SANDAG_EXAMPLE / "configs_1_zone", REPO / "activitysim/examples/prototype_mtc/configs"]
+
+
+@pytest.mark.skipif(not SANDAG.exists(), reason="no ActivitySim 1.x SANDAG one-zone run")
+@pytest.mark.parametrize("step", ["initialize_households", "cdap_simulate", "stop_frequency", "trip_mode_choice"])
+def test_sandag_one_zone_steps_match_1x_exactly(step, tmp_path):
+    """SANDAG's data with MTC's model files layered under its own (constants.yaml inherits MTC's)."""
+    from asim_core import components
+    from asim_core.skims import prepare_skims_from_settings
+
+    st = Asim1State(SANDAG)
+    data = [SANDAG_EXAMPLE / "data_1"]
+    make = getattr(components, step)
+    comp = make(SANDAG_CONFIGS, data) if step == "initialize_households" else make(SANDAG_CONFIGS)
+    store = st.load_store(st.previous_step(comp.name))
+    skims = prepare_skims_from_settings(SANDAG_CONFIGS, data, REPO / "asim_core/work/placeholder_sandag")
+    Runner([comp], tmp_path / "run", skims=skims, save_outputs=False).run([comp.name], store)
+    for table, cols in comp.provides.items():
+        ref = st.read(table, comp.name)
+        assert list(store[table].index) == list(ref.index), table
+        for col in cols:
+            result = compare_column(comp.name, store[table], col, ref[col])
+            assert result.status == "exact", result

@@ -45,7 +45,11 @@ system. **Every model step of the three regions runs in asim_core**, and
 each region's whole model runs from the input files alone
 ([docs/block1.md](docs/block1.md), [docs/block2.md](docs/block2.md),
 [docs/block3.md](docs/block3.md), [docs/block4.md](docs/block4.md)), from the
-input files to the output files, with nothing taken from 1.x.
+input files to the output files, with nothing taken from 1.x. An
+out-of-sample region, SANDAG's one-zone example (MTC's model files on
+SANDAG's data, 48,769 households; nothing in asim_core was checked against
+it before), was exactly 1.x's on the first run: every step, all 16 output
+files, 4.1 times faster ([docs/sandag.md](docs/sandag.md)).
 Every other step can be
 **replayed** from a 1.x run, so the model runs end to end today. Results: [docs/milestone1.md](docs/milestone1.md),
 [docs/block1.md](docs/block1.md), [docs/block2.md](docs/block2.md), [docs/block3.md](docs/block3.md),
