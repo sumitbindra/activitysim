@@ -45,7 +45,7 @@ import pandas as pd
 from ..component import Component, StepContext
 from ..inputs.reader import InputTable, input_tables_from_settings, read_frame, table_columns, to_pandas
 from ..random import hash32
-from ..spec.legacy import find_config_file, load_assignment_spec, load_global_constants, load_top_settings, read_yaml
+from ..spec.legacy import find_config_file, load_assignment_spec, load_global_constants, load_top_settings, read_settings, read_yaml
 from ..store import Table
 from . import annotate
 from .annotate import Annotation
@@ -60,7 +60,7 @@ CSV_READERS = {"asim1": True, "exact": False}  # -> read_table's like_asim1
 
 def annotations_from_settings(configs_dirs, settings_file: str, step: str) -> list[Annotation]:
     """``annotate_tables`` of an initialize settings file, in its order."""
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     top = load_top_settings(configs_dirs)
     constants = dict(load_global_constants(configs_dirs))
     out = []
@@ -329,7 +329,7 @@ def window_columns(configs_dirs) -> list[str]:
 def size_table_settings(configs_dirs) -> list[dict]:
     """The location models whose size tables 1.x makes (shadow_pricing.yaml's shadow_pricing_models)."""
     try:
-        sp = read_yaml(find_config_file(configs_dirs, "shadow_pricing.yaml"))
+        sp = read_settings(configs_dirs, "shadow_pricing.yaml")
     except FileNotFoundError:
         return []
     models = sp.get("shadow_pricing_models")
@@ -339,7 +339,7 @@ def size_table_settings(configs_dirs) -> list[dict]:
                         index_col="segment")
     out = []
     for selector, model_name in models.items():
-        settings = read_yaml(find_config_file(configs_dirs, f"{model_name}.yaml"))
+        settings = read_settings(configs_dirs, f"{model_name}.yaml")
         if settings.get("MODEL_SELECTOR") != selector:
             raise InitializeError(f"shadow_pricing.yaml: {model_name}'s MODEL_SELECTOR is not '{selector}'")
         st = terms[terms.model_selector == selector].drop(columns="model_selector")

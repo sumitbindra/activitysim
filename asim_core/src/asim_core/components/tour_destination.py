@@ -697,7 +697,7 @@ def convert(configs_dirs: Sequence[str | Path], available: Mapping[str, set[str]
 
     configs_dirs = [Path(d) for d in configs_dirs]
     out_dir = Path(out_dir)
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     cfg = _load_legacy(configs_dirs, settings_file)
     comp = non_mandatory_tour_destination(configs_dirs, settings_file)
     if cfg.model is not None:

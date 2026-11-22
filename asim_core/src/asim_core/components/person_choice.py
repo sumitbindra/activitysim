@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from ..spec.legacy import find_config_file, load_choice_model, load_global_constants, load_top_settings, read_yaml
+from ..spec.legacy import find_config_file, load_choice_model, load_global_constants, load_top_settings, read_settings, read_yaml
 from .annotate import load_preprocessor
 from .simple_choice import PERSONS_MERGED
 
@@ -22,7 +22,7 @@ def person_choice(configs_dirs: Sequence[str | Path], settings_file: str, step: 
     utility shift and the preprocessor, if any.
     """
     configs_dirs = [Path(d) for d in configs_dirs]
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     top = load_top_settings(configs_dirs)
     definition = load_choice_model(configs_dirs, settings_file, name=step, handled=["preprocessor"])
     constants = dict(load_global_constants(configs_dirs))

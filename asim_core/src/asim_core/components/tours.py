@@ -21,14 +21,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from ..spec.legacy import find_config_file, read_yaml
+from ..spec.legacy import find_config_file, read_settings, read_yaml
 
 TOUR_CATEGORIES = ["mandatory", "joint", "non_mandatory", "atwork"]
 
 
 def _settings(configs_dirs, name) -> dict:
     try:
-        return read_yaml(find_config_file(configs_dirs, name)) or {}
+        return read_settings(configs_dirs, name) or {}
     except FileNotFoundError:
         return {}
 

@@ -55,7 +55,12 @@ def main(argv=None) -> int:
                    help='choices for the seams, as JSON, e.g. \'{"sample_columns": "all_columns", '
                         '"size_lookup": "match"}\' (python -m asim_core.seams lists them); '
                         'unnamed seams use the reference')
+    p.add_argument("--data", nargs="+", default=["data"],
+                   help="the example's data folders, inside it (default: data; SANDAG's one-zone setup: data_1)")
     args = p.parse_args(argv)
+    import run_milestone1
+
+    run_milestone1.DATA_DIRS[:] = args.data
 
     example = Path(args.example_dir).resolve()
     configs = [example / c for c in args.configs]

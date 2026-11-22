@@ -67,6 +67,7 @@ from ..spec.legacy import (
     load_choice_model,
     load_global_constants,
     load_top_settings,
+    read_settings,
     read_yaml,
 )
 from ..spec.model_file import (
@@ -291,7 +292,7 @@ class TourModeChoiceModel:
             self.time_columns[name] = node.attr
 
     def _load_legacy(self, configs_dirs, settings_file):
-        settings = read_yaml(find_config_file(configs_dirs, settings_file))
+        settings = read_settings(configs_dirs, settings_file)
         self.choice_column = self._choice_column
         unsupported = [f"{k} ({why})" for k, why in _UNSUPPORTED.items() if settings.get(k)]
         if unsupported:
@@ -787,7 +788,7 @@ def convert(configs_dirs: Sequence[str | Path], contexts: list[dict], out_dir: s
 
     configs_dirs = [Path(d) for d in configs_dirs]
     out_dir = Path(out_dir)
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     model = TourModeChoiceModel(configs_dirs, settings_file)
     d = model.definition
 

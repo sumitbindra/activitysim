@@ -421,9 +421,9 @@ def omx_files_from_settings(configs_dirs: Sequence[str | Path], data_dirs: Seque
     1.x finds them: each name (or glob pattern) in the first data folder that
     has it.
     """
-    from .spec.legacy import find_config_file, read_yaml
+    from .spec.legacy import find_config_file, read_settings, read_yaml
 
-    los = read_yaml(find_config_file(configs_dirs, "network_los.yaml"))
+    los = read_settings(configs_dirs, "network_los.yaml")
     names = los.get(f"{tag}_skims")
     if isinstance(names, dict):
         for key in ("file", "files", "omx"):
@@ -463,9 +463,9 @@ def prepare_skims_from_settings(
     Skims for a run, using network_los.yaml as 1.x does. ``read_skim_cache``
     overrides the setting when given.
     """
-    from .spec.legacy import find_config_file, read_yaml
+    from .spec.legacy import find_config_file, read_settings, read_yaml
 
-    los = read_yaml(find_config_file(configs_dirs, "network_los.yaml"))
+    los = read_settings(configs_dirs, "network_los.yaml")
     paths = omx_files_from_settings(configs_dirs, data_dirs, tag)
     periods = (los.get("skim_time_periods") or {}).get("labels")
     reuse = bool(los.get("read_skim_cache", False)) if read_skim_cache is None else read_skim_cache
@@ -479,10 +479,10 @@ def prepare_skims_from_settings(
 
 def skim_period_labels(configs_dirs: Sequence[str | Path]) -> list[str] | None:
     """The time period labels of network_los.yaml (``skim_time_periods``), each once."""
-    from .spec.legacy import find_config_file, read_yaml
+    from .spec.legacy import find_config_file, read_settings, read_yaml
 
     try:
-        los = read_yaml(find_config_file(configs_dirs, "network_los.yaml"))
+        los = read_settings(configs_dirs, "network_los.yaml")
     except FileNotFoundError:
         return None
     labels = (los.get("skim_time_periods") or {}).get("labels")
@@ -564,9 +564,9 @@ class TimePeriods:
 
 
 def time_periods_from_settings(configs_dirs: Sequence[str | Path]) -> TimePeriods:
-    from .spec.legacy import find_config_file, read_yaml
+    from .spec.legacy import find_config_file, read_settings, read_yaml
 
-    los = read_yaml(find_config_file(configs_dirs, "network_los.yaml"))
+    los = read_settings(configs_dirs, "network_los.yaml")
     tp = los.get("skim_time_periods")
     if not tp:
         raise ValueError("network_los.yaml has no skim_time_periods")

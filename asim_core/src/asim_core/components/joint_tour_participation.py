@@ -32,7 +32,7 @@ import pandas as pd
 
 from ..component import Component, MissingInputError, StepContext
 from ..logit import FormulaValues
-from ..spec.legacy import find_config_file, load_choice_model, load_global_constants, load_top_settings, read_yaml
+from ..spec.legacy import find_config_file, load_choice_model, load_global_constants, load_top_settings, read_settings, read_yaml
 from ..spec.translate import INDEX
 from ..store import Table
 from . import annotate
@@ -61,7 +61,7 @@ class ParticipationError(ValueError):
 def joint_tour_participation(configs_dirs: Sequence[str | Path],
                              settings_file: str = "joint_tour_participation.yaml") -> Component:
     configs_dirs = [Path(d) for d in configs_dirs]
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     top = load_top_settings(configs_dirs)
     definition = load_choice_model(configs_dirs, settings_file, name=STEP,
                                    handled=["preprocessor", "annotate_persons", "annotate_households",

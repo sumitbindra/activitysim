@@ -61,50 +61,62 @@ def read_yaml(path: Path) -> dict:
         return yaml.safe_load(f) or {}
 
 
-def read_settings(configs_dirs: Sequence[str | Path], file_name: str, _stack: tuple = ()) -> dict:
+def read_settings(configs_dirs: Sequence[str | Path], file_name: str, mandatory: bool = True,
+                  _stack: tuple = ()) -> dict:
     """
-    A model's settings file, as 1.x reads it: a file holding only
-    ``include_settings: <other file>`` is that other file (found in the
-    configs folders), e.g. MTC's joint_tour_destination.yaml.
+    A settings file, as 1.x's read_settings_file reads it, for every settings
+    file (settings.yaml, constants.yaml, network_los.yaml, each model's): the
+    first copy found in the configs folders; with ``inherit_settings: True``,
+    its missing settings filled in from the next copy found (and so on);
+    ``inherit_settings: <file>`` fills them in from that file instead;
+    ``include_settings: <file>`` (alone in the file) is that other file. The
+    two directives are not part of the result. Not found: FileNotFoundError,
+    or {} if not ``mandatory``.
     """
     configs_dirs = [Path(d) for d in configs_dirs]
-    path = find_config_file(configs_dirs, file_name)
-    settings = read_yaml(path)
-    include = settings.get("include_settings")
-    if not include:
-        return settings
-    if len(settings) > 1:
-        raise ValueError(f"{path}: 'include_settings' must appear alone in the file (as 1.x requires)")
-    if include in _stack or include == file_name:
-        raise ValueError(f"{path}: settings files include each other: {' -> '.join(_stack + (file_name,))}")
-    return read_settings(configs_dirs, include, _stack + (file_name,))
+    if not file_name.lower().endswith(".yaml"):
+        file_name = f"{file_name}.yaml"
+    settings: dict = {}
+    found = False
+    for d in configs_dirs:
+        path = d / file_name
+        if not path.exists():
+            continue
+        if str(path) in _stack:
+            raise ValueError(f"{path}: settings files include or inherit each other: {' -> '.join(_stack)}")
+        found = True
+        _stack = _stack + (str(path),)
+        s = read_yaml(path) or {}
+        settings = {**s, **settings}  # what is already there wins (1.x: backfill)
+        include = s.get("include_settings")
+        if include:
+            if len(s) > 1:
+                raise ValueError(f"{path}: 'include_settings' must appear alone in the file (as 1.x requires)")
+            s = read_settings(configs_dirs, include, True, _stack)
+            settings = {**s, **settings}
+        inherit = s.get("inherit_settings")
+        if not inherit:
+            break
+        if isinstance(inherit, str):  # switch the chain to that file
+            settings = {**read_settings(configs_dirs, inherit, True, _stack), **settings}
+            break
+    if not found:
+        if mandatory:
+            raise FileNotFoundError(f"'{file_name}' not found in {[str(d) for d in configs_dirs]}")
+        return {}
+    settings.pop("inherit_settings", None)
+    settings.pop("include_settings", None)
+    return settings
 
 
 def load_top_settings(configs_dirs: Sequence[str | Path]) -> dict:
-    """
-    The run's settings.yaml. As in 1.x, a settings.yaml with
-    ``inherit_settings: True`` is layered on top of the next one found.
-    """
-    layers = []
-    for d in configs_dirs:
-        p = Path(d) / "settings.yaml"
-        if p.exists():
-            s = read_yaml(p)
-            layers.append(s)
-            if not s.get("inherit_settings"):
-                break
-    merged: dict = {}
-    for s in reversed(layers):
-        merged.update(s)
-    merged.pop("inherit_settings", None)
-    return merged
+    """The run's settings.yaml, with 1.x's inheritance (``read_settings``)."""
+    return read_settings(configs_dirs, "settings.yaml", mandatory=False)
 
 
 def load_global_constants(configs_dirs: Sequence[Path]) -> dict:
-    try:
-        return read_yaml(find_config_file(configs_dirs, "constants.yaml"))
-    except FileNotFoundError:
-        return {}
+    """constants.yaml, with 1.x's inheritance (SANDAG's inherits MTC's and changes one value)."""
+    return read_settings(configs_dirs, "constants.yaml", mandatory=False)
 
 
 def load_choice_model(
@@ -130,7 +142,7 @@ def load_choice_model(
     """
     configs_dirs = [Path(d) for d in configs_dirs]
     settings_path = find_config_file(configs_dirs, settings_file)
-    settings = read_yaml(settings_path)
+    settings = read_settings(configs_dirs, settings_file)
     settings.update(overrides or {})  # e.g. one segment's SPEC and COEFFICIENTS (1.x: SPEC_SEGMENTS)
 
     unsupported = [f"{k} ({why})" for k, why in _NOT_YET_SUPPORTED.items()

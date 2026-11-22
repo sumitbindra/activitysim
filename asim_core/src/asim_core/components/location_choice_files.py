@@ -23,7 +23,7 @@ import pandas as pd
 from pydantic import BaseModel, ConfigDict
 
 from ..spec.definition import InteractionModelDefinition, InteractionTerm, LanguageScope
-from ..spec.legacy import find_config_file, load_global_constants, load_top_settings, read_yaml
+from ..spec.legacy import find_config_file, load_global_constants, load_top_settings, read_settings, read_yaml
 from ..spec.model_file import (
     ModelFile,
     locate,
@@ -205,7 +205,7 @@ def convert(configs_dirs: Sequence[str | Path], available: Mapping[str, set[str]
 
     configs_dirs = [Path(d) for d in configs_dirs]
     out_dir = Path(out_dir)
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     top = load_top_settings(configs_dirs)
     cfg = _load_legacy(configs_dirs, settings_file, step)
     comp = location_choice_component(configs_dirs, step, settings_file)

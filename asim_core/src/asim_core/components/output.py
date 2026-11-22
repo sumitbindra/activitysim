@@ -30,7 +30,7 @@ import pandas as pd
 
 from ..component import SKIMS, Component, StepContext
 from ..skims import time_periods_from_settings
-from ..spec.legacy import find_config_file, load_top_settings, read_yaml
+from ..spec.legacy import find_config_file, load_top_settings, read_settings, read_yaml
 
 STEP = "write_tables"
 CHECKPOINTS = "checkpoints"
@@ -194,7 +194,7 @@ def write_data_dictionary(configs_dirs: Sequence[str | Path],
     """
     configs_dirs = [Path(d) for d in configs_dirs]
     try:
-        settings = read_yaml(find_config_file(configs_dirs, settings_file))
+        settings = read_settings(configs_dirs, settings_file)
     except FileNotFoundError:
         settings = {}  # 1.x: the settings file is optional
     txt_format = settings.get("txt_format", "data_dict.txt")

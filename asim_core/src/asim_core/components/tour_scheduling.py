@@ -76,6 +76,7 @@ from ..spec.legacy import (
     load_global_constants,
     load_interaction_model,
     load_top_settings,
+    read_settings,
     read_yaml,
 )
 from ..timetable import FORMULA_FUNCTIONS, I_MIDDLE, TimeTable, read_tdd_alternatives
@@ -589,7 +590,7 @@ class _Config:
 
 def _load_legacy(configs_dirs, settings_file, step, category) -> _Config:
     """Today's settings, specs, coefficients and preprocessors."""
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     unsupported = [f"{k} ({why})" for k, why in _UNSUPPORTED.items() if settings.get(k)]
     if settings.get("LOGIT_TYPE", "MNL") != "MNL":
         unsupported.append(f"LOGIT_TYPE: {settings['LOGIT_TYPE']}")
@@ -861,7 +862,7 @@ def convert(configs_dirs: Sequence[str | Path], available: Mapping[str, set[str]
 
     configs_dirs = [Path(d) for d in configs_dirs]
     out_dir = Path(out_dir)
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     top = load_top_settings(configs_dirs)
     cfg = _load_legacy(configs_dirs, settings_file, step, category)
     comp = tour_scheduling_component(configs_dirs, step, settings_file, category)

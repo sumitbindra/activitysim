@@ -26,7 +26,7 @@ from pydantic import BaseModel, ConfigDict
 from ..component import SKIMS, Component, StepContext
 from ..spec.convert import LegacyScope, NewNames, convert_formula
 from ..spec.definition import AssignmentSpec, LanguageScope
-from ..spec.legacy import find_config_file, load_assignment_spec, load_global_constants, read_yaml
+from ..spec.legacy import find_config_file, load_assignment_spec, load_global_constants, read_settings, read_yaml
 from ..spec.model_file import (
     ModelFile,
     is_model_file,
@@ -183,7 +183,7 @@ def convert(configs_dirs: Sequence[str | Path], columns, out_dir: str | Path,
     """asim_core's model file for today's accessibility files (``columns`` is not needed)."""
     configs_dirs = [Path(d) for d in configs_dirs]
     out_dir = Path(out_dir)
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     spec, _ = _load(configs_dirs, settings_file)
     land_use = set(settings.get("land_use_columns") or [])
     names = NewNames(role_of=lambda c: "dest_zone" if c in land_use else None)

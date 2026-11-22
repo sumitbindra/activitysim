@@ -98,6 +98,8 @@ from asim_core.store import Store  # noqa: E402
 
 # the seam choices for this run (--seams); the reference unless named
 ENGINE = [Engine()]
+# the example's data folders (--data), inside the example folder (SANDAG's one-zone setup: data_1)
+DATA_DIRS = ["data"]
 
 PORTED = [initialize_landuse, initialize_households, compute_accessibility, school_location,
           workplace_location, work_from_home, transit_pass_subsidy, transit_pass_ownership, auto_ownership,
@@ -138,10 +140,12 @@ def build_components(configs, asim1_run=None, data_dirs=None):
     The ported components for this example's configs. A component whose
     configs use something asim_core doesn't support yet is left out (that
     step is then replayed from 1.x), and the reason recorded in NOT_BUILT.
-    Steps reading the inputs read ``data_dirs`` (default: the example's data
+    Steps reading the inputs read ``data_dirs`` (default: DATA_DIRS in the
+    folder of the first configs folder, the region's own, not the configs it
+    layers on, e.g. SANDAG's on MTC's; the example's data
     folder) with the households sample size of the 1.x run they are compared with.
     """
-    data_dirs = data_dirs or [Path(configs[-1]).parent / "data"]
+    data_dirs = data_dirs or [Path(configs[0]).parent / d for d in DATA_DIRS]
     out = []
     for make in PORTED:
         try:
@@ -164,7 +168,7 @@ def skim_store(example: Path, configs, read_skim_cache: bool | None = None) -> S
     an unchanged cache is reused. The cache lives in asim_core/work/<example>/cache.
     """
     return prepare_skims_from_settings(
-        configs, [example / "data"], REPO / "asim_core" / "work" / example.name,
+        configs, [example / d for d in DATA_DIRS], REPO / "asim_core" / "work" / example.name,
         read_skim_cache=read_skim_cache,
     )
 
@@ -488,8 +492,11 @@ def main(argv=None) -> int:
                    help='choices for the seams, as JSON, e.g. \'{"sample_columns": "all_columns", '
                         '"size_lookup": "match"}\' (python -m asim_core.seams lists them); '
                         'unnamed seams use the reference')
+    p.add_argument("--data", nargs="+", default=["data"],
+                   help="the example's data folders, inside it (default: data; SANDAG's one-zone setup: data_1)")
     args = p.parse_args(argv)
     ENGINE[0] = Engine(json.loads(args.seams))
+    DATA_DIRS[:] = args.data
 
     example = Path(args.example_dir).resolve()
     configs = [example / c for c in args.configs]
@@ -515,7 +522,7 @@ def main(argv=None) -> int:
         skims = None
     # the inputs are checked before anything runs; errors stop here
     ours = REPO / "asim_core/configs" / example.name
-    inputs = check_inputs(([ours] if ours.is_dir() else []) + configs, [example / "data"],
+    inputs = check_inputs(([ours] if ours.is_dir() else []) + configs, [example / d for d in DATA_DIRS],
                           cache_dir=REPO / "asim_core/work" / example.name / "input_checks",
                           skim_values=args.skim_check_values, skim_store=skims)
     (out / "input_checks.txt").write_text(inputs.text() + "\n")

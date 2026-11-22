@@ -31,7 +31,7 @@ import pandas as pd
 
 from ..component import SKIMS, Component, MissingInputError, StepContext
 from ..skims import time_periods_from_settings
-from ..spec.legacy import find_config_file, load_global_constants, load_top_settings, read_yaml
+from ..spec.legacy import find_config_file, load_global_constants, load_top_settings, read_settings, read_yaml
 from ..spec.translate import INDEX
 from .annotate import _update, load_preprocessor
 from .runtime import TableLookup
@@ -54,7 +54,7 @@ PERIOD_COLUMNS = {"start_tour_period": "start", "end_tour_period": "end", "trip_
 
 def summarize(configs_dirs: Sequence[str | Path], settings_file: str = "summarize.yaml") -> Component:
     configs_dirs = [Path(d) for d in configs_dirs]
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     top = load_top_settings(configs_dirs)
     if settings.get("EXPORT_PIPELINE_TABLES", True):
         raise NotImplementedError(f"{settings_file}: not supported yet: EXPORT_PIPELINE_TABLES (1.x's default: "

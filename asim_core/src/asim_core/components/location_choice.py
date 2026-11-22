@@ -48,6 +48,7 @@ from ..spec.legacy import (
     load_global_constants,
     load_interaction_model,
     load_top_settings,
+    read_settings,
     read_yaml,
 )
 from ..store import Table
@@ -111,7 +112,7 @@ class _Config:
 
 def _load_legacy(configs_dirs, settings_file, step) -> _Config:
     """Today's settings, specs, coefficients and annotations."""
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     top = load_top_settings(configs_dirs)
     unsupported = [f"{k} ({why})" for k, why in _UNSUPPORTED.items() if settings.get(k)]
     if top.get("use_shadow_pricing"):
@@ -144,7 +145,7 @@ def _load_legacy(configs_dirs, settings_file, step) -> _Config:
         model = TourModeChoiceModel(configs_dirs, str(settings["LOGSUM_SETTINGS"]))
         pre = settings.get("LOGSUM_PREPROCESSOR", "preprocessor")
         if pre != "preprocessor":
-            ls_settings = read_yaml(find_config_file(configs_dirs, str(settings["LOGSUM_SETTINGS"])))
+            ls_settings = read_settings(configs_dirs, str(settings["LOGSUM_SETTINGS"]))
             if (ls_settings.get(pre) or {}).get("SPEC") != (ls_settings.get("preprocessor") or {}).get("SPEC"):
                 raise NotImplementedError(f"{settings_file}: LOGSUM_PREPROCESSOR {pre} with its own spec")
             # same spec as 'preprocessor'; only its TABLES differ, which the

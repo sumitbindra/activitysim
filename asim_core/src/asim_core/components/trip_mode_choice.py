@@ -27,7 +27,7 @@ import numpy as np
 import pandas as pd
 
 from ..component import SKIMS, Component, MissingInputError, Needs, StepContext
-from ..spec.legacy import find_config_file, read_yaml
+from ..spec.legacy import find_config_file, read_settings, read_yaml
 from .runtime import plain
 from .simple_choice import ChooserView
 from .tour_mode_choice import TourModeChoiceModel
@@ -63,7 +63,7 @@ def trip_mode_choice_model(configs_dirs: Sequence[str | Path],
 
 def period_values(configs_dirs) -> dict:
     """MIN_PER_PERIOD and PERIODS_PER_HOUR, as 1.x's trip mode choice gives them."""
-    los = read_yaml(find_config_file([Path(d) for d in configs_dirs], "network_los.yaml"))
+    los = read_settings([Path(d) for d in configs_dirs], "network_los.yaml")
     minutes = los.get("skim_time_periods", {}).get("period_minutes", 60)
     return {"MIN_PER_PERIOD": minutes, "PERIODS_PER_HOUR": 60 / minutes}
 
@@ -76,7 +76,7 @@ def tours_merged_columns(settings: Mapping, trip_columns: set[str]) -> list[str]
 
 def trip_mode_choice(configs_dirs: Sequence[str | Path], settings_file: str = "trip_mode_choice.yaml") -> Component:
     configs_dirs = [Path(d) for d in configs_dirs]
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     for key in ("CHOOSER_COLS_TO_KEEP",):
         if settings.get(key):
             raise NotImplementedError(f"{settings_file}: {key} is not supported yet")

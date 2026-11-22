@@ -97,6 +97,9 @@ def _warm_up_sampling():
         sample_choices_maker_preserve_ordering(np.full((2, 3), 1 / 3), np.full((2, 4), 0.5), a)
 
 
+DATA_DIRS = ["data"]  # the example's data folders (--data)
+
+
 def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler, read_skim_cache=None,
                   patches=()):
     from activitysim import abm  # noqa: F401
@@ -146,7 +149,7 @@ def profile_asim1(step, prev, example, configs, pipeline, scratch, profiler, rea
     state = workflow.State.make_default(
         working_dir=example,
         configs_dir=tuple(configs),
-        data_dir=("data",),
+        data_dir=tuple(DATA_DIRS),
         output_dir=scratch,
     )
     state.checkpoint.restore(prev)
@@ -212,12 +215,17 @@ def main(argv=None) -> int:
                    help="asim1 only: run-time patches to apply (see asim1_patches.py)")
     p.add_argument("--page-cache", choices=["as_is", "cold", "warm"], default="as_is",
                    help="asim_core only: the skim file's state in the OS page cache before the step")
+    p.add_argument("--data", nargs="+", default=["data"], help="the example's data folders, inside it")
     p.add_argument("--seams", default="{}",
                    help='asim_core only: implementations to use, as JSON, e.g. \'{"random": "counter"}\'')
     args = p.parse_args(argv)
 
     sys.path.insert(0, str(HERE))
     from asim_core.asim1 import Asim1State
+    import run_milestone1
+
+    DATA_DIRS[:] = args.data
+    run_milestone1.DATA_DIRS[:] = args.data
 
     example = Path(args.example_dir).resolve()
     configs = [example / c for c in args.configs]

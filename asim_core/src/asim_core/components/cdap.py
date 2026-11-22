@@ -47,7 +47,7 @@ import pandas as pd
 from ..component import Component, MissingInputError, StepContext
 from ..logit import FormulaValues
 from ..spec.definition import ChoiceModelDefinition, Term
-from ..spec.legacy import find_config_file, load_choice_model, load_top_settings, read_yaml
+from ..spec.legacy import find_config_file, load_choice_model, load_top_settings, read_settings, read_yaml
 from ..spec.translate import INDEX
 from . import annotate
 from .runtime import TableLookup
@@ -82,7 +82,7 @@ def cdap_simulate(configs_dirs: Sequence[str | Path], settings_file: str = "cdap
     if interaction_specs not in SPEC_BUILDERS:
         raise ValueError(f"interaction_specs must be one of {sorted(SPEC_BUILDERS)}")
     configs_dirs = [Path(d) for d in configs_dirs]
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     top = load_top_settings(configs_dirs)
     if settings.get("ADD_JOINT_TOUR_UTILITY"):
         raise NotImplementedError(f"{settings_file}: ADD_JOINT_TOUR_UTILITY")

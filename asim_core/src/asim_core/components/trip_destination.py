@@ -138,7 +138,7 @@ def trip_destination(configs_dirs: Sequence[str | Path], settings_file: str = "t
             unsupported.append(key)
     if top.get("want_dest_choice_sample_tables") and settings.get("DEST_CHOICE_SAMPLE_TABLE_NAME"):
         unsupported.append("saving the destination sample table")
-    los = read_yaml(find_config_file(configs_dirs, "network_los.yaml"))
+    los = read_settings(configs_dirs, "network_los.yaml")
     if int(los.get("zone_system", 1)) != 1:
         unsupported.append("two- and three-zone systems")
     if unsupported:
@@ -183,7 +183,7 @@ def trip_destination(configs_dirs: Sequence[str | Path], settings_file: str = "t
 
     model = trip_mode_choice_model(configs_dirs, settings["LOGSUM_SETTINGS"]) if settings.get("LOGSUM_SETTINGS") \
         else None
-    logsum_settings = read_yaml(find_config_file(configs_dirs, settings["LOGSUM_SETTINGS"])) if model else {}
+    logsum_settings = read_settings(configs_dirs, settings["LOGSUM_SETTINGS"]) if model else {}
     redundant = set(settings.get("REDUNDANT_TOURS_MERGED_CHOOSER_COLUMNS") or [])
     sample_cols = {alt_col, "prob", "pick_count"}
     resolved: dict = {}

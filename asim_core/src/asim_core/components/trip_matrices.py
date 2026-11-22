@@ -29,7 +29,7 @@ import pandas as pd
 
 from ..component import Component, MissingInputError, StepContext
 from ..omx import write_omx
-from ..spec.legacy import find_config_file, load_global_constants, load_top_settings, read_yaml
+from ..spec.legacy import find_config_file, load_global_constants, load_top_settings, read_settings, read_yaml
 from ..spec.translate import INDEX
 from ..skims import time_periods_from_settings
 from .annotate import _update, load_preprocessor
@@ -46,14 +46,14 @@ STEP = "write_trip_matrices"
 def write_trip_matrices(configs_dirs: Sequence[str | Path],
                         settings_file: str = "write_trip_matrices.yaml") -> Component:
     configs_dirs = [Path(d) for d in configs_dirs]
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     top = load_top_settings(configs_dirs)
     unsupported = []
     if settings.get("SAVE_TRIPS_TABLE"):
         unsupported.append("SAVE_TRIPS_TABLE (the annotated trips written back)")
     if "parking_location" in (top.get("models") or []):
         unsupported.append("parking location choice's parking zones")
-    los = read_yaml(find_config_file(configs_dirs, "network_los.yaml"))
+    los = read_settings(configs_dirs, "network_los.yaml")
     if int(los.get("zone_system", 1)) != 1:
         unsupported.append("two- and three-zone systems")
     if unsupported:

@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 
 from ..component import Component
-from ..spec.legacy import find_config_file, load_choice_model, load_global_constants, load_top_settings, read_yaml
+from ..spec.legacy import find_config_file, load_choice_model, load_global_constants, load_top_settings, read_settings, read_yaml
 from . import annotate
 from .simple_choice import ChoiceOutput, ChooserView, Choosers, Preprocessor, simple_choice_component
 
@@ -29,7 +29,7 @@ VIEW = ChooserView("tours", [("households", "household_id")])
 def joint_tour_composition(configs_dirs: Sequence[str | Path], settings_file: str = "joint_tour_composition.yaml"
                            ) -> Component:
     configs_dirs = [Path(d) for d in configs_dirs]
-    settings = read_yaml(find_config_file(configs_dirs, settings_file))
+    settings = read_settings(configs_dirs, settings_file)
     if settings.get("annotate_persons") or settings.get("annotate_households") or settings.get("annotate_tours"):
         raise NotImplementedError(f"{settings_file}: annotations after the model")
     top = load_top_settings(configs_dirs)
