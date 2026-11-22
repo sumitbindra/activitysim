@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from ..component import Component, MissingInputError, StepContext
-from ..omx import write_omx
+from ..omx import OmxWriter, write_omx
 from ..spec.legacy import find_config_file, load_global_constants, load_top_settings, read_settings, read_yaml
 from ..spec.translate import INDEX
 from ..skims import time_periods_from_settings
@@ -131,8 +131,8 @@ def write_trip_matrices(configs_dirs: Sequence[str | Path],
                         add_period=add_period and "depart" in needs["trips"])
         return {t: sorted(c) for t, c in needs.items()}
 
-    def run(ctx: StepContext):
-        ids = ctx.ids("trips")
+    def annotated_trips(ctx: StepContext, ids: np.ndarray) -> dict:
+        """The trips' columns and the preprocessor's results (its working arrays freed on return)."""
         n = len(ids)
         cols = {c: np.asarray(plain(ctx.column("trips", c))) for c in ctx.declared("trips")}
         if resolved["add_period"]:
@@ -150,24 +150,29 @@ def write_trip_matrices(configs_dirs: Sequence[str | Path],
                 v = bound.function(c, skims, n, TableLookup(ctx), None, {})
             for target in bound.targets:
                 cols[target] = _update(cols.get(target), np.asarray(v[target]))
+        return cols
+
+    def run(ctx: StepContext):
+        ids = ctx.ids("trips")
         for warning in resolved["missing"]:
             ctx.warn(f"skipped table {warning} is not a column of the trips")
-        trips = pd.DataFrame({k: v for k, v in cols.items() if np.ndim(v)}, index=pd.Index(ids, name="trip_id"))
-        for k, v in cols.items():
-            if not np.ndim(v):  # a constant from the preprocessor
-                trips[k] = v
+        # the trips as the matrices read them (the trip_matrix_table seam): by default only the columns some
+        # matrix reads; the rest (other trip columns, the preprocessor's other results) are freed here
+        keep = {c for _, tables in matrices for _, field, o, d in tables for c in (field, o, d)}
+        keep |= {weight_col, "household_id"}
+        trips = ctx.engine.trip_matrix_table(annotated_trips(ctx, ids), ids, keep)
 
-        if weight_col not in trips:  # 1.x: trips_df.household_id.map(households[weight])
+        if weight_col not in trips.columns:  # 1.x: trips_df.household_id.map(households[weight])
             weights = pd.Series(np.asarray(plain(ctx.column("households", weight_col))), index=ctx.ids("households"))
-            trips[weight_col] = trips.household_id.map(weights)
+            trips.set(weight_col, trips.get("household_id").map(weights))
         rates = pd.Series(np.asarray(plain(ctx.column("households", weight_col))), index=ctx.ids("households"))
         zero = rates == 0
         if zero.all():
             ctx.warn(f"every household has {weight_col} 0: trips counted unweighted")
         elif zero.any():
             ctx.warn(f"some households have {weight_col} 0: their trips are left out")
-            trips = trips[trips[weight_col] != 0]
-            if trips.empty:
+            trips.keep_rows(trips.get(weight_col) != 0)
+            if not len(trips):
                 return {}
         if resolved["skipped"]:
             skipped = pd.Series(np.asarray(plain(ctx.column("households_skipped", weight_col))))
@@ -177,7 +182,7 @@ def write_trip_matrices(configs_dirs: Sequence[str | Path],
                 else:
                     kept_w = (1 / rates[rates != 0]).sum()
                     factor = kept_w / (kept_w + (1 / skipped[skipped != 0]).sum())
-                trips[weight_col] = trips[weight_col] * factor
+                trips.set(weight_col, trips.get(weight_col) * factor)
 
         zones = pd.Index(ctx.ids("land_use"))
         index_name = ctx.index_name("land_use")
@@ -186,10 +191,16 @@ def write_trip_matrices(configs_dirs: Sequence[str | Path],
             labels = pd.Series(np.asarray(plain(ctx.column("land_use", original))), index=zones, name=original)
         else:
             labels = pd.Index(zones, name=index_name)
+        mapping = {labels.name or "ZONE": pd.Index(labels).to_numpy()}
         for file_name, tables in matrices:
-            data = _matrices(trips, tables, labels, weight_col)
-            mapping_name = labels.name or "ZONE"
-            write_omx(ctx.output_path(file_name), data, {mapping_name: pd.Index(labels).to_numpy()})
+            if getattr(trips, "write_each_matrix", False):  # one matrix in memory at a time
+                with OmxWriter(ctx.output_path(file_name)) as w:
+                    for name, data in _each_matrix(trips, tables, labels, weight_col):
+                        w.add_matrix(name, data)
+                    for name, entries in mapping.items():
+                        w.add_mapping(name, entries)
+            else:  # 1.x: the file's matrices made, then written
+                write_omx(ctx.output_path(file_name), _matrices(trips, tables, labels, weight_col), mapping)
         return {}
 
     return Component(STEP, run, provides={}, resolve_needs=resolve_needs,
@@ -197,18 +208,32 @@ def write_trip_matrices(configs_dirs: Sequence[str | Path],
                                  f"{sum(len(t) for _, t in matrices)} tables")
 
 
-def _matrices(trips: pd.DataFrame, tables, labels, weight_col: str) -> dict[str, np.ndarray]:
-    """1.x's write_matrices for one file: each table summed by OD, weighted, added into its matrix."""
+def _each_matrix(trips, tables, labels, weight_col: str):
+    """
+    The file's matrices one at a time, in 1.x's order (its tables' names in order of first
+    appearance), each the sum of its tables in their order: 1.x's matrices, value for value.
+    """
+    names = list(dict.fromkeys(name for name, *_ in tables))
+    for name in names:
+        data = _matrices(trips, [t for t in tables if t[0] == name], labels, weight_col).get(name)
+        if data is not None:  # 1.x writes a matrix only if some table added to it
+            yield name, data
+
+
+def _matrices(trips, tables, labels, weight_col: str) -> dict[str, np.ndarray]:
+    """
+    1.x's write_matrices for one file: each table summed by OD, weighted, added into its matrix.
+    ``trips``: a trip_matrix_table (its ``frame`` gives a table's columns as a pandas table).
+    """
     pos_index = labels.index if isinstance(labels, pd.Series) else labels
     n = len(pos_index)
     pos_index = pd.Index(pos_index, name=pos_index.name or "ZONE")
     out: dict[str, np.ndarray] = {}
     for name, field, ocol, dcol in tables:
-        if field not in trips.columns or ocol not in trips.columns or dcol not in trips.columns:
+        columns = trips.columns
+        if field not in columns or ocol not in columns or dcol not in columns:
             continue  # 1.x skips it (reported before the run)
-        work = trips[[ocol, dcol, field]].copy()
-        if weight_col and weight_col in trips.columns:
-            work[weight_col] = trips[weight_col]
+        work = trips.frame([ocol, dcol, field], weight_col if weight_col and weight_col in columns else None)
         work["_o"] = work[ocol]  # one zone system: trips' zones are the land use's zones
         work["_d"] = work[dcol]
         work = work.dropna(subset=["_o", "_d"])

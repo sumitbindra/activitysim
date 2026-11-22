@@ -54,6 +54,9 @@ SEAMS = {
                       "destination): sample_columns(available, read, alt_col, period_col, uses_period) -> names",
     "size_lookup": "size terms for sampling's chooser x alternative rows (trip destination): "
                    "size_lookup(table, zone_rows, repeated, zones) -> object with .get(zones, purposes)",
+    "trip_matrix_table": "how write_trip_matrices holds the trips while each matrix is added up: "
+                         "trip_matrix_table(columns, ids, keep) -> object with .columns, .get, .set, "
+                         ".keep_rows, .frame(names, weight)",
     "sample": "probabilities and k random draws per row -> k sampled alternatives (with "
               "replacement): sample(probs, rands) -> (positions, probabilities as float32)",
     "choose": "probabilities and one random draw per row -> chosen position: "

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 
 from .seams import register
 
@@ -103,3 +104,99 @@ def size_lookup_by_position(table, zone_rows, repeated, zones):
                       "DataFrameMatrix.get (the default until the trip destination measurement)")
 def size_lookup_match(table, zone_rows, repeated, zones):
     return table
+
+
+# --- trip matrices: how the trips are held while each matrix is added up -----------------
+
+
+class OneTableTrips:
+    """
+    Every column the trips carry and the preprocessor made, in one pandas
+    table, as 1.x holds them; each matrix's columns cut from it; a file's
+    matrices all made, then written.
+    """
+
+    def __init__(self, cols, ids):
+        df = pd.DataFrame({k: v for k, v in cols.items() if np.ndim(v)}, index=pd.Index(ids, name="trip_id"))
+        for k, v in cols.items():
+            if not np.ndim(v):  # a constant from the preprocessor
+                df[k] = v
+        self.df = df
+
+    @property
+    def columns(self) -> set[str]:
+        return set(self.df.columns)
+
+    def __len__(self) -> int:
+        return len(self.df)
+
+    def get(self, name: str) -> pd.Series:
+        return self.df[name]
+
+    def set(self, name: str, values) -> None:
+        self.df[name] = values
+
+    def keep_rows(self, mask) -> None:
+        self.df = self.df[mask]
+
+    def frame(self, names, weight: str | None) -> pd.DataFrame:
+        work = self.df[list(names)].copy()  # 1.x: trips_df[[ocol, dcol, col]].copy()
+        if weight:
+            work[weight] = self.df[weight]
+        return work
+
+
+class PerMatrixTrips:
+    """
+    Only the columns some matrix reads (``keep``), as arrays; each matrix's
+    small table (origin, destination, its value, the weight) built from them
+    when that matrix is added up: the same values, types and row order as
+    the table 1.x cuts from its big one. Each matrix is written to its file
+    as soon as it is made (in 1.x's order), so one is in memory at a time.
+    """
+
+    write_each_matrix = True  # each matrix written once made: one in memory at a time
+
+    def __init__(self, cols, ids, keep):
+        n = len(ids)
+        self.index = pd.Index(ids, name="trip_id")
+        self.cols = {k: (np.asarray(v) if np.ndim(v) else np.full(n, v)) for k, v in cols.items() if k in keep}
+
+    @property
+    def columns(self) -> set[str]:
+        return set(self.cols)
+
+    def __len__(self) -> int:
+        return len(self.index)
+
+    def get(self, name: str) -> pd.Series:
+        return pd.Series(self.cols[name], index=self.index, name=name)
+
+    def set(self, name: str, values) -> None:
+        self.cols[name] = np.asarray(values)
+
+    def keep_rows(self, mask) -> None:
+        mask = np.asarray(mask)
+        self.cols = {k: v[mask] for k, v in self.cols.items()}
+        self.index = self.index[mask]
+
+    def frame(self, names, weight: str | None) -> pd.DataFrame:
+        data = {n: self.cols[n] for n in names}
+        if weight:
+            data[weight] = self.cols[weight]
+        return pd.DataFrame(data, index=self.index)
+
+
+@register("trip_matrix_table", "per_matrix", reference=True,
+          description="only the columns the matrices read; each matrix's table built from its own columns, "
+                      "each matrix written once made (the same sums as one table)")
+def trip_matrix_table_per_matrix(cols, ids, keep):
+    return PerMatrixTrips(cols, ids, keep)
+
+
+@register("trip_matrix_table", "one_table", agreement="exact",
+          description="every trip column and preprocessor result in one pandas table, as 1.x (the default "
+                      "until the trip matrices memory change)")
+def trip_matrix_table_one_table(cols, ids, keep):
+    return OneTableTrips(cols, ids)
+

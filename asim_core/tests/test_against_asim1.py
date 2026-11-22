@@ -440,3 +440,23 @@ def test_sandag_one_zone_steps_match_1x_exactly(step, tmp_path):
         for col in cols:
             result = compare_column(comp.name, store[table], col, ref[col])
             assert result.status == "exact", result
+
+
+@pytest.mark.skipif(not BASELINE.exists(), reason="no ActivitySim 1.x baseline run")
+def test_trip_matrices_the_way_before_match_1x_exactly(tmp_path, mtc_skims):
+    """--seams '{"trip_matrix_table": "one_table"}': every trip column in one table, a file's matrices together."""
+    import sys
+
+    sys.path.insert(0, str(REPO / "asim_core/harness"))
+    from compare_outputs import compare_output_files
+
+    from asim_core.components.trip_matrices import write_trip_matrices
+    from asim_core.seams import Engine
+
+    st = Asim1State(BASELINE)
+    comp = write_trip_matrices(CONFIGS)
+    store = st.load_store(st.previous_step(comp.name))
+    Runner([comp], tmp_path / "run", skims=mtc_skims, save_outputs=False,
+           engine=Engine({"trip_matrix_table": "one_table"})).run([comp.name], store)
+    rows = compare_output_files(tmp_path / "run" / "output", BASELINE.parent, steps=[comp.name])
+    assert len(rows) == 5 and all(status == "exact" for _, status, _ in rows), rows

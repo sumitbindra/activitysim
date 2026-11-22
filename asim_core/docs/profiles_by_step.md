@@ -51,10 +51,28 @@ Memory, three columns:
   against 4.7, mandatory tour scheduling 0.4 against 2.9, trip destination
   0.4 against 3.2), more in `initialize_households` (1.1 against 0.9 GB) and
   `write_trip_matrices` (1.6 against 1.1 GB: the trips and the
-  preprocessor's 122 columns in one pandas table; building each matrix's
-  table from its own columns would roughly halve it, an exact change not
-  made yet).
-- **The output steps now set asim_core's peak**, in both regions.
+  preprocessor's 122 columns in one pandas table).
+- **The output steps set asim_core's peak**, in both regions, in these
+  runs.
+
+**Since these tables** (the `trip_matrix_table` seam, `experiments.md`):
+the trip matrices step keeps only the columns some matrix reads, builds
+each matrix's table from its own columns and writes each matrix once made.
+Memory the step adds, from 1.x's saved state, two runs each, every OMX
+file exactly 1.x's with both settings:
+
+| Region | before (`one_table`, now behind the flag) | now (`per_matrix`) |
+|---|---|---|
+| SANDAG, 48,769 households | 1,476 / 1,478 MB | 464 / 464 MB |
+| Full MTC, 50,000 households | 1,570 / 1,572 MB | 869 / 856 MB |
+
+Time about the same (SANDAG 5.6 / 5.7 s against 6.4 / 6.9 s; full MTC 13.1
+/ 13.2 s against 12.4 / 12.2 s). Full MTC's matrices are 1,475 × 1,475 (17
+MB each, 23 a file), so writing each once made matters there; what is left
+is mostly the preprocessor's 122 columns. These are from 1.x's saved state
+(the step starts with 0.3 GB); in a whole run it starts with about 1 GB, so
+it adds to that, and at full MTC `summarize` (2.7 GB) is still the run's
+peak: not measured again here.
 
 ## Full MTC zones, 50,000 households
 

@@ -24,3 +24,16 @@ def test_round_trip_and_openmatrix_layout(tmp_path):
 def test_shapes_must_agree(tmp_path):
     with pytest.raises(ValueError, match="matrices are"):
         write_omx(tmp_path / "x.omx", {"A": np.zeros((2, 2)), "B": np.zeros((3, 3))}, {})
+
+
+def test_a_matrix_at_a_time(tmp_path):
+    from asim_core.omx import OmxWriter
+
+    path = tmp_path / "m.omx"
+    with OmxWriter(path) as w:
+        w.add_matrix("A", np.ones((3, 3)))
+        w.add_matrix("B", np.eye(3))
+        w.add_mapping("zone_id", [4, 5, 6])
+    matrices, mappings, attrs = read_omx(path)
+    assert np.array_equal(matrices["B"], np.eye(3)) and mappings["zone_id"].tolist() == [4, 5, 6]
+    assert attrs["SHAPE"].tolist() == [3, 3]
