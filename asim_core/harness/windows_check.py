@@ -11,7 +11,11 @@ asim_core installed::
     python asim_core/harness/windows_check.py
 
 About 15 to 25 minutes. Stages already done (their summary exists) are
-skipped; ``--again`` redoes them.
+skipped; ``--again`` redoes them all, ``--redo`` the ones named (``tests``,
+``asim1``, ``asim_core``, ``asim1_mp``, ``asim_core_mp``), e.g. after an
+update::
+
+    python asim_core/harness/windows_check.py --redo tests asim_core asim_core_mp
 """
 
 from __future__ import annotations
@@ -91,11 +95,13 @@ def environment() -> list[str]:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--again", action="store_true", help="redo stages already done")
+    p.add_argument("--redo", nargs="*", default=[], choices=["tests", "asim1", "asim_core", "asim1_mp", "asim_core_mp"],
+                   help="redo these stages even if done")
     args = p.parse_args(argv)
     OUT.mkdir(parents=True, exist_ok=True)
     py = ["-X", "utf8=0"]  # the system's own encoding, as an agency's Python would have it
     h = "asim_core/harness/"
-    stages = [
+    stages = [  # (name, command, the file that shows it's done)
         ("tests", py + ["-m", "pytest", "-q", "-p", "no:cacheprovider", "asim_core/tests"], None),
         ("1.x MTC example, one process", py + [h + "run_asim1.py", "--out", str(WORK / "asim1_legacy")],
          WORK / "asim1_legacy" / "final_trips.csv"),
@@ -112,9 +118,10 @@ def main(argv=None) -> int:
     ]
     report = ["# asim_core check on this computer", "", *environment(), ""]
     results = {}
-    for name, cmd, done_file in stages:
+    keys = ["tests", "asim1", "asim_core", "asim1_mp", "asim_core_mp"]
+    for key, (name, cmd, done_file) in zip(keys, stages):
         log = OUT / (name.replace(" ", "_").replace(",", "").replace(".", "") + ".log")
-        if done_file is not None and done_file.exists() and not args.again:
+        if done_file is not None and done_file.exists() and not args.again and key not in args.redo:
             print(f"== {name}: already done ({done_file})", flush=True)
             rc, secs = 0, None
         else:

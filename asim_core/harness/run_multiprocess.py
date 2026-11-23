@@ -60,6 +60,9 @@ def main(argv=None) -> int:
     p.add_argument("--processes", type=int, default=None, help="override num_processes")
     p.add_argument("--read-skim-cache", choices=["settings", "true", "false"], default="settings")
     p.add_argument("--seams", default="{}")
+    p.add_argument("--threads-per-process", type=int, default=None,
+                   help="threads for each worker's numeric libraries (default: as the main process, as 1.x); "
+                        "can change results' last digits")
     args = p.parse_args(argv)
     import run_milestone1
 
@@ -91,7 +94,7 @@ def main(argv=None) -> int:
 
     t_run = time.perf_counter()
     store, history, timings = run_in_groups(groups, components, model, Store(), out, skims, engine,
-                                            Profiler(split_memory=True))
+                                            Profiler(split_memory=True), args.threads_per_process)
     timings = [{"group": t["group"], "steps": f"{t['first_step']} .. {t['last_step']}", "where": t["where"],
                 "wall_s": round(t["wall_s"], 2),
                 "per process, s": ", ".join(f"{w:.1f}" for w in t["process_wall_s"]),

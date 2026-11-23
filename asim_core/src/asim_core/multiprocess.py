@@ -242,8 +242,16 @@ def _worker(k: int, model: ModelFiles, steps: list[str], in_dir: str, out_dir: s
             "wall_s": time.perf_counter() - t0}
 
 
-def run_group_in_processes(group: Group, model: ModelFiles, store: Store, work_dir: Path) -> tuple[Store, GroupResult]:
-    """Split the store by 1.x's rules, run the group's steps in worker processes, and put the tables back together."""
+def run_group_in_processes(group: Group, model: ModelFiles, store: Store, work_dir: Path,
+                           threads_per_process: int | None = None) -> tuple[Store, GroupResult]:
+    """
+    Split the store by 1.x's rules, run the group's steps in worker processes,
+    and put the tables back together. Workers keep the main process's thread
+    settings for the numeric libraries, as 1.x's do (the BLAS library's last
+    digits depend on its thread count, so this keeps results 1.x's);
+    ``threads_per_process`` sets them instead (e.g. CPUs / processes, to
+    share the CPUs), which can change the last digits of some results.
+    """
     n = group.num_processes
     t0 = time.perf_counter()
     rules = slice_rules(store, group.slice_tables, group.exclude)
@@ -255,10 +263,10 @@ def run_group_in_processes(group: Group, model: ModelFiles, store: Store, work_d
         in_dirs.append(folder)
     names = list(rules)
     ctx = multiprocessing.get_context("spawn")  # as Windows must; the same everywhere
-    threads = str(max(1, (os.cpu_count() or 1) // n))
     saved = {v: os.environ.get(v) for v in THREAD_VARIABLES}
-    for v in THREAD_VARIABLES:  # each process's numeric libraries share the CPUs instead of each taking all
-        os.environ.setdefault(v, threads)
+    if threads_per_process:
+        for v in THREAD_VARIABLES:
+            os.environ[v] = str(threads_per_process)
     try:
         with ProcessPoolExecutor(max_workers=n, mp_context=ctx) as pool:
             futures = [pool.submit(_worker, k, model, group.steps, str(in_dirs[k]),
@@ -304,7 +312,8 @@ def group_record(name: str, store: Store) -> StepRecord:
 
 
 def run_in_groups(groups: Sequence[Group], components: dict, model: ModelFiles, store: Store, out_dir: Path,
-                  skims=None, engine=None, profiler: Profiler | None = None) -> tuple[Store, list[StepRecord], list[dict]]:
+                  skims=None, engine=None, profiler: Profiler | None = None,
+                  threads_per_process: int | None = None) -> tuple[Store, list[StepRecord], list[dict]]:
     """
     Run a model's groups in order, as 1.x's multiprocess run does; returns
     the final store, the checkpoints (as 1.x names them in multiprocess runs:
@@ -329,7 +338,7 @@ def run_in_groups(groups: Sequence[Group], components: dict, model: ModelFiles, 
             history = runner.history + [StepRecord(g.name, datetime.now(), {})]
             where, per_process = "main process", []
         elif g.slice_tables[0] == "households":  # in worker processes
-            store, res = run_group_in_processes(g, model, store, out_dir / "processes")
+            store, res = run_group_in_processes(g, model, store, out_dir / "processes", threads_per_process)
             history = history + [group_record(g.name, store)]
             where, per_process = f"{g.num_processes} processes", res.process_wall_s
             own_peaks = [max((r.anon_peak_mb or 0.0) for r in prof) if prof else None for prof in res.profiles]

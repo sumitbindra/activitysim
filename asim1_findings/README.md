@@ -44,6 +44,7 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 21 | Random numbers: a generator reseeded per row in a Python loop; the same numbers can be worked out for all rows at once | Speed | Measured (bit for bit against `random_for_df`) | Not reported |
 | 22 | skim_usage.txt: used and unused skims not separated; skims read for a fixed period also listed as unused | Diagnostics | Reproduced (MTC) | Not reported |
 | 23 | Results depend on the number of processes: finding 19's lookup by person ID finds another household only if it runs in the same process, and some logsums differ in the last digits | Reproducibility | Measured (SANDAG one-zone: 1 tour's stop frequency and 2 trips change between 1 and 4 processes) | Not reported |
+| 24 | Results depend on how many threads the BLAS library uses: some matrix products' last digits change with the thread count, so 1.x's results depend on the machine's cores and on its own thread setting (`--fast`) | Reproducibility | Measured (BLAS alone; MTC example in 2 processes on a 24-CPU Windows PC) | Not reported |
 
 ---
 
@@ -898,6 +899,33 @@ and 20 logsums' last digits; 2 processes, no difference; 3, last digits of
 removes the choice changes seen here. For the last digits: say in the
 documentation that results are reproducible for a given number of
 processes, not between numbers of processes.
+
+---
+
+## 24. Results depend on how many threads the BLAS library uses
+
+**Evidence: measured.** NumPy's matrix product goes to the BLAS library
+(OpenBLAS in NumPy's wheels), which splits some products among threads and
+adds the parts in an order that depends on how many threads there are.
+The same 3,000 × 300 by 300 × 1 product gives one result with 1 or 2 threads
+and another, in the last bits, with 4 or more (`asim_core` harness, any
+machine). 1.x computes utilities as such products (`np.dot` of the formula
+values and the coefficients). On a 24-CPU Windows PC, MTC example in 2
+processes: asim_core's workers with 12 threads each against 1.x's with 24
+(1.x leaves the setting alone when started from Python), 3 of 39 output
+files differ in logsums' last digits (37 tour and 66 trip mode choice
+logsums); with the same thread count, asim_core's results are 1.x's.
+
+**What it means.** 1.x's command line sets every numeric library to one
+thread unless `--fast` is given, so its results can differ in the last
+digits between `--fast` runs and others, between machines with different
+numbers of cores (with `--fast`), and between a run started from the
+command line and one started from Python. As with finding 23, a choice can
+change now and then.
+
+**Suggested change.** Say in the documentation that results are
+reproducible for a given thread setting; or compute utilities with a
+summation whose order doesn't depend on threads.
 
 ---
 

@@ -1,4 +1,6 @@
+import gc
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -95,7 +97,17 @@ def test_read_skim_cache_off_imports_every_run(omx, tmp_path):
     assert second.path != first.path  # a new folder: never overwritten
     np.testing.assert_array_equal(first["DIST"], second["DIST"])  # the first is still readable
     remaining = [p for p in cache.iterdir() if p.name.startswith("asim_core_taz_")]
-    assert remaining == [second.path]  # old folder removed
+    if sys.platform == "win32":
+        # Windows can't delete a file that is memory-mapped: the first cache, still open here,
+        # is left, and removed by a later preparation once it's closed
+        assert second.path in remaining
+        first_path = first.path
+        del first
+        gc.collect()
+        prepare_skims([path], cache, reuse=False)
+        assert not first_path.exists()
+    else:
+        assert remaining == [second.path]  # old folder removed
 
 
 def test_read_skim_cache_on_reuses_only_unchanged_skims(omx, tmp_path):
@@ -122,8 +134,11 @@ def test_cleanup_leaves_other_models_caches_alone(omx, tmp_path):
     mine = prepare_skims([path], cache)
     theirs = prepare_skims([other], cache)
     assert mine.path.exists() and theirs.path.exists()
+    mine_path = mine.path
+    del mine  # released, as at the end of a run (Windows can't delete a cache that is still open)
+    gc.collect()
     newer = prepare_skims([path], cache)  # replaces only the older cache of the same files
-    assert not mine.path.exists() and newer.path.exists() and theirs.path.exists()
+    assert not mine_path.exists() and newer.path.exists() and theirs.path.exists()
 
 
 def test_later_files_win_and_unknown_periods_are_skipped(tmp_path):

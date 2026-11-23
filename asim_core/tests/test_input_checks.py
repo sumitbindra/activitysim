@@ -7,6 +7,7 @@ the report names it (and nothing else); the clean data must pass.
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -199,12 +200,24 @@ def test_example_inputs_pass(example):
 
 
 def _copy_data(example, tmp: Path) -> Path:
+    """
+    The example's data folder, file by file: a symbolic link, else a hard link
+    (Windows allows symbolic links only to administrators or in Developer
+    Mode), else a copy. The tests replace a file before changing it
+    (``_rewrite``, the skim injections), so the example's own files never change.
+    """
     src = EXAMPLES / example / "data"
     dst = tmp / "data"
     dst.mkdir()
     for p in src.iterdir():
         if p.is_file():
-            (dst / p.name).symlink_to(p)
+            try:
+                (dst / p.name).symlink_to(p)
+            except OSError:
+                try:
+                    os.link(p, dst / p.name)
+                except OSError:
+                    shutil.copy2(p, dst / p.name)
     return dst
 
 
