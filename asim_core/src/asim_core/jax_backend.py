@@ -39,6 +39,7 @@ chain of element-wise operations and the sum into few passes over memory.
 
 from __future__ import annotations
 
+import importlib.util
 import inspect
 import os
 import re
@@ -48,11 +49,23 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 
-try:
-    import jax
-    import jax.numpy as jnp
-except ImportError:  # optional
-    jax = None
+# JAX is optional, and loaded only when one of its alternatives runs: importing it takes about a second and
+# some memory, which every process of a multiprocess run would otherwise pay for nothing
+AVAILABLE = importlib.util.find_spec("jax") is not None
+jax = jnp = None
+
+
+def _load_jax() -> None:
+    global jax, jnp
+    if jax is not None:
+        return
+    import jax as _jax
+    import jax.numpy as _jnp
+
+    jax, jnp = _jax, _jnp
+    jax.config.update("jax_enable_x64", True)
+    if os.environ.get("ASIM_JAX_CACHE_DIR"):
+        use_compilation_cache(os.environ["ASIM_JAX_CACHE_DIR"])
 
 from .logit import interaction_utilities as _np_interaction_utilities
 from .logit import utilities as _np_utilities
@@ -132,6 +145,8 @@ class _Compiled:
         self.max_diff = None  # against NumPy, first call (ASIM_JAX_VERIFY)
         self.compiles, self.compile_s = 0, 0.0
         source = getattr(fn, "_asim_source", None)
+        if AVAILABLE:
+            _load_jax()
         if jax is None or source is None:
             self.reason = "no generated source"
             return
@@ -266,6 +281,7 @@ def _compiled(fn):
 
 def use_compilation_cache(path: str | os.PathLike) -> None:
     """Keep compiled code on disk in ``path`` and reuse it in later runs."""
+    _load_jax()
     jax.config.update("jax_compilation_cache_dir", str(path))
     jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.0)
     jax.config.update("jax_persistent_cache_min_entry_size_bytes", -1)
@@ -304,19 +320,17 @@ def report() -> list[dict]:
             for c in _COMPILED.values()]
 
 
-if jax is not None:
-    jax.config.update("jax_enable_x64", True)
-    if os.environ.get("ASIM_JAX_CACHE_DIR"):
-        use_compilation_cache(os.environ["ASIM_JAX_CACHE_DIR"])
-
+if AVAILABLE:
     @register("utilities", "jax", agreement="approximate",
               description="formulas and the utility sum compiled together with JAX (XLA, CPU); "
                           "skims gathered in NumPy first; falls back to NumPy where it can't compile")
     def utilities_jax(terms, coefficients, n):
+        _load_jax()
         return _evaluate(terms, coefficients, n, "utilities", _np_utilities)
 
     @register("interaction_utilities", "jax", agreement="approximate",
               description="formulas and the utility sum compiled together with JAX (XLA, CPU); "
                           "skims gathered in NumPy first; falls back to NumPy where it can't compile")
     def interaction_utilities_jax(terms, coefficients, n):
+        _load_jax()
         return _evaluate(terms, coefficients, n, "interaction", _np_interaction_utilities)

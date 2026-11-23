@@ -9,7 +9,7 @@ the steps the main process would.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from pathlib import Path
 
 from .component import Component
@@ -67,24 +67,33 @@ STEPS = [initialize_landuse, initialize_households, compute_accessibility, schoo
          stop_frequency, trip_purpose, trip_destination, trip_purpose_and_destination, trip_scheduling,
          trip_scheduling_choice, trip_departure_choice, trip_mode_choice,
          write_data_dictionary, track_skim_usage, write_trip_matrices, write_tables, summarize]
+# the step each factory makes, where the names differ
+STEP_NAMES = {auto_ownership: "auto_ownership_simulate", tour_mode_choice: "tour_mode_choice_simulate"}
 # steps that write files instead of tables
 OUTPUT_STEPS = {"write_data_dictionary", "track_skim_usage", "write_trip_matrices", "write_tables", "summarize"}
 # steps that read the input files: they also take the data folders (and the households sample size)
 READS_INPUTS = {initialize_landuse, initialize_households}
 
 
+def step_name(make) -> str:
+    return STEP_NAMES.get(make, make.__name__)
+
+
 def build_steps(configs: Sequence[str | Path], data_dirs: Sequence[str | Path],
                 households_sample_size: int | None = None,
-                not_built: dict[str, str] | None = None) -> list[Component]:
+                not_built: dict[str, str] | None = None, only: Collection[str] | None = None) -> list[Component]:
     """
-    The steps asim_core can run for these configs. A step whose configs use
-    something asim_core doesn't support yet is left out, with the reason in
+    The steps asim_core can run for these configs (``only``: just these
+    steps, e.g. a worker process's). A step whose configs use something
+    asim_core doesn't support yet is left out, with the reason in
     ``not_built`` (factory name -> first line of the error).
     """
     configs = [Path(c) for c in configs]
     data_dirs = [Path(d) for d in data_dirs]
     out = []
     for make in STEPS:
+        if only is not None and step_name(make) not in only:
+            continue
         try:
             if make is initialize_households:
                 out.append(make(configs, data_dirs, households_sample_size=households_sample_size))

@@ -226,7 +226,8 @@ def _worker(k: int, model: ModelFiles, steps: list[str], in_dir: str, out_dir: s
     from .seams import Engine
     from .skims import SkimStore
 
-    components = {c.name: c for c in build_steps(model.configs, model.data_dirs, model.households_sample_size)}
+    components = {c.name: c for c in build_steps(model.configs, model.data_dirs, model.households_sample_size,
+                                                 only=set(steps))}
     missing = [s for s in steps if s not in components]
     if missing:
         raise ValueError(f"process {k}: steps asim_core can't run for these configs: {missing}")

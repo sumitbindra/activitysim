@@ -16,6 +16,7 @@ model.
 
 from __future__ import annotations
 
+import copy
 import locale
 
 from collections.abc import Mapping, Sequence
@@ -73,8 +74,24 @@ def read_text(path: str | Path) -> str:
         return data.decode(locale.getpreferredencoding(False))
 
 
+# PyYAML's C parser where it is installed (the same rules as its Python one, many times faster)
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+_YAML_CACHE: dict[tuple, object] = {}
+
+
 def read_yaml(path: Path) -> dict:
-    return yaml.safe_load(read_text(path)) or {}
+    """
+    A YAML file's settings. Settings files are read many times while a
+    model is built (every step reads settings.yaml, constants and the like),
+    so each is parsed once per process, again only if it changes; callers
+    get their own copy.
+    """
+    p = Path(path)
+    st = p.stat()
+    key = (str(p.resolve()), st.st_mtime_ns, st.st_size)
+    if key not in _YAML_CACHE:
+        _YAML_CACHE[key] = yaml.load(read_text(p), Loader=_YAML_LOADER) or {}
+    return copy.deepcopy(_YAML_CACHE[key])
 
 
 def read_settings(configs_dirs: Sequence[str | Path], file_name: str, mandatory: bool = True,

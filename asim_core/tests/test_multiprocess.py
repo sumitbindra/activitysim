@@ -114,3 +114,19 @@ def test_mtc_in_two_processes_matches_1x_in_two_processes(tmp_path):
     summary = (tmp_path / "mp" / "summary.md").read_text(encoding="utf-8")
     assert rc == 0, summary
     assert "39 of 39 exact" in summary
+
+
+def test_step_names_of_the_factories():
+    """build_steps(only=...) picks factories by the step they make: check the names against built steps."""
+    from pathlib import Path
+
+    from asim_core.model import READS_INPUTS, STEPS, build_steps, step_name
+
+    ex = Path(__file__).resolve().parents[2] / "activitysim" / "examples" / "prototype_mtc"
+    if not ex.exists():
+        pytest.skip("needs the MTC example")
+    built = build_steps([ex / "configs"], [ex / "data"])
+    assert {c.name for c in built} <= {step_name(m) for m in STEPS}
+    some = build_steps([ex / "configs"], [ex / "data"], only={"auto_ownership_simulate", "trip_purpose"})
+    assert sorted(c.name for c in some) == ["auto_ownership_simulate", "trip_purpose"]
+    assert READS_INPUTS <= set(STEPS)

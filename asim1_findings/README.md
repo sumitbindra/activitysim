@@ -43,6 +43,7 @@ on a 4-CPU, 15 GB Linux machine. The scripts referred to are in
 | 20 | ARC's trip scheduling specs: stop counts one too low, terms for a tour type that doesn't exist ('at_work'), inbound stop times checked against the outbound leg | Model specification | Measured (ARC example: 51 of 157 tours with stops get another split; 27 departures change) | Not reported |
 | 21 | Random numbers: a generator reseeded per row in a Python loop; the same numbers can be worked out for all rows at once | Speed | Measured (bit for bit against `random_for_df`) | Not reported |
 | 22 | skim_usage.txt: used and unused skims not separated; skims read for a fixed period also listed as unused | Diagnostics | Reproduced (MTC) | Not reported |
+| 23 | Results depend on the number of processes: finding 19's lookup by person ID finds another household only if it runs in the same process, and some logsums differ in the last digits | Reproducibility | Measured (SANDAG one-zone: 1 tour's stop frequency and 2 trips change between 1 and 4 processes) | Not reported |
 
 ---
 
@@ -856,6 +857,47 @@ after the resume are recorded (1.x's own FIXME).
 
 **Suggested change.** Print a second header before the unused skims, sort
 both lists, and compare names with names (a tuple's first item).
+
+---
+
+## 23. Results depend on the number of processes
+
+**Evidence: measured** (SANDAG one-zone, 48,769 households; MTC example,
+5,000 households). 1.x run in 4 processes (SANDAG, settings as MTC's
+`configs_mp`) and in 2 (MTC's own `configs_mp`), against 1.x in one process.
+asim_core reproduces both exactly: run as 1.x's multiprocess settings say,
+every output file is 1.x's multiprocess run's (SANDAG 16 of 16, MTC 39 of
+39, in 1.x's row order); in one process, 1.x's one-process run's.
+
+**What happens.** 1.x's multiprocessing is meant to leave each household's
+results unchanged: households are split among processes, and every row's
+random numbers come from its own stream. Two things break that:
+
+- **Finding 19's lookup by person ID.** A tour gets the shopping and
+  maintenance tour counts of the household whose ID equals its person's ID.
+  In one process that household is there; in 4 processes it is often in
+  another process, and the lookup finds nothing. SANDAG, tour 1079856
+  (household 10239, in process 1; household 26337, its person's ID, in
+  process 3): its stop frequency is 0out_3in in one process and 1out_0in in
+  4, so 2 trips fewer, with their own destinations and modes.
+- **The last digits of some logsums depend on which rows are computed
+  together.** MTC example, 2 processes: 8 school location logsums; SANDAG,
+  3 processes: 30 tour destination logsums; 4 processes: 15 joint tour
+  destination logsums (largest difference 5e-15). One source is the matrix
+  product for utilities: the BLAS library computes small products (up to
+  about 100 rows, depending on the shape) another way, and the last bits
+  change (measured). It isn't the only one: with asim_core's fixed-order sum
+  (`utilities: accumulate`) the SANDAG joint tour differences remain. Not
+  traced further yet.
+
+**How much.** SANDAG: 4 processes, 1 tour and 2 trips (416,699 → 416,697)
+and 20 logsums' last digits; 2 processes, no difference; 3, last digits of
+30 logsums. MTC example, 2 processes: last digits of 8 logsums.
+
+**Suggested change.** Fix finding 19 (look up by `df.household_id`), which
+removes the choice changes seen here. For the last digits: say in the
+documentation that results are reproducible for a given number of
+processes, not between numbers of processes.
 
 ---
 
