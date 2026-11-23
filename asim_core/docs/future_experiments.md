@@ -143,3 +143,9 @@ a new cache; two processes building the same cache at once.
   time-of-day skims it reads. A sequential read of the skims a run declares,
   at the start, would avoid this after a reboot or when other jobs have
   pushed the file out of memory.
+
+- **Multiprocessing: done** ([multiprocess.md](multiprocess.md)): as 1.x,
+  from its settings, every output file 1.x's in as many processes. Next
+  there: the output steps in parallel (each trip matrix file; they are a
+  third of a 4-process full MTC run), shadow pricing across processes, and
+  a check on Windows.

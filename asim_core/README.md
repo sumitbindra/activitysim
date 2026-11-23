@@ -280,8 +280,13 @@ written (`components/free_parking.py`).
 Park-and-ride, shadow pricing (workplace and school location), CDAP's
 joint tour option, school escorting, `override_hh_ids`, annotations
 of tours and trips, Parquet skim files, two- and
-three-zone systems (MAZ, TAP), writing trip tables to OMX, starting a run
-from asim_core's own saved state, a command-line `run` for agency model
-loops, multiprocessing, estimation, and peak-memory measurement outside
-Linux. The loader names any unsupported setting it finds instead of running
-a partial model.
+three-zone systems (MAZ, TAP), starting a run from asim_core's own saved
+state, a command-line `run` for agency model loops, estimation, and
+peak-memory measurement on macOS. The loader names any unsupported setting
+it finds instead of running a partial model.
+
+Multiprocessing works as 1.x's, from the same settings: every output file
+1.x's in as many processes; full MTC at 50,000 households 2.2 to 2.3 times
+faster in 4 processes on this 4-CPU machine ([docs/multiprocess.md](docs/multiprocess.md)).
+It is built for Windows (worker processes started fresh, as Windows must),
+not yet checked there.
