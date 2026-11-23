@@ -74,7 +74,7 @@ def main(argv=None) -> int:
     if args.processes:
         for g in groups:
             g.num_processes = args.processes
-    components = {c.name: c for c in build_components(configs, args.asim1_out)}
+    components = {c.name: c for c in build_components(configs, args.asim1_out, data_dirs)}
     missing = [s for g in groups for s in g.steps if s not in components]
     if missing:
         print(f"these steps can't run in asim_core: { {s: NOT_BUILT.get(s, 'not ported') for s in missing} }")
