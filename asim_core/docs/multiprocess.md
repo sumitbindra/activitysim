@@ -128,10 +128,12 @@ Where the rest of the time goes, at 4 processes:
 
 ## Not done yet
 
-- **Windows**: checked once on a 24-CPU Windows PC (`harness/windows_check.py`):
-  one process exactly 1.x's (40 of 40 files); 2 processes 36 of 39 with
-  workers at 12 threads against 1.x's 24, which led to keeping the main
-  process's thread settings; to be rerun.
+- **Windows**: checked on a 24-CPU Windows PC (`harness/windows_check.py`,
+  Windows' cp1252 default encoding): MTC example in one process 40 of 40
+  output files 1.x's, in 2 processes 39 of 39 (after workers kept the main
+  process's thread settings; with 12 threads against 1.x's 24, 3 files
+  differed in last digits). The check also found a skim cache naming clash
+  that only Windows' file locking exposes (fixed).
 - **Shadow pricing** across processes (1.x shares the prices between
   processes; asim_core doesn't support shadow pricing yet).
 - **The output steps in parallel** (each trip matrix file, summaries).
