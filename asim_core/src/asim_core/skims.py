@@ -408,7 +408,10 @@ def prepare_skims(
     else:
         target = stable
         if target.exists():  # a fresh import was asked for, or a broken leftover: never overwrite
-            target = cache_dir / f"asim_core_{tag}_{fp}_{time.strftime('%Y%m%d%H%M%S')}_{os.getpid()}"
+            # time, process and a random part: two imports in the same second can't share a folder (on
+            # Windows the folder of a cache still open elsewhere can't be removed, so names pile up)
+            target = (cache_dir / f"asim_core_{tag}_{fp}_{time.strftime('%Y%m%d%H%M%S')}_{os.getpid()}"
+                                  f"_{uuid.uuid4().hex[:6]}")
         store = import_omx(omx_paths, target, dtype, zone_ids, periods)
     _remove_other_caches(cache_dir, tag, keep=store.path)
     return store

@@ -110,6 +110,23 @@ def test_read_skim_cache_off_imports_every_run(omx, tmp_path):
         assert remaining == [second.path]  # old folder removed
 
 
+def test_fresh_imports_get_their_own_folders_when_old_ones_cant_be_removed(omx, tmp_path, monkeypatch):
+    """Windows can't delete a cache that is open elsewhere: it stays, and imports in the same second
+    still each get a folder of their own (never overwriting one)."""
+    import asim_core.skims as sk
+
+    def in_use(path, *a, **k):
+        raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+
+    monkeypatch.setattr(sk.shutil, "rmtree", in_use)
+    path, _ = omx
+    cache = tmp_path / "cache"
+    stores = [prepare_skims([path], cache, reuse=False) for _ in range(4)]
+    assert len({s.path for s in stores}) == 4
+    for s in stores:
+        np.testing.assert_array_equal(s["DIST"], stores[0]["DIST"])
+
+
 def test_read_skim_cache_on_reuses_only_unchanged_skims(omx, tmp_path):
     path, mats = omx
     cache = tmp_path / "cache"
