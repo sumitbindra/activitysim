@@ -25,6 +25,10 @@ which asim_core doesn't have yet.
   (below). Trip destination
   16 s against 86 s, mandatory tour scheduling 11 s against 67 s; trip
   scheduling 17 s against 15 s (1.x's pandas code, kept for exactness).
+  *Since then* trip scheduling takes about 1 s, with the same departures,
+  and all the steps 64 to 69 s: 5.4 to 5.7 times faster than 1.x legacy
+  (numexpr off) and about 3 times faster than sharrow ("Trip scheduling" in
+  [experiments.md](experiments.md)).
 - **Memory**: asim_core's own peak 2.4 GB, in `write_trip_matrices` (416,699
   trips with the preprocessor's 122 columns, put in one pandas table; the
   model steps peak at 1.35 GB, in trip destination). 1.x peaks at 3.7 GB, in
@@ -84,7 +88,10 @@ households), the whole model's steps take:
   code could not be reused. asim_core has no compile step.
 - **Where sharrow is faster than asim_core**: non-mandatory tour frequency
   (3.1 s against 4.3 s) and trip scheduling (14.8 s against 16.6 s; legacy
-  14.0 s), the two steps left as candidates. Sharrow is slower than legacy
+  14.0 s), the two steps left as candidates. *Since this table*, trip
+  scheduling takes about 1 s with the same departures, and all the steps
+  64 to 69 s instead of 85 to 86 s (memory unchanged): see "Trip
+  scheduling" in [experiments.md](experiments.md). Sharrow is slower than legacy
   in non-mandatory tour scheduling (31.9 s against 22.1 s) and loads its
   skims into a dataset first (4.9 s in `initialize_landuse`).
 - **Its results are not legacy's**: sharrow computes in 32-bit floats, so a

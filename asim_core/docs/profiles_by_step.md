@@ -35,7 +35,11 @@ Memory, three columns:
 
 - **Faster in every model step but trip scheduling** (0.8 to 0.9 times:
   1.x's pandas code, ported as is for exactness, and the one candidate left
-  for a NumPy rewrite). Joint tour participation (1.2 times) and trip purpose
+  for a NumPy rewrite). *Since these tables*, trip scheduling takes about
+  1 s at full MTC (19 to 20 s before; 1.x 15.6 s) with the same departures,
+  trip destination about 33 s (39 to 43 s before), and all the steps 134 to
+  138 s (170 to 174 s before; 1.x 603 s): see "Trip scheduling" in
+  [experiments.md](experiments.md). Joint tour participation (1.2 times) and trip purpose
   and destination (1.0) are about even; the output steps that write files
   are about even too (writing the tables: PyArrow in both).
 - **Most of the time saved** at full MTC: trip destination (165 → 40 s),

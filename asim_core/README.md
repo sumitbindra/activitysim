@@ -51,7 +51,9 @@ SANDAG's data, 48,769 households; nothing in asim_core was checked against
 it before), was exactly 1.x's on the first run: every step, all 16 output
 files, 4.1 times faster than 1.x legacy and 2.3 times faster than 1.x with
 sharrow (after sharrow's 34-minute compile), with less than half of either's
-memory ([docs/sandag.md](docs/sandag.md)).
+memory ([docs/sandag.md](docs/sandag.md)); since trip scheduling's rewrite
+(about 1 s instead of 15 to 18 s, the same departures), 5.4 to 5.7 times
+and about 3 times ([docs/experiments.md](docs/experiments.md)).
 Every other step can be
 **replayed** from a 1.x run, so the model runs end to end today. Results: [docs/milestone1.md](docs/milestone1.md),
 [docs/block1.md](docs/block1.md), [docs/block2.md](docs/block2.md), [docs/block3.md](docs/block3.md),

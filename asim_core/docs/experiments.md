@@ -222,3 +222,74 @@ normal draws (preprocessors' lognormal values), still go row by row.
 - Not done: normal draws (1.x's polar method rejects some pairs, so rows
   use different amounts of their stream) and rows past 113 draws.
 
+
+## Trip scheduling: the same departures in a fifteenth of the time
+
+Trip scheduling was the one model step no faster than 1.x: it was 1.x's
+pandas code, ported as is. Measured from 1.x's saved state, the first
+attempt schedules every trip in about 0.6 s (SANDAG one-zone: 416,699
+trips); the other 99 attempts, about 14,500 retried trips each, took the
+rest. Three changes, each a seam with the way before one flag away, and
+each with exactly 1.x's departures:
+
+- **`random_positions`: stream positions in a reused index.** Every draw
+  rebuilt a pandas Series of every ID drawn for so far in the step (600
+  draws over 442,682 trips on full MTC), half the step's time. `kept_index`
+  keeps one index per channel and updates positions in place. It is part of
+  the random draws every step makes, so other steps that draw in rounds gain
+  too (SANDAG's joint tour participation: about 5.0 → 2.9 s).
+- **`trip_retries`: retries certain to fail sit out.** With 1.x's default
+  `logic_version` 1, the inbound trips of a tour whose outbound trips are not
+  being retried have no earliest period while other tours' outbound trips
+  are, so they fail on every such attempt whatever is drawn: about 70% of
+  every retry (1.x finding 18). `skip_certain_failures` holds them back and
+  puts them back when no outbound trip is left (1.x then gives them their
+  usual window again) or on the last attempt, their random streams moved on
+  by the draws they skipped, so every later draw is 1.x's.
+- **`trip_attempts`: the attempts on arrays.** 1.x merges the trips with the
+  probability table in every round of every attempt. `arrays` finds each
+  trip's row once and does the rounds on NumPy arrays. pandas adds up each
+  row of these tables left to right, while NumPy's own sum adds in another
+  order and differs in the last bit in 328 of SANDAG's 600 rounds, so the
+  row sums are added left to right too (`_row_sums`; checked against pandas
+  for every round of every attempt on SANDAG, 1.1 million trip rows).
+
+Trip scheduling alone, from 1.x's saved state, two runs each (every run:
+exactly 1.x's departures):
+
+| `--seams` | SANDAG one-zone | Full MTC, 50,000 households |
+|---|---|---|
+| `{"trip_attempts": "pandas", "trip_retries": "every_attempt", "random_positions": "rebuilt"}` (all three as before) | 15.3, 18.1 s | 15.8, 21.2 s |
+| `{"trip_attempts": "pandas", "trip_retries": "every_attempt"}` (positions kept) | 7.8, 10.5 s | 10.1, 11.2 s |
+| `{"trip_attempts": "pandas"}` (and retries certain to fail sit out) | 3.7, 3.7 s | 4.0, 4.5 s |
+| `{}` (the defaults: and attempts on arrays) | 0.96, 1.05 s | 1.03, 1.05 s |
+| `{"trip_retries": "every_attempt"}` (arrays, every retry) | 2.6, 2.6 s | 4.0, 3.1 s |
+
+The whole model from the input files (`run_standalone.py`), the defaults
+against all three as before, runs alternating, skim file in memory:
+
+| | Defaults | As before |
+|---|---|---|
+| SANDAG one-zone, all 33 steps | 64.3, 68.7 s | 84.9, 86.4 s |
+| of which trip scheduling | 0.9, 1.1 s | 15.0, 18.0 s |
+| Full MTC, 50,000 households, all 34 steps | 137.8, 133.9 s | 174.1, 170.5 s |
+| of which trip scheduling | 1.1, 0.9 s | 18.9, 20.1 s |
+| of which trip destination | 33.2, 32.7 s | 43.1, 39.3 s |
+
+(A first full MTC run with the defaults, right after the SANDAG runs, took
+216 s: the 7.2 GB skim file was no longer in memory. Trip destination's gain
+is the stream positions: at full MTC it samples in many batches, each with
+its own draws.) Memory is unchanged (own peak: SANDAG 1.35 to 1.37 GB either
+way; full MTC 2.5 GB, against 2.6 GB). Every
+run was exactly 1.x's: SANDAG 16 of 16 output files, full MTC 40 of 40,
+and MTC, MWCOG and ARC as before.
+
+- **Tests**: `test_trip_scheduling.py` runs every combination of the two
+  trip seams on made-up trips (failures common, 3 to 100 attempts,
+  `logic_version` 1 and 2) and checks that held trips rejoin both ways;
+  `test_random.py` checks that both ways of keeping positions draw the same
+  numbers.
+- **The one case the retries change could differ**: a held trip's skipped
+  draw of exactly 0.0, which would pick the first period instead of failing
+  (asim_core's code as before would then stop: a departure outside the
+  window). The chance is about one in 10^16 per draw.
