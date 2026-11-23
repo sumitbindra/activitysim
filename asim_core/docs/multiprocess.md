@@ -34,8 +34,13 @@ way Windows can start them): each rebuilds its steps from the configs
 (`asim_core.model.build_steps`), opens the skim file itself (memory-mapped,
 so the operating system keeps one copy for every process), reads its tables
 from Parquet files the main process wrote, and writes its tables back the
-same way. Nothing relies on memory inherited from the main process. Numeric
-libraries (BLAS, numexpr) get CPUs / processes threads each.
+same way. Nothing relies on memory inherited from the main process.
+Workers keep the main process's thread settings for the numeric libraries,
+as 1.x's do: the BLAS library's last digits depend on its thread count
+(asim1 findings, 24), so on a 24-CPU Windows PC, workers with 12 threads
+against 1.x's 24 made 3 of 39 files differ in logsums' last digits.
+`--threads-per-process` sets them instead (e.g. CPUs / processes), which
+can change last digits.
 
 Code: `src/asim_core/multiprocess.py` (`plan_groups`, `slice_rules`,
 `split_store`, `coalesce`, `run_in_groups`); harness:
@@ -74,7 +79,7 @@ given number of processes.
 
 ## Time and memory
 
-This machine has 4 CPUs and 15 GB. One asim_core process already uses
+The times below were measured with CPUs / processes threads per worker (now `--threads-per-process`; on this 4-CPU machine the default makes no difference to the results' bits, see above). This machine has 4 CPUs and 15 GB. One asim_core process already uses
 about 2.2 CPUs on average (NumPy's maths libraries run some work in
 threads), so on it 4 processes can't be 4 times faster; machines with more
 cores leave more room.
@@ -123,8 +128,10 @@ Where the rest of the time goes, at 4 processes:
 
 ## Not done yet
 
-- **Checked on Windows**: built for it (spawn, no inherited memory, UTF-8
-  settings, Windows memory counters), not yet run there.
+- **Windows**: checked once on a 24-CPU Windows PC (`harness/windows_check.py`):
+  one process exactly 1.x's (40 of 40 files); 2 processes 36 of 39 with
+  workers at 12 threads against 1.x's 24, which led to keeping the main
+  process's thread settings; to be rerun.
 - **Shadow pricing** across processes (1.x shares the prices between
   processes; asim_core doesn't support shadow pricing yet).
 - **The output steps in parallel** (each trip matrix file, summaries).
