@@ -144,7 +144,7 @@ class ZonePairs:
 class SkimStore:
     def __init__(self, path: str | Path):
         self.path = Path(path)
-        manifest = json.loads((self.path / MANIFEST).read_text())
+        manifest = json.loads((self.path / MANIFEST).read_text(encoding="utf-8"))
         if not manifest.get("complete"):
             raise ValueError(f"skim cache {self.path} is incomplete")
         self.manifest = manifest
@@ -327,7 +327,7 @@ def import_omx(
             "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "complete": True,  # written last
         }
-        (tmp / MANIFEST).write_text(json.dumps(manifest))
+        (tmp / MANIFEST).write_text(json.dumps(manifest), encoding="utf-8")
         tmp.rename(out_dir)
     except BaseException:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -344,7 +344,7 @@ def _cache_folders(cache_dir: Path, tag: str) -> list[Path]:
 
 def _valid(path: Path, fp: str) -> bool:
     try:
-        manifest = json.loads((path / MANIFEST).read_text())
+        manifest = json.loads((path / MANIFEST).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return False
     return bool(manifest.get("complete")) and manifest.get("fingerprint") == fp and (path / DATA).exists()
@@ -352,7 +352,7 @@ def _valid(path: Path, fp: str) -> bool:
 
 def _source_paths(path: Path) -> set[str] | None:
     try:
-        manifest = json.loads((path / MANIFEST).read_text())
+        manifest = json.loads((path / MANIFEST).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return {src["path"] for src in manifest.get("sources", [])}

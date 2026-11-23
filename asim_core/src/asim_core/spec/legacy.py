@@ -16,6 +16,8 @@ model.
 
 from __future__ import annotations
 
+import locale
+
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -56,9 +58,23 @@ def find_config_file(configs_dirs: Sequence[Path], file_name: str) -> Path:
     raise FileNotFoundError(f"'{file_name}' not found in {[str(d) for d in configs_dirs]}")
 
 
+def read_text(path: str | Path) -> str:
+    """
+    A settings or spec file's text: UTF-8 (YAML's own encoding, and what
+    pandas reads CSV files as), or, for a file that isn't valid UTF-8 (say,
+    saved as "ANSI" by Windows Notepad), the system's default encoding, which
+    is how 1.x opens settings files. On Linux and macOS that default is UTF-8
+    already; on Windows it is usually cp1252.
+    """
+    data = Path(path).read_bytes()
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode(locale.getpreferredencoding(False))
+
+
 def read_yaml(path: Path) -> dict:
-    with open(path) as f:
-        return yaml.safe_load(f) or {}
+    return yaml.safe_load(read_text(path)) or {}
 
 
 def read_settings(configs_dirs: Sequence[str | Path], file_name: str, mandatory: bool = True,

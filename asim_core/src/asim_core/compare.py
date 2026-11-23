@@ -112,7 +112,7 @@ def value_shares(ours, reference) -> pd.DataFrame:
 def write_comparisons(rows: list[ColumnComparison], path: str | Path) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="") as f:
+    with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=[f.name for f in fields(ColumnComparison)])
         w.writeheader()
         for r in rows:

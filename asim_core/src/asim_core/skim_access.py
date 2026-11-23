@@ -63,6 +63,13 @@ def prefault(store, names: Iterable[str]):
     mm, ranges = _skim_ranges(store, names)
     if mm is None:
         return store
+    if not hasattr(mm, "madvise"):  # Windows has no madvise: read one value per page instead
+        data = store._data
+        every = max(1, mmap.PAGESIZE // data.dtype.itemsize)
+        for name in sorted(set(names)):
+            if name in store:
+                data[store._index[name]].reshape(-1)[::every].sum()
+        return store
     for start, length in _merge(ranges):
         try:
             mm.madvise(MADV_POPULATE_READ, start, length)

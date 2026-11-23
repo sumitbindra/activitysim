@@ -225,7 +225,7 @@ def write_report(out: Path, step: str, exp: pd.DataFrame, bench: pd.DataFrame) -
         s += ["", "## Each piece on its own, synthetic data", ""]
         s.append(md_table(bench, "{:.4g}"))
     path = out / "experiments.md"
-    path.write_text("\n".join(s) + "\n")
+    path.write_text("\n".join(s) + "\n", encoding="utf-8")
     return path
 
 
@@ -323,7 +323,7 @@ def main(argv=None) -> int:
     bench = seam_benchmarks(cfg["seam_benchmarks"]) if cfg.get("seam_benchmarks") else pd.DataFrame()
     bench.to_csv(out / "seam_benchmarks.csv", index=False)
     report = write_report(out, step, exp, bench)
-    print(report.read_text())
+    print(report.read_text(encoding="utf-8"))
     return 0
 
 

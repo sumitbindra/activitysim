@@ -47,11 +47,11 @@ def _with_read_skim_cache(configs, scratch: Path, value: bool):
     import yaml
 
     src = next(Path(c) / "network_los.yaml" for c in configs if (Path(c) / "network_los.yaml").exists())
-    los = yaml.safe_load(src.read_text())
+    los = yaml.safe_load(src.read_text(encoding="utf-8"))
     los["read_skim_cache"] = value
     overlay = scratch.parent / f"{scratch.name}_overlay_configs"
     overlay.mkdir(parents=True, exist_ok=True)
-    (overlay / "network_los.yaml").write_text(yaml.safe_dump(los, sort_keys=False))
+    (overlay / "network_los.yaml").write_text(yaml.safe_dump(los, sort_keys=False), encoding="utf-8")
     return [overlay] + list(configs)
 
 
@@ -259,7 +259,7 @@ def main(argv=None) -> int:
            # time JAX spent compiling during the step (part of wall_s), if it was used
            "jax_compile_s": _jax_compile_s()}
     # append in the file's own columns (files written before a column was added keep their shape)
-    columns = (out.read_text().splitlines()[0].split(",") if out.exists() and out.stat().st_size
+    columns = (out.read_text(encoding="utf-8").splitlines()[0].split(",") if out.exists() and out.stat().st_size
                else list(row))
     with open(out, "a") as f:
         if not (out.exists() and out.stat().st_size):

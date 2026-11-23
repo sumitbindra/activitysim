@@ -146,7 +146,7 @@ def main(argv=None) -> int:
         md_table(table.round(2)),
         "",
     ]
-    (out / "summary.md").write_text("\n".join(lines))
+    (out / "summary.md").write_text("\n".join(lines), encoding="utf-8")
     (out / "run_info.json").write_text(json.dumps({"example": str(example), "asim1_run": str(args.asim1_out),
                                                    "through": args.through, "steps": steps}, indent=2))
     print("\n".join(lines))

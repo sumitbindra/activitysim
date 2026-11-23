@@ -15,20 +15,30 @@ For each step it records:
                   step needed on top of what was already held
 * ``rss_after_mb`` memory still held when the step finished
 
-With ``split_memory=True``, also (Linux), splitting what the process holds
-into its own memory and pages of files it has mapped (such as memory-mapped
-skims, which the operating system can drop and read again, and which several
+With ``split_memory=True``, also, splitting what the process holds into its
+own memory and pages of files it has mapped (such as memory-mapped skims,
+which the operating system can drop and read again, and which several
 processes can share):
 
 * ``anon_before_mb``  the process's own memory when the step started
 * ``anon_peak_mb``    its highest own memory during the step
 * ``file_peak_mb``    the most pages of mapped files it held during the step
+                      (Linux only)
 
-The last two are sampled every few milliseconds by a thread, so a very short
-peak can be missed.
+These are sampled every few milliseconds by a thread, so a very short peak
+can be missed.
 
-Exact per-step peaks use Linux's ``/proc`` interface (the peak counter is reset
-before each step). On other systems the memory columns are left empty for now.
+Where the numbers come from:
+
+* **Linux**: ``/proc/self/status``. The process's peak is exact (its counter
+  is reset before each step); own memory is ``RssAnon`` (+ ``RssShmem``).
+* **Windows**: the process's memory counters (``GetProcessMemoryInfo``,
+  through ``ctypes``). The process's memory is its working set; own memory
+  is its private bytes (committed memory of its own, which also counts any
+  paged out). Windows can't reset the peak counter, so a step's peak is
+  sampled, like the split.
+* Other systems: the memory columns are left empty.
+
 Only the Python standard library is used.
 """
 
@@ -59,9 +69,71 @@ def _read_status_mb(key: str) -> float | None:
     return None
 
 
+_MB = 1024.0 * 1024.0
+_WINDOWS = sys.platform == "win32"
+_LINUX = sys.platform.startswith("linux")
+_win_counters = None
+
+
+def _windows_memory() -> tuple[float, float] | None:
+    """(working set, private bytes) of this process in MB, on Windows."""
+    global _win_counters
+    try:
+        if _win_counters is None:
+            import ctypes
+            from ctypes import wintypes
+
+            class Counters(ctypes.Structure):  # PROCESS_MEMORY_COUNTERS_EX
+                _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                            ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                            ("QuotaNonPagedPoolUsage", ctypes.c_size_t), ("PagefileUsage", ctypes.c_size_t),
+                            ("PeakPagefileUsage", ctypes.c_size_t), ("PrivateUsage", ctypes.c_size_t)]
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            get_info = kernel32.K32GetProcessMemoryInfo
+            get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(Counters), wintypes.DWORD]
+            get_info.restype = wintypes.BOOL
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            _win_counters = (Counters, get_info, kernel32.GetCurrentProcess(), ctypes)
+        Counters, get_info, handle, ctypes = _win_counters
+        c = Counters()
+        c.cb = ctypes.sizeof(Counters)
+        if not get_info(handle, ctypes.byref(c), c.cb):
+            return None
+        return c.WorkingSetSize / _MB, c.PrivateUsage / _MB
+    except (OSError, AttributeError):
+        return None
+
+
+def memory_now() -> dict:
+    """
+    What this process holds now, in MB: ``process`` (resident), ``own`` (its
+    own memory, not mapped files) and, on Linux, ``file`` (pages of mapped
+    files). Keys are missing where the system doesn't say.
+    """
+    if _LINUX:
+        v = _read_status_many_mb(("VmRSS", "RssAnon", "RssFile", "RssShmem"))
+        out = {}
+        if "VmRSS" in v:
+            out["process"] = v["VmRSS"]
+        if "RssAnon" in v:
+            out["own"] = v["RssAnon"] + v.get("RssShmem", 0.0)
+            out["file"] = v.get("RssFile", 0.0)
+        return out
+    if _WINDOWS:
+        w = _windows_memory()
+        if w is not None:
+            return {"process": w[0], "own": w[1]}
+    return {}
+
+
 def current_rss_mb() -> float | None:
-    """Memory currently held by this process (resident set size), in MB."""
-    return _read_status_mb("VmRSS")
+    """Memory currently held by this process (resident set size, or Windows' working set), in MB."""
+    if _LINUX:
+        return _read_status_mb("VmRSS")
+    return memory_now().get("process")
 
 
 def peak_rss_mb() -> float | None:
@@ -83,24 +155,29 @@ def _read_status_many_mb(keys) -> dict:
 
 
 class _MemorySampler:
-    """Highest own (anonymous) and mapped-file memory while running, sampled."""
-
-    KEYS = ("RssAnon", "RssFile", "RssShmem")
+    """Highest process, own and mapped-file memory while running, sampled."""
 
     def __init__(self, interval_s: float = 0.005):
         self.interval_s = interval_s
-        self.anon_peak = self.file_peak = None
+        self.peaks: dict[str, float] = {}
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
+    @property
+    def anon_peak(self):
+        return self.peaks.get("own")
+
+    @property
+    def file_peak(self):
+        return self.peaks.get("file")
+
+    @property
+    def process_peak(self):
+        return self.peaks.get("process")
+
     def _sample(self):
-        v = _read_status_many_mb(self.KEYS)
-        if "RssAnon" not in v:
-            return
-        anon = v["RssAnon"] + v.get("RssShmem", 0.0)
-        file = v.get("RssFile", 0.0)
-        self.anon_peak = anon if self.anon_peak is None else max(self.anon_peak, anon)
-        self.file_peak = file if self.file_peak is None else max(self.file_peak, file)
+        for k, v in memory_now().items():
+            self.peaks[k] = v if k not in self.peaks else max(self.peaks[k], v)
 
     def _run(self):
         while not self._stop.wait(self.interval_s):
@@ -119,7 +196,7 @@ class _MemorySampler:
 
 def reset_peak() -> bool:
     """Reset the peak-memory counter. Returns False if not supported."""
-    if not sys.platform.startswith("linux"):
+    if not _LINUX:
         return False
     try:
         with open(_PROC_CLEAR_REFS, "w") as f:
@@ -155,7 +232,7 @@ class Profiler:
                  split_memory: bool = False):
         self.records: list[StepProfile] = []
         self.collect_garbage = collect_garbage
-        self.split_memory = split_memory and sys.platform.startswith("linux")
+        self.split_memory = split_memory and (_LINUX or _WINDOWS)
         self.live_csv = Path(live_csv) if live_csv else None
         if self.live_csv:
             self.live_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -166,15 +243,13 @@ class Profiler:
     def step(self, name: str, mode: str = "computed"):
         if self.collect_garbage:
             gc.collect()  # outside the timed region, so steps start from a clean slate
-        rss_before = current_rss_mb()
-        anon_before = None
-        sampler = None
-        if self.split_memory:
-            v = _read_status_many_mb(_MemorySampler.KEYS)
-            if "RssAnon" in v:
-                anon_before = v["RssAnon"] + v.get("RssShmem", 0.0)
-            sampler = _MemorySampler().__enter__()
+        before = memory_now()
+        rss_before = before.get("process")
+        anon_before = before.get("own") if self.split_memory else None
         peak_ok = reset_peak()
+        sampler = None
+        if self.split_memory or (not peak_ok and rss_before is not None):  # Windows: the peak is sampled
+            sampler = _MemorySampler().__enter__()
         c0 = time.process_time()
         t0 = time.perf_counter()
         try:
@@ -184,7 +259,7 @@ class Profiler:
             cpu = time.process_time() - c0
             if sampler is not None:
                 sampler.__exit__(None, None, None)
-            peak = peak_rss_mb() if peak_ok else None
+            peak = peak_rss_mb() if peak_ok else (None if sampler is None else sampler.process_peak)
             rss_after = current_rss_mb()
             extra = None
             if peak is not None and rss_before is not None:
@@ -199,8 +274,8 @@ class Profiler:
                 step_extra_mb=extra,
                 rss_after_mb=rss_after,
                 anon_before_mb=anon_before,
-                anon_peak_mb=None if sampler is None else sampler.anon_peak,
-                file_peak_mb=None if sampler is None else sampler.file_peak,
+                anon_peak_mb=None if sampler is None or not self.split_memory else sampler.anon_peak,
+                file_peak_mb=None if sampler is None or not self.split_memory else sampler.file_peak,
             )
             self.records.append(rec)
             if self.live_csv:

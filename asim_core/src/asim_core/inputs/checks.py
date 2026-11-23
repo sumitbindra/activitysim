@@ -840,7 +840,7 @@ def check_inputs(
         key = hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()[:16]
         cache_file = Path(cache_dir) / f"input_checks_{key}.json"
         if cache_file.exists():
-            report = Report.from_json(cache_file.read_text())
+            report = Report.from_json(cache_file.read_text(encoding="utf-8"))
             report.cached = True
             return report
 
@@ -858,7 +858,7 @@ def check_inputs(
     release_freed_memory()  # what reading and checking the tables used
     if cache_file is not None:
         cache_file.parent.mkdir(parents=True, exist_ok=True)
-        cache_file.write_text(report.to_json())
+        cache_file.write_text(report.to_json(), encoding="utf-8")
     return report
 
 

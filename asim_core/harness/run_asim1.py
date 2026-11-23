@@ -44,7 +44,7 @@ def _write_overlay(out: Path, overrides: dict) -> Path:
     overlay.mkdir(parents=True, exist_ok=True)
     lines = ["inherit_settings: True"]
     lines += [f"{k}: {v}" for k, v in overrides.items()]
-    (overlay / "settings.yaml").write_text("\n".join(lines) + "\n")
+    (overlay / "settings.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return overlay
 
 
@@ -152,7 +152,7 @@ def main(argv=None) -> int:
         "platform": platform.platform(),
         "cpu_count": os.cpu_count(),
     }
-    (out / "run_info.json").write_text(json.dumps(info, indent=2))
+    (out / "run_info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     print(f"profile written to {profile_path}")
     print(json.dumps(info, indent=2))
     return rc

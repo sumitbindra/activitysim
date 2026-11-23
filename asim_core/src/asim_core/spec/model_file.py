@@ -40,6 +40,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from .definition import Assignment, Coefficient
 from .language import split_assignment
+from .legacy import read_text
 
 FILE_SUFFIXES = (".csv", ".yaml", ".yml")
 TERM_META = ("Label", "Description", "Formula")
@@ -98,8 +99,7 @@ def read_model_yaml(path: str | Path, _seen: tuple = ()) -> dict:
     path = Path(path).resolve()
     if path in _seen:
         raise ModelFileError(f"{path}: extends itself (through {' -> '.join(str(p) for p in _seen)})")
-    with open(path) as f:
-        data = yaml.safe_load(f) or {}
+    data = yaml.safe_load(read_text(path)) or {}
     if not isinstance(data, dict):
         raise ModelFileError(f"{path}: expected settings (name: value) at the top level")
     data = _absolute_paths(data, path)
@@ -114,9 +114,8 @@ def read_model_yaml(path: str | Path, _seen: tuple = ()) -> dict:
 def is_model_file(path: str | Path) -> bool:
     """True for asim_core's model files (they say their ``kind``, or extend one); False for 1.x settings files."""
     try:
-        with open(path) as f:
-            data = yaml.safe_load(f) or {}
-    except (OSError, yaml.YAMLError):
+        data = yaml.safe_load(read_text(path)) or {}
+    except (OSError, yaml.YAMLError, UnicodeDecodeError):
         return False
     return isinstance(data, dict) and ("kind" in data or "extends" in data)
 
@@ -229,7 +228,7 @@ def read_derived(path: str | Path) -> list[Assignment]:
 
 def _write_csv(path: Path, header: list[str], rows: list[list]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="") as f:
+    with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f, lineterminator="\n")
         w.writerow(header)
         for r in rows:
@@ -277,7 +276,7 @@ _Dumper.add_representer(str, _str_presenter)
 def write_yaml(path: Path, data: dict, header: str = "") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     text = yaml.dump(data, Dumper=_Dumper, sort_keys=False, default_flow_style=False, width=100)
-    path.write_text((header.rstrip() + "\n\n" if header else "") + text)
+    path.write_text((header.rstrip() + "\n\n" if header else "") + text, encoding="utf-8")
 
 
 def relative(path: str | Path, to: Path) -> str:

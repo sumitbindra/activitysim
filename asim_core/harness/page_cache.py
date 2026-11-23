@@ -14,6 +14,10 @@ that explicit:
   the model ran on the same machine just before), if memory allows.
 * ``resident_share(path)``: the share of the file's pages in the cache now.
 
+``evict`` and ``resident_share`` need Linux; elsewhere (Windows, macOS) they
+warn and do nothing (``evict``) or return ``None`` (``resident_share``), so a
+timing run still works but doesn't control or report the cache.
+
 Harness code: not used by asim_core itself.
 """
 
@@ -22,12 +26,17 @@ from __future__ import annotations
 import ctypes
 import mmap
 import os
+import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
 
 
 def evict(path: str | Path) -> None:
+    if not hasattr(os, "posix_fadvise"):
+        warnings.warn(f"can't drop {path} from the page cache on this system; the timing may start warm")
+        return
     fd = os.open(path, os.O_RDONLY)
     try:
         os.fsync(fd)  # dirty pages can't be dropped
@@ -43,7 +52,9 @@ def load(path: str | Path, chunk: int = 64 << 20) -> None:
             pass
 
 
-def resident_share(path: str | Path) -> float:
+def resident_share(path: str | Path) -> float | None:
+    if not sys.platform.startswith("linux"):
+        return None
     size = os.path.getsize(path)
     if size == 0:
         return 1.0

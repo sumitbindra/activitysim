@@ -28,6 +28,8 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
+
+from ..spec.legacy import read_text
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 STANDARD_FILE = Path(__file__).with_name("standard_tables.yaml")
@@ -221,8 +223,7 @@ def _merge(base: dict, region: dict) -> dict:
 
 
 def _read(path: Path) -> dict:
-    with open(path) as f:
-        data = yaml.safe_load(f) or {}
+    data = yaml.safe_load(read_text(path)) or {}
     if not isinstance(data, dict):
         raise DefinitionError(f"{path}: expected 'tables:' at the top")
     return data

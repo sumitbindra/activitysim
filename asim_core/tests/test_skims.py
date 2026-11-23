@@ -263,6 +263,25 @@ def test_skim_access_and_lookup_options_give_the_same_values(tmp_path):
             assert np.array_equal(held.positions(np.arange(5)), store.positions(np.arange(5)))
 
 
+def test_prefault_without_madvise_reads_the_pages(tmp_path, monkeypatch):
+    """On Windows a memory map has no madvise: prefault reads one value per page instead, same values."""
+    import asim_core.skim_access as sa
+
+    rng = np.random.default_rng(2)
+    mats = {f"S{k}": rng.random((60, 60)) for k in range(3)}
+    write_omx(tmp_path / "s.omx", mats)
+    store = import_omx(tmp_path / "s.omx", tmp_path / "cache")
+
+    class NoMadvise:  # what a memory map looks like on Windows, for prefault's purposes
+        pass
+
+    monkeypatch.setattr(sa, "_skim_ranges", lambda st, names: (NoMadvise(), []))
+    held = sa.prefault(store, ["S0", "S2", "MISSING"])
+    assert held is store
+    for n in ("S0", "S2"):
+        assert np.array_equal(held[n][:, :], mats[n].astype(np.float32))  # the cache holds float32, as 1.x loads skims
+
+
 def test_zones_without_a_lookup_are_numbered_from_1_as_in_1x(tmp_path):
     """Original zone numbers and no zone lookup in the OMX file: 1.x reads zone z from
     row z - 1 ("assume this is a one-based skim map"). Renumbered zones: zone i is row i."""

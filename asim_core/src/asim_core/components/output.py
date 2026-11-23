@@ -220,6 +220,7 @@ def write_data_dictionary(configs_dirs: Sequence[str | Path],
             schema_df.to_csv(ctx.output_path(csv_format), header=True, index=False)
         if txt_format:
             col_width = {c: int(schema_df[c].str.len().fillna(0).max()) + 2 for c in schema_df}
+            # as 1.x: the system's encoding and line endings, so the file matches 1.x's byte for byte on Windows too
             with open(ctx.output_path(txt_format), "w") as f:
                 for table in tables:  # 1.x: the order the tables were made in, or the settings' list
                     info = schema.get(table)
@@ -279,7 +280,7 @@ def track_skim_usage(configs_dirs: Sequence[str | Path] = ()) -> Component:
     def run(ctx: StepContext):
         used = {_skim_key_text(s) for record in ctx.history for s in record.skims}
         names = {n.rsplit("__", 1)[0] if "__" in n else n for n in ctx.skim_names()}  # 1.x's base keys
-        with open(ctx.output_path("skim_usage.txt"), "w") as f:
+        with open(ctx.output_path("skim_usage.txt"), "w") as f:  # as 1.x (system encoding and line endings)
             print("\n### skim_dict usage", file=f)
             for key in sorted(used):
                 print(key, file=f)

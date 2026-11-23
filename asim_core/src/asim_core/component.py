@@ -111,7 +111,7 @@ class Tracer:
             return None
         self.out_dir.mkdir(parents=True, exist_ok=True)
         path = self.out_dir / f"{step}.{label}.csv"
-        with open(path, "w", newline="") as f:
+        with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
             w.writerow(header)
             w.writerows(rows)

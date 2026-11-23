@@ -60,7 +60,8 @@ def _compare(a: Path, b: Path) -> tuple[str, str]:
     if a.suffix == ".omx":
         return _compare_omx(a, b)
     if a.name == "skim_usage.txt":
-        la, lb = a.read_text().splitlines(), b.read_text().splitlines()
+        la = a.read_text(encoding="utf-8", errors="replace").splitlines()  # 1.x writes text files in the system encoding
+        lb = b.read_text(encoding="utf-8", errors="replace").splitlines()
         if sorted(la) == sorted(lb):
             return "exact", f"{len(la) - 2} skims, the same lines (1.x's order varies by run)"
         return "different", f"lines only here: {sorted(set(la) - set(lb))[:4]}; only in 1.x: {sorted(set(lb) - set(la))[:4]}"
@@ -76,7 +77,7 @@ def _compare(a: Path, b: Path) -> tuple[str, str]:
 
 
 def _without(path: Path, column: str) -> list[list[str]]:
-    rows = list(csv.reader(io.StringIO(path.read_text())))
+    rows = list(csv.reader(io.StringIO(path.read_text(encoding="utf-8", errors="replace"))))
     if not rows or column not in rows[0]:
         return rows
     i = rows[0].index(column)

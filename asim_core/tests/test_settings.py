@@ -44,3 +44,18 @@ def test_include_settings_and_missing_files(tmp_path):
     with pytest.raises(FileNotFoundError):
         read_settings([a], "nothing.yaml")
     assert read_settings([a], "nothing.yaml", mandatory=False) == {}
+
+
+def test_settings_files_read_as_utf8_or_the_system_encoding(tmp_path, monkeypatch):
+    """UTF-8 (YAML's encoding) whatever the system; a file that isn't UTF-8 (Windows Notepad's "ANSI")
+    falls back to the system's encoding, as 1.x opens settings files (here Windows' usual cp1252)."""
+    import locale
+
+    from asim_core.spec.legacy import read_text, read_yaml
+
+    (tmp_path / "utf8.yaml").write_bytes("label: Zürich – downtown  # a comment with → and µ\n".encode("utf-8"))
+    assert read_yaml(tmp_path / "utf8.yaml") == {"label": "Zürich – downtown"}
+    (tmp_path / "ansi.yaml").write_bytes("label: café\n".encode("cp1252"))  # not valid UTF-8
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda do_setlocale=True: "cp1252")
+    assert read_text(tmp_path / "ansi.yaml") == "label: café\n"
+    assert read_yaml(tmp_path / "ansi.yaml") == {"label": "café"}

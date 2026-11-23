@@ -110,7 +110,7 @@ def main(argv=None) -> int:
             f"(seams: {choices or 'reference'}).", "",
             md_table(table.reset_index(drop=True), "{:.2f}"), "", "All ported steps together:", "",
             md_table(summary, "{:.2f}"), ""]
-    (out / "pieces.md").write_text("\n".join(text))
+    (out / "pieces.md").write_text("\n".join(text), encoding="utf-8")
     print("\n".join(text))
     return 0
 
