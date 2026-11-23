@@ -47,47 +47,8 @@ import pandas as pd  # noqa: E402
 from asim_core.asim1 import Asim1State  # noqa: E402
 from asim_core.compare import compare_column, value_shares, write_comparisons  # noqa: E402
 from asim_core.inputs import check_inputs  # noqa: E402
-from asim_core.components.output import track_skim_usage, write_data_dictionary, write_tables  # noqa: E402
-from asim_core.components.summarize import summarize  # noqa: E402
-from asim_core.components.trip_matrices import write_trip_matrices  # noqa: E402
-from asim_core.components import (  # noqa: E402
-    atwork_subtour_destination,
-    atwork_subtour_frequency,
-    atwork_subtour_mode_choice,
-    atwork_subtour_scheduling,
-    auto_ownership,
-    cdap_simulate,
-    compute_accessibility,
-    free_parking,
-    telecommute_frequency,
-    transit_pass_ownership,
-    transit_pass_subsidy,
-    work_from_home,
-    initialize_households,
-    initialize_landuse,
-    joint_tour_composition,
-    joint_tour_destination,
-    joint_tour_frequency,
-    joint_tour_participation,
-    joint_tour_scheduling,
-    mandatory_tour_frequency,
-    mandatory_tour_scheduling,
-    non_mandatory_tour_destination,
-    non_mandatory_tour_frequency,
-    non_mandatory_tour_scheduling,
-    school_location,
-    stop_frequency,
-    tour_mode_choice,
-    trip_departure_choice,
-    trip_destination,
-    trip_mode_choice,
-    trip_purpose,
-    trip_purpose_and_destination,
-    trip_scheduling,
-    trip_scheduling_choice,
-    workplace_location,
-)
-from asim_core.spec.translate import FormulaError  # noqa: E402
+from asim_core.model import OUTPUT_STEPS, READS_INPUTS, STEPS, build_steps  # noqa: E402,F401
+from asim_core.spec.translate import FormulaError  # noqa: E402,F401
 from asim_core.profiler import Profiler  # noqa: E402
 from asim_core.runner import Runner  # noqa: E402
 from asim_core.seams import Engine  # noqa: E402
@@ -101,21 +62,8 @@ ENGINE = [Engine()]
 # the example's data folders (--data), inside the example folder (SANDAG's one-zone setup: data_1)
 DATA_DIRS = ["data"]
 
-PORTED = [initialize_landuse, initialize_households, compute_accessibility, school_location,
-          workplace_location, work_from_home, transit_pass_subsidy, transit_pass_ownership, auto_ownership,
-          free_parking, telecommute_frequency, cdap_simulate, mandatory_tour_frequency,
-          mandatory_tour_scheduling, joint_tour_frequency, joint_tour_composition,
-          joint_tour_participation, joint_tour_destination, joint_tour_scheduling,
-          non_mandatory_tour_frequency, non_mandatory_tour_destination,
-          non_mandatory_tour_scheduling, tour_mode_choice, atwork_subtour_frequency,
-          atwork_subtour_destination, atwork_subtour_scheduling, atwork_subtour_mode_choice,
-          stop_frequency, trip_purpose, trip_destination, trip_purpose_and_destination, trip_scheduling,
-          trip_scheduling_choice, trip_departure_choice, trip_mode_choice,
-          write_data_dictionary, track_skim_usage, write_trip_matrices, write_tables, summarize]
-# steps that write files instead of tables: their files are compared with 1.x's
-OUTPUT_STEPS = {"write_data_dictionary", "track_skim_usage", "write_trip_matrices", "write_tables", "summarize"}
-# steps that read the input files: they also take the data folders (and the sample size 1.x ran with)
-READS_INPUTS = {initialize_landuse, initialize_households}
+# every step asim_core can run, the output steps, and the steps reading the input files: asim_core.model
+PORTED = STEPS
 NOT_BUILT: dict[str, str] = {}  # component -> why it could not be built for this example
 
 
@@ -129,9 +77,9 @@ def asim1_sample_size(asim1_run) -> int | None:
         return None
     p = Path(asim1_run) / "run_info.json"
     if p.exists():
-        return json.loads(p.read_text()).get("households_sample_size")
+        return json.loads(p.read_text(encoding="utf-8")).get("households_sample_size")
     log = Path(asim1_run) / "activitysim.log"
-    found = re.search(r"SETTING households_sample_size: (\d+)", log.read_text()) if log.exists() else None
+    found = re.search(r"SETTING households_sample_size: (\d+)", log.read_text(encoding="utf-8", errors="replace")) if log.exists() else None
     return int(found.group(1)) if found else None
 
 
@@ -146,18 +94,11 @@ def build_components(configs, asim1_run=None, data_dirs=None):
     folder) with the households sample size of the 1.x run they are compared with.
     """
     data_dirs = data_dirs or [Path(configs[0]).parent / d for d in DATA_DIRS]
-    out = []
-    for make in PORTED:
-        try:
-            if make is initialize_households:
-                out.append(make(configs, data_dirs, households_sample_size=asim1_sample_size(asim1_run)))
-            elif make in READS_INPUTS:
-                out.append(make(configs, data_dirs))
-            else:
-                out.append(make(configs))
-        except (NotImplementedError, FormulaError, ValueError, FileNotFoundError) as err:
-            NOT_BUILT[make.__name__] = str(err).splitlines()[0][:300]
-            print(f"not ported for this example: {make.__name__}: {NOT_BUILT[make.__name__]}")
+    missing: dict[str, str] = {}
+    out = build_steps(configs, data_dirs, asim1_sample_size(asim1_run), missing)
+    for name, why in missing.items():
+        NOT_BUILT[name] = why
+        print(f"not ported for this example: {name}: {why}")
     return out
 
 
@@ -218,7 +159,7 @@ def step_check(comp, st: Asim1State, out: Path, base_seed: int, skims, trace_ids
     if "generated_source" in comp.info:
         gen = out / "generated"
         gen.mkdir(parents=True, exist_ok=True)
-        (gen / f"{comp.name}.py").write_text(comp.info["generated_source"])
+        (gen / f"{comp.name}.py").write_text(comp.info["generated_source"], encoding="utf-8")
     return comparisons, shares
 
 
@@ -352,7 +293,7 @@ def profile_steps(steps, variants, repeat: int, out: Path, example: Path,
             cached_csv = cache_dir / label / f"{step}.csv"
             cached_key = cached_csv.with_suffix(".json")
             if (mode == "cached" and cached_csv.exists() and cached_key.exists()
-                    and json.loads(cached_key.read_text()) == key):
+                    and json.loads(cached_key.read_text(encoding="utf-8")) == key):
                 frames.append(pd.read_csv(cached_csv).assign(reused=True))
                 continue
             cached_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -367,7 +308,7 @@ def profile_steps(steps, variants, repeat: int, out: Path, example: Path,
                     "--scratch", str(out / "scratch" / label), "--out", str(cached_csv),
                 ]
                 subprocess.run(cmd, check=True, capture_output=True)
-            cached_key.write_text(json.dumps(key, indent=2))
+            cached_key.write_text(json.dumps(key, indent=2), encoding="utf-8")
             frames.append(pd.read_csv(cached_csv).assign(reused=False))
     runs = pd.concat(frames, ignore_index=True)
     out.mkdir(parents=True, exist_ok=True)
@@ -463,7 +404,7 @@ def write_summary(out: Path, info: dict, step_cmp, util_rows, e2e_cmp, e2e_repor
     if len(full_prof):
         s += ["", "ActivitySim 1.x, every step:", "", md_table(full_prof)]
     path = out / "summary.md"
-    path.write_text("\n".join(s) + "\n")
+    path.write_text("\n".join(s) + "\n", encoding="utf-8")
     return path
 
 
@@ -525,7 +466,7 @@ def main(argv=None) -> int:
     inputs = check_inputs(([ours] if ours.is_dir() else []) + configs, [example / d for d in DATA_DIRS],
                           cache_dir=REPO / "asim_core/work" / example.name / "input_checks",
                           skim_values=args.skim_check_values, skim_store=skims)
-    (out / "input_checks.txt").write_text(inputs.text() + "\n")
+    (out / "input_checks.txt").write_text(inputs.text() + "\n", encoding="utf-8")
     if inputs.problems:  # warnings are shown too: the run goes on, but they're worth a look
         print(inputs.text(show_undefined=False))
         print(f"(also in {out / 'input_checks.txt'} and summary.md)")
@@ -582,13 +523,13 @@ def main(argv=None) -> int:
         "input_checks": inputs.summary(),
         "model_files": args.model_files,
     }
-    (out / "run_info.json").write_text(json.dumps(info, indent=2))
+    (out / "run_info.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     summary = write_summary(out, info, step_cmp, util_rows, e2e_cmp, e2e_report, prof_cmp, full_prof, shares,
                             inputs)
 
     all_cmp = step_cmp + e2e_cmp
     ok = all(c.status == "exact" for c in all_cmp) and all(r["bit_identical"] == r["values"] for r in util_rows)
-    print(summary.read_text())
+    print(summary.read_text(encoding="utf-8"))
     print("ALL EXACT" if ok else "SOME DIFFERENCES - see comparisons.csv")
     return 0 if ok else 1
 

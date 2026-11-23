@@ -153,7 +153,15 @@ class Runner:
     # --- running -----------------------------------------------------------------
 
     def run(self, steps: Iterable[str], store: Store, profiler: Profiler | None = None,
-            start_note: str = "") -> RunReport:
+            start_note: str = "", history: Iterable[StepRecord] = (), reloaded: bool = False) -> RunReport:
+        """
+        Run ``steps`` on ``store``. ``history``: the records of steps run
+        before these elsewhere (e.g. in worker processes), which the output
+        steps read as part of the run (the checkpoints, skim usage).
+        ``reloaded``: the tables were reloaded before these steps, as when 1.x
+        starts a multiprocess group in a fresh process; the first step's
+        checkpoint then saves every table again.
+        """
         plan = self.plan(steps)
         resolved = self.check(plan, store)
         profiler = profiler or Profiler()
@@ -162,7 +170,7 @@ class Runner:
         # replayed 1.x step may add rows, whose values then come from 1.x)
         computed_cols: dict[str, dict[str, np.ndarray]] = defaultdict(dict)
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.history = []
+        self.history = list(history)
 
         for step, mode in plan:
             with profiler.step(step, mode):
@@ -172,6 +180,9 @@ class Runner:
                     report.carried_over += self._replay_step(step, store, computed_cols)
                     written = [t for t in self.replay.written_at(step) if t in store]
             skims = tuple(sorted(self._skims_read)) if mode == COMPUTED else ()
+            if reloaded:
+                written = list(store.tables) + [t for t in written if t not in store.tables]
+                reloaded = False
             self.history.append(StepRecord(step, datetime.now(), {t: list(store[t].column_names) for t in written},
                                            skims))
 
@@ -186,7 +197,7 @@ class Runner:
             "computed_columns": {t: sorted(c) for t, c in computed_cols.items()},
             "warnings": report.warnings,
         }
-        (self.out_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2))
+        (self.out_dir / "run_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         profiler.write_csv(self.out_dir / "profile.csv")
         return report
 
