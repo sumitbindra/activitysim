@@ -358,20 +358,43 @@ def _source_paths(path: Path) -> set[str] | None:
     return {src["path"] for src in manifest.get("sources", [])}
 
 
+def _remove_cache(path: Path) -> bool:
+    """
+    Remove a cache folder, its data file first: on Windows a file that is
+    memory-mapped (the cache open in some process) can't be deleted, and the
+    folder is then left whole, manifest included, so a later run finds it and
+    removes it once it is closed. (Removing the folder in one go could delete
+    the manifest and stop at the data file, leaving a folder no run would
+    recognize or remove.) True if removed.
+    """
+    try:
+        (path / DATA).unlink(missing_ok=True)
+    except OSError as err:
+        logger.info(f"skim cache {path} not removed (in use): {err}")
+        return False
+    try:
+        shutil.rmtree(path)
+    except OSError as err:
+        logger.info(f"skim cache {path}: data removed, the rest not: {err}")
+        return False
+    return True
+
+
 def _remove_other_caches(cache_dir: Path, tag: str, keep: Path) -> None:
     """
     Remove older caches made from the same OMX files as ``keep`` (caches of
-    other skim files sharing the folder are left alone). Ones still open
-    elsewhere (Windows) are left for next time.
+    other skim files sharing the folder are left alone), and broken ones (no
+    manifest: an import writes it before the folder gets its name, so only an
+    interrupted removal leaves one). Ones still open elsewhere (Windows) are
+    left for next time.
     """
     sources = _source_paths(keep)
     for p in _cache_folders(cache_dir, tag):
-        if p.resolve() == keep.resolve() or _source_paths(p) != sources:
+        if p.resolve() == keep.resolve():
             continue
-        try:
-            shutil.rmtree(p)
-        except OSError as err:
-            logger.info(f"skim cache {p} not removed (probably in use): {err}")
+        theirs = _source_paths(p)
+        if theirs is None or theirs == sources:
+            _remove_cache(p)
     for p in cache_dir.glob(f".importing-asim_core_{tag}_*"):  # left by a crashed import
         try:
             if time.time() - p.stat().st_mtime > 24 * 3600:
@@ -407,7 +430,9 @@ def prepare_skims(
         store = SkimStore(stable)
     else:
         target = stable
-        if target.exists():  # a fresh import was asked for, or a broken leftover: never overwrite
+        if target.exists() and _source_paths(target) is None:
+            _remove_cache(target)  # a broken leftover (no manifest): free the name if nothing has it open
+        if target.exists():  # a fresh import was asked for, or a leftover still open: never overwrite
             # time, process and a random part: two imports in the same second can't share a folder (on
             # Windows the folder of a cache still open elsewhere can't be removed, so names pile up)
             target = (cache_dir / f"asim_core_{tag}_{fp}_{time.strftime('%Y%m%d%H%M%S')}_{os.getpid()}"

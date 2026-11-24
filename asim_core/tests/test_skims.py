@@ -110,21 +110,96 @@ def test_read_skim_cache_off_imports_every_run(omx, tmp_path):
         assert remaining == [second.path]  # old folder removed
 
 
-def test_fresh_imports_get_their_own_folders_when_old_ones_cant_be_removed(omx, tmp_path, monkeypatch):
-    """Windows can't delete a cache that is open elsewhere: it stays, and imports in the same second
-    still each get a folder of their own (never overwriting one)."""
-    import asim_core.skims as sk
+class WindowsLikeFiles:
+    """
+    Windows' rule for memory-mapped files, on any system: a data file open in
+    some process can't be deleted (PermissionError), and removing a folder
+    deletes its files one by one, in name order (skims.json, then
+    skims.npy), stopping at the first that can't go.
+    """
 
-    def in_use(path, *a, **k):
-        raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+    def __init__(self, monkeypatch):
+        import asim_core.skims as sk
 
-    monkeypatch.setattr(sk.shutil, "rmtree", in_use)
+        self.open: set[Path] = set()
+        real_unlink = Path.unlink
+
+        def unlink(path, missing_ok=False):
+            if Path(path).resolve() in self.open:
+                raise PermissionError(32, "The process cannot access the file because it is being used by "
+                                          "another process")
+            return real_unlink(path, missing_ok=missing_ok)
+
+        def rmtree(path, *args, **kwargs):
+            path = Path(path)
+            for f in sorted(path.iterdir()):
+                f.unlink()
+            path.rmdir()
+
+        monkeypatch.setattr(Path, "unlink", unlink)
+        monkeypatch.setattr(sk.shutil, "rmtree", rmtree)
+
+    def opened(self, store):
+        from asim_core.skims import DATA
+
+        self.open.add((store.path / DATA).resolve())
+
+    def closed(self, store_path):
+        from asim_core.skims import DATA
+
+        self.open.discard((store_path / DATA).resolve())
+
+
+def test_an_open_cache_is_left_whole_and_removed_once_closed(omx, tmp_path, monkeypatch):
+    """A cache still open elsewhere (Windows) is left whole, manifest included, and removed by a later run once
+    closed; never half-deleted, which would leave a folder no run recognizes or removes."""
+    from asim_core.skims import DATA, MANIFEST
+
+    files = WindowsLikeFiles(monkeypatch)
     path, _ = omx
     cache = tmp_path / "cache"
-    stores = [prepare_skims([path], cache, reuse=False) for _ in range(4)]
+    first = prepare_skims([path], cache, reuse=False)
+    files.opened(first)
+    second = prepare_skims([path], cache, reuse=False)
+    files.opened(second)
+    assert (first.path / MANIFEST).exists() and (first.path / DATA).exists()  # left whole while open
+    files.closed(first.path)
+    third = prepare_skims([path], cache, reuse=False)
+    assert not first.path.exists()  # closed: removed
+    assert (second.path / MANIFEST).exists() and (second.path / DATA).exists()  # still open: whole
+    assert len({first.path, second.path, third.path}) == 3
+
+
+def test_fresh_imports_get_their_own_folders_when_old_ones_are_open(omx, tmp_path, monkeypatch):
+    """Imports in the same second, every older cache still open: each gets a folder of its own, never
+    overwriting one."""
+    files = WindowsLikeFiles(monkeypatch)
+    path, _ = omx
+    cache = tmp_path / "cache"
+    stores = []
+    for _ in range(4):
+        stores.append(prepare_skims([path], cache, reuse=False))
+        files.opened(stores[-1])
     assert len({s.path for s in stores}) == 4
     for s in stores:
         np.testing.assert_array_equal(s["DIST"], stores[0]["DIST"])
+
+
+def test_a_half_deleted_cache_is_cleared_and_its_name_reused(omx, tmp_path):
+    """A cache folder without its manifest (left by an interrupted removal, e.g. by an earlier version on
+    Windows) is removed, and the name it held is used again, so read_skim_cache keeps reusing one cache."""
+    from asim_core.skims import MANIFEST
+
+    path, _ = omx
+    cache = tmp_path / "cache"
+    first = prepare_skims([path], cache, reuse=True)
+    stable = first.path
+    del first
+    gc.collect()
+    (stable / MANIFEST).unlink()  # what the old removal left on Windows
+    again = prepare_skims([path], cache, reuse=True)
+    assert again.path == stable and (stable / MANIFEST).exists()
+    assert [p for p in cache.iterdir() if p.name.startswith("asim_core_taz_")] == [stable]
 
 
 def test_read_skim_cache_on_reuses_only_unchanged_skims(omx, tmp_path):
