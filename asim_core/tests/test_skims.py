@@ -163,11 +163,14 @@ def test_an_open_cache_is_left_whole_and_removed_once_closed(omx, tmp_path, monk
     second = prepare_skims([path], cache, reuse=False)
     files.opened(second)
     assert (first.path / MANIFEST).exists() and (first.path / DATA).exists()  # left whole while open
-    files.closed(first.path)
+    first_path = first.path
+    del first  # really closed too: on Windows the store's own memory map would still hold the file
+    gc.collect()
+    files.closed(first_path)
     third = prepare_skims([path], cache, reuse=False)
-    assert not first.path.exists()  # closed: removed
+    assert not first_path.exists()  # closed: removed
     assert (second.path / MANIFEST).exists() and (second.path / DATA).exists()  # still open: whole
-    assert len({first.path, second.path, third.path}) == 3
+    assert len({first_path, second.path, third.path}) == 3
 
 
 def test_fresh_imports_get_their_own_folders_when_old_ones_are_open(omx, tmp_path, monkeypatch):
