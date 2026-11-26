@@ -15,6 +15,11 @@ run. Writes summary.md, comparisons.csv and profile.csv to ``--out``.
 
 from __future__ import annotations
 
+if __name__ == "__main__":  # threads for the numeric libraries, before NumPy loads (--threads, default 1; --fast)
+    import _threads
+
+    _threads.limit_from_argv()
+
 import argparse
 import json
 import sys
@@ -55,6 +60,9 @@ def main(argv=None) -> int:
                    help='choices for the seams, as JSON, e.g. \'{"sample_columns": "all_columns", '
                         '"size_lookup": "match"}\' (python -m asim_core.seams lists them); '
                         'unnamed seams use the reference')
+    import _threads
+
+    _threads.add_arguments(p)
     p.add_argument("--data", nargs="+", default=["data"],
                    help="the example's data folders, inside it (default: data; SANDAG's one-zone setup: data_1)")
     args = p.parse_args(argv)
@@ -148,7 +156,9 @@ def main(argv=None) -> int:
     ]
     (out / "summary.md").write_text("\n".join(lines), encoding="utf-8")
     (out / "run_info.json").write_text(json.dumps({"example": str(example), "asim1_run": str(args.asim1_out),
-                                                   "through": args.through, "steps": steps}, indent=2))
+                                                   "through": args.through, "steps": steps, "run_s": run_s,
+                                                   "skims_s": skims_s, "threads": _threads.describe()},
+                                                  indent=2), encoding="utf-8")
     print("\n".join(lines))
     return 0 if not bad and all(status == "exact" for _, status, _ in files) else 1
 

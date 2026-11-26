@@ -24,6 +24,11 @@ step) and ``run_info.json``.
 
 from __future__ import annotations
 
+if __name__ == "__main__":  # threads for the numeric libraries, before NumPy loads (--threads, default 1; --fast)
+    import _threads
+
+    _threads.limit_from_argv()
+
 import argparse
 import json
 import os
@@ -69,6 +74,9 @@ def main(argv=None) -> int:
     p.add_argument("--resume-after", default=None,
                    help="start after this step, from the saved run already in --out (1.x's resume_after)")
     p.add_argument("--patch", nargs="*", default=[], help="optional changes to 1.x (see asim1_patches.py)")
+    import _threads
+
+    _threads.add_arguments(p)
     args = p.parse_args(argv)
 
     import activitysim
@@ -142,6 +150,7 @@ def main(argv=None) -> int:
         "households_sample_size": args.households,
         "trace_hh_id": args.trace_hh_id,
         "patches": args.patch,
+        "threads": _threads.describe(),
         "exit_code": rc,
         "error": error,
         "steps_completed": len(profiler.records),

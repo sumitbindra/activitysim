@@ -97,21 +97,26 @@ def main(argv=None) -> int:
     p.add_argument("--again", action="store_true", help="redo stages already done")
     p.add_argument("--redo", nargs="*", default=[], choices=["tests", "asim1", "asim_core", "asim1_mp", "asim_core_mp"],
                    help="redo these stages even if done")
+    p.add_argument("--threads", type=int, default=None,
+                   help="threads for 1.x and asim_core alike (their default: 1, as 1.x's command line)")
+    p.add_argument("--fast", action="store_true", help="no thread limit for 1.x and asim_core alike")
     args = p.parse_args(argv)
     OUT.mkdir(parents=True, exist_ok=True)
     py = ["-X", "utf8=0"]  # the system's own encoding, as an agency's Python would have it
     h = "asim_core/harness/"
+    # the same thread setting for 1.x and asim_core: their last digits depend on it (asim1 findings, 24)
+    threads = ["--fast"] if args.fast else (["--threads", str(args.threads)] if args.threads else [])
     stages = [  # (name, command, the file that shows it's done)
         ("tests", py + ["-m", "pytest", "-q", "-p", "no:cacheprovider", "asim_core/tests"], None),
-        ("1.x MTC example, one process", py + [h + "run_asim1.py", "--out", str(WORK / "asim1_legacy")],
+        ("1.x MTC example, one process", py + [h + "run_asim1.py", *threads, "--out", str(WORK / "asim1_legacy")],
          WORK / "asim1_legacy" / "final_trips.csv"),
-        ("asim_core MTC example, one process", py + [h + "run_standalone.py", "--through", "summarize",
+        ("asim_core MTC example, one process", py + [h + "run_standalone.py", *threads, "--through", "summarize",
                                                      "--out", str(OUT / "standalone_mtc")],
          OUT / "standalone_mtc" / "summary.md"),
-        ("1.x MTC example, 2 processes", py + [h + "run_asim1.py", "--configs", "configs_mp", "configs",
+        ("1.x MTC example, 2 processes", py + [h + "run_asim1.py", *threads, "--configs", "configs_mp", "configs",
                                                "--out", str(WORK / "asim1_mp2")],
          WORK / "asim1_mp2" / "final_trips.csv"),
-        ("asim_core MTC example, 2 processes", py + [h + "run_multiprocess.py", "--asim1-out", str(WORK / "asim1_mp2"),
+        ("asim_core MTC example, 2 processes", py + [h + "run_multiprocess.py", *threads, "--asim1-out", str(WORK / "asim1_mp2"),
                                                      "--asim1-single", str(WORK / "asim1_legacy"),
                                                      "--out", str(OUT / "multiprocess_mtc")],
          OUT / "multiprocess_mtc" / "summary.md"),

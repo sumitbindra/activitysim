@@ -17,3 +17,7 @@ Check an example's inputs:
 
     python -m asim_core.inputs -c asim_core/configs/prototype_mtc \
         -c activitysim/examples/prototype_mtc/configs -d activitysim/examples/prototype_mtc/data
+
+- `multiprocess/settings.yaml`: run a region in several processes, as 1.x's
+  examples set it up (MTC's `configs_mp`). List it first; change
+  `num_processes` there or pass `-m N`. See `docs/multiprocess.md`.

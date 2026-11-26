@@ -337,12 +337,12 @@ def run_in_groups(groups: Sequence[Group], components: dict, model: ModelFiles, 
             runner.run(g.steps, store, profiler, start_note=g.name, history=history, reloaded=bool(store.tables))
             history = runner.history + [StepRecord(g.name, datetime.now(), {})]
             where, per_process = "main process", []
-        elif g.slice_tables[0] == "households":  # in worker processes
+        elif g.slice_tables[0] == "households" and g.num_processes > 1:  # in worker processes
             store, res = run_group_in_processes(g, model, store, out_dir / "processes", threads_per_process)
             history = history + [group_record(g.name, store)]
             where, per_process = f"{g.num_processes} processes", res.process_wall_s
             own_peaks = [max((r.anon_peak_mb or 0.0) for r in prof) if prof else None for prof in res.profiles]
-        else:  # split by zones: once here, the rows put in the split's order
+        else:  # split by zones, or one process: once here, the rows put in the split's order (none for one)
             runner.run(g.steps, store, profiler, start_note=g.name, history=history)
             store = reorder_as_split(store, g)
             history = history + [group_record(g.name, store)]

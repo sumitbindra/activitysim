@@ -60,6 +60,51 @@ folder with a `settings.yaml` that inherits the rest
 1.x requires in multiprocess runs, `num_processes` and the four groups),
 put first in the configs list (`asim_core/work/sandag/configs_mp4`).
 
+## Settings
+
+As in 1.x:
+
+- **Number of processes**: `num_processes` in `settings.yaml`
+  (`asim_core/configs/multiprocess/settings.yaml` sets 4: list that folder
+  first, before the region's configs). On the command line `-m N`
+  (`--multiprocess N`, also `--processes N`) overrides it, as 1.x's `-m N`.
+  More processes use more cores and more memory: each holds its share of the
+  households and its own copy of the model (about 0.5 to 0.9 GB at 50,000
+  households on full MTC zones); the skims are one shared file.
+- **Threads**: one per process by default, as 1.x's command line (only its
+  `--fast` lifts the limit): `--threads N`, or `--fast` for no limit, in
+  `run_standalone.py`, `run_multiprocess.py` and `run_asim1.py` (set before
+  NumPy loads, `harness/_threads.py`); worker processes inherit it, and
+  `--threads-per-process N` sets theirs alone. More threads hardly help:
+  most of the work runs on one core whatever the setting (on a 24-core
+  Windows PC, full MTC in one process: 134.9 s with 1 thread, 129.5 s with
+  4, 129.3 s with 24, and 24 threads reserved 0.7 GB more). One thread also
+  keeps results independent of the machine's cores (the BLAS library's last
+  digits depend on its thread count, asim1 findings 24), keeps a
+  multiprocess run from starting a thread per core in every process, and
+  matches 1.x run from its command line. Use processes, not threads, to use
+  more cores.
+- Reference 1.x runs made before this setting had no thread limit; compare
+  with them using `--fast`, or remake them (they default to one thread now).
+  Checked on the MTC example (4-CPU machine): asim_core at one thread, 40 of
+  40 output files 1.x's at one thread, and still 40 of 40 against the older
+  run without a limit; in 2 processes, 39 of 39 against 1.x's 2-process run
+  at one thread.
+
+Time and memory against the number of processes, on any computer:
+
+```bash
+python asim_core/harness/mp_benchmark.py                       # full MTC, 50,000 households, 1/8/16/24 processes
+python asim_core/harness/mp_benchmark.py --processes 1 4 8 12   # other counts
+```
+
+It runs the model with each number of processes (one thread each, after a
+warm-up run), checks every run against the 1-process run value by value by
+ID, and writes `asim_core/work/mp_benchmark/report.md`: run time, speed-up,
+the households' steps against the main process's set-up and output files,
+and memory per process and together. Its settings are at the top of the
+script.
+
 ## Results are 1.x's
 
 | Region | Processes | Output files against 1.x in as many processes | Values by ID against 1.x in one process |

@@ -22,6 +22,11 @@ Example (MTC, 2 processes)::
 
 from __future__ import annotations
 
+if __name__ == "__main__":  # threads for the numeric libraries, before NumPy loads (--threads, default 1; --fast)
+    import _threads
+
+    _threads.limit_from_argv()
+
 import argparse
 import json
 import sys
@@ -43,7 +48,8 @@ from asim_core.seams import Engine  # noqa: E402
 from asim_core.spec.legacy import load_top_settings  # noqa: E402
 from asim_core.store import Store  # noqa: E402
 from compare_outputs import compare_output_files  # noqa: E402
-from run_milestone1 import NOT_BUILT, asim1_sample_size, build_components, md_table, skim_store  # noqa: E402
+from asim_core.model import build_steps  # noqa: E402
+from run_milestone1 import NOT_BUILT, asim1_sample_size, md_table, skim_store  # noqa: E402
 
 KEYS = {"households": "household_id", "persons": "person_id", "tours": "tour_id", "trips": "trip_id",
         "joint_tour_participants": "participant_id", "land_use": "zone_id", "accessibility": "zone_id"}
@@ -54,12 +60,21 @@ def main(argv=None) -> int:
     p.add_argument("--example-dir", default=str(REPO / "activitysim/examples/prototype_mtc"))
     p.add_argument("--configs", nargs="+", default=["configs_mp", "configs"])
     p.add_argument("--data", nargs="+", default=["data"])
-    p.add_argument("--asim1-out", required=True, help="1.x run with the same settings and processes")
+    p.add_argument("--asim1-out", default=None,
+                   help="1.x run with the same settings and processes: its output files are compared, and its "
+                        "households sample size used unless --households is given")
+    p.add_argument("--households", type=int, default=None, help="households sample size (0: all)")
     p.add_argument("--asim1-single", default=None, help="1.x run in one process, to compare values by ID")
     p.add_argument("--out", required=True)
-    p.add_argument("--processes", type=int, default=None, help="override num_processes")
+    p.add_argument("-m", "--multiprocess", "--processes", dest="processes", type=int, default=None,
+                   help="number of processes, overriding settings.yaml's num_processes (as 1.x's -m N)")
     p.add_argument("--read-skim-cache", choices=["settings", "true", "false"], default="settings")
     p.add_argument("--seams", default="{}")
+    import _threads
+
+    _threads.add_arguments(p)
+    p.add_argument("--no-file-compare", action="store_true",
+                   help="don't compare the output files with --asim1-out (e.g. it ran in another number of processes)")
     p.add_argument("--threads-per-process", type=int, default=None,
                    help="threads for each worker's numeric libraries (default: as the main process, as 1.x); "
                         "can change results' last digits")
@@ -77,7 +92,8 @@ def main(argv=None) -> int:
     if args.processes:
         for g in groups:
             g.num_processes = args.processes
-    components = {c.name: c for c in build_components(configs, args.asim1_out, data_dirs)}
+    sample = args.households if args.households is not None else asim1_sample_size(args.asim1_out)
+    components = {c.name: c for c in build_steps(configs, data_dirs, sample, NOT_BUILT)}
     missing = [s for g in groups for s in g.steps if s not in components]
     if missing:
         print(f"these steps can't run in asim_core: { {s: NOT_BUILT.get(s, 'not ported') for s in missing} }")
@@ -89,28 +105,34 @@ def main(argv=None) -> int:
     seams = json.loads(args.seams)
     base_seed = int(settings.get("rng_base_seed") or 0)
     model = ModelFiles(tuple(str(c) for c in configs), tuple(str(d) for d in data_dirs), str(skims.path),
-                       tuple(sorted(seams.items())), base_seed, asim1_sample_size(args.asim1_out))
+                       tuple(sorted(seams.items())), base_seed, sample)
     engine = Engine(seams)
 
     t_run = time.perf_counter()
     store, history, timings = run_in_groups(groups, components, model, Store(), out, skims, engine,
                                             Profiler(split_memory=True), args.threads_per_process)
+    run_s = time.perf_counter() - t_run
+    (out / "timings.json").write_text(json.dumps({
+        "processes": max(g.num_processes for g in groups), "threads": _threads.describe(),
+        "threads_per_process": args.threads_per_process, "run_s": run_s, "skims_s": skims_s,
+        "groups": timings}, indent=2, default=str), encoding="utf-8")
     timings = [{"group": t["group"], "steps": f"{t['first_step']} .. {t['last_step']}", "where": t["where"],
                 "wall_s": round(t["wall_s"], 2),
                 "per process, s": ", ".join(f"{w:.1f}" for w in t["process_wall_s"]),
                 "per process, own peak MB": ", ".join(f"{m:,.0f}" for m in t["process_own_peak_mb"] if m)}
                for t in timings]
-    run_s = time.perf_counter() - t_run
 
     lines = [f"# asim_core in several processes: {example.name}", "",
              f"Configs {args.configs}; groups as 1.x's multiprocess_steps; skims ready in {skims_s:.1f} s; "
              f"run {run_s:.1f} s.", "", md_table(pd.DataFrame(timings)), ""]
-    files = compare_output_files(out / "run" / "output", Path(args.asim1_out))
-    same = sum(status == "exact" for _, status, _ in files)
-    lines += [f"**Output files compared with 1.x in {groups[-2].num_processes if len(groups) > 1 else 1} "
-              f"processes: {same} of {len(files)} exact.**", "",
-              md_table(pd.DataFrame(files, columns=["file", "status", "note"])), ""]
-    ok = same == len(files)
+    ok = True
+    if args.asim1_out and not args.no_file_compare:
+        files = compare_output_files(out / "run" / "output", Path(args.asim1_out))
+        same = sum(status == "exact" for _, status, _ in files)
+        lines += [f"**Output files compared with 1.x in {groups[-2].num_processes if len(groups) > 1 else 1} "
+                  f"processes: {same} of {len(files)} exact.**", "",
+                  md_table(pd.DataFrame(files, columns=["file", "status", "note"])), ""]
+        ok = same == len(files)
     if args.asim1_single:  # every value by ID against 1.x in one process
         st = Asim1State(args.asim1_single)
         last = st.steps[-1]
