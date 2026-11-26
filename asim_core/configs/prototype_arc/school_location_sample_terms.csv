@@ -1,0 +1,4 @@
+Label,Description,Formula,k12_predrive,k12_drive,univ
+,Distance,"skim.SOV_FREE_DISTANCE[o, d, 'MD']",-0.2,-0.2,-0.2
+,Size variable,log1p(size_term * shadow_price_size_term_adjustment),1.0,1.0,1.0
+,No attractions,size_term == 0,-999.0,-999.0,-999.0

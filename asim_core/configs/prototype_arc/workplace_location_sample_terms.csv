@@ -1,0 +1,4 @@
+Label,Description,Formula,white_collar,service,health,retail_food,blue_collar
+,Distance,"skim.SOV_FREE_DISTANCE[o, d, 'MD']",-0.2,-0.2,-0.2,-0.2,-0.2
+,Size Variable,log1p(size_term * shadow_price_size_term_adjustment),1.0,1.0,1.0,1.0,1.0
+,No Attractions,size_term == 0,-999.0,-999.0,-999.0,-999.0,-999.0

@@ -1,0 +1,4 @@
+Label,Description,Formula,shopping,othmaint,othdiscr,eatout,social,escort
+,offpeak period sov distance,"skim.SOV_FREE_DISTANCE[o, d, 'MD']",coef_shopping_sov_distance_op,coef_othmaint_sov_distance_op,coef_othdiscr_sov_distance_op,coef_eatout_sov_distance_op,coef_social_sov_distance_op,coef_escort_sov_distance_op
+,Size variable,log1p(size_term),1,1,1,1,1,1
+,No attractions,size_term == 0,-999,-999,-999,-999,-999,-999

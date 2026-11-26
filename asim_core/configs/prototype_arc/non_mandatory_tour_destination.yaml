@@ -1,0 +1,48 @@
+# asim_core model file (formulas in asim_core's language; see docs/model_files.md)
+# alt.<column>: the candidate zone; size_term, prob, pick_count and
+# mode_choice_logsum: worked out by the step
+
+kind: tour_destination
+description: A destination for every non-mandatory tour (converted from non_mandatory_tour_destination.yaml
+  and the files it names).
+tours: non_mandatory
+segment: tour.tour_type
+segments:
+- shopping
+- othmaint
+- othdiscr
+- eatout
+- social
+- escort
+size_terms:
+  file: destination_choice_size_terms.csv
+  selector: non_mandatory
+sample_size: 30
+sample_terms: non_mandatory_tour_destination_sample_terms.csv
+terms: non_mandatory_tour_destination_terms.csv
+coefficients: non_mandatory_tour_destination_coeffs.csv
+origin: person.home_zone_id
+alternative_zone: alt_dest
+chooser_id: person_id
+logsums:
+  model: tour_mode_choice.yaml
+  periods:
+  - 28
+  - 28
+  parameters:
+    has_destination: false
+    has_end: false
+    has_parent_tour_id: false
+    has_start: false
+    has_tour_category: false
+    has_tour_type: false
+outputs:
+  destination: destination
+  logsum: destination_logsum
+options:
+  utility_shift: false
+  max_rows: null
+  sample_method: inverse_cdf
+  sample_size_cap: zones_with_size
+  sample_order: by_zone
+  sample_probabilities: float32

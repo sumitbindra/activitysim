@@ -1,0 +1,4 @@
+Description,Name,Formula
+departure_shift,departureLinearShift1,"min(9 - alt.start, 48) * (alt.start <= 9) + min(alt.start - 9, 21) * (alt.start > 9)"
+arrival_shift,arrivalLinearShift1,"min(30 - alt.end, 48) * (alt.end <= 30) + min(alt.end - 30, 21) * (alt.end > 30)"
+duration_shift,durationShift,"min(21 - alt.duration, 47) * (alt.duration <= 20) + min(alt.duration - 21, 20) * (alt.duration > 21)"

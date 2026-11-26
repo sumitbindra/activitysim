@@ -1,0 +1,3 @@
+Description,Name,Formula
+subsequent_tour_is_work,subsequent_tour_is_work,"shift(tour.tour_type, -1) == 'work'"
+subsequent_tour_is_school,subsequent_tour_is_school,"shift(tour.tour_type, -1) == 'school'"

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "asim-core"
+version = "0.1.0"
+description = "A minimal, component-based core for ActivitySim, validated step by step against ActivitySim 1.x"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "BSD-3-Clause" }
+# Dependency rule: only widely used libraries maintained by large communities.
+# Do not add a dependency here without checking it against that rule.
+dependencies = [
+    "numpy >= 2.0",
+    "pandas >= 2.0",
+    "pyarrow >= 14",
+    "pydantic >= 2.6",
+    "pyyaml >= 6.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+# only for importing skims from OMX (HDF5) files, once per skim file
+omx = ["tables >= 3.9"]
+# only for the JAX experiment (jax_backend.py): alternatives, not the default
+jax = ["jax[cpu] >= 0.4.30"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+asim_core = ["inputs/*.yaml"]

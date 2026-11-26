@@ -1,0 +1,60 @@
+# asim_core model file (formulas in asim_core's language; see docs/model_files.md)
+# alt.<column>: the candidate zone; size_term, prob, pick_count, mode_choice_logsum
+# and the shadow price adjustments: worked out by the step
+
+kind: location_choice
+description: Workplace location (converted from workplace_location.yaml and the files it names).
+filter: person.is_worker
+segment: person.income_segment
+segments:
+  work_low: 1
+  work_med: 2
+  work_high: 3
+  work_veryhigh: 4
+size_terms:
+  file: destination_choice_size_terms.csv
+  selector: workplace
+sample_size: 30
+sample_terms: workplace_location_sample_terms.csv
+terms: workplace_location_terms.csv
+coefficients: workplace_location_coeffs.csv
+origin: person.home_zone_id
+alternative_zone: alt_dest
+logsums:
+  model: tour_mode_choice.yaml
+  tour_purpose: work
+  periods:
+  - 9
+  - 30
+  parameters:
+    has_parent_tour_id: false
+    has_tour_category: false
+    has_tour_type: false
+outputs:
+  zone: workplace_zone_id
+  zone_when_none: -1
+  logsum: workplace_location_logsum
+  mode_choice_logsum: null
+  modeled_size: workplace_modeled_size
+annotate:
+  persons:
+    derived: annotate_persons_workplace.csv
+    tables:
+    - land_use
+  households:
+    derived: annotate_households_workplace.csv
+    tables:
+    - persons
+constants:
+  WORK_LOW_SEGMENT_ID: 1
+  WORK_MED_SEGMENT_ID: 2
+  WORK_HIGH_SEGMENT_ID: 3
+  WORK_VERYHIGH_SEGMENT_ID: 4
+options:
+  utility_shift: false
+  max_rows: null
+  shadow_pricing: false
+  sample_method: inverse_cdf
+  sample_size_cap: zones_with_size
+  sample_order: by_zone
+  sample_probabilities: float32

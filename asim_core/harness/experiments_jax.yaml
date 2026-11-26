@@ -1,0 +1,11 @@
+# Sampling by binary search, and formulas + utilities compiled with JAX (docs/jax_experiment.md).
+# The defaults stay the reference; these are alternatives to measure. Run per step with --step.
+step: workplace_location
+repeat: 3
+experiments:
+  reference: {}
+  sample_binary_search: {sample: binary_search}
+  jax: {utilities: jax, interaction_utilities: jax}            # compiles in every new process
+  jax_cached:                                                    # compiled code kept on disk, reused
+    seams: {utilities: jax, interaction_utilities: jax}
+    env: {ASIM_JAX_CACHE_DIR: asim_core/work/jax_cache}

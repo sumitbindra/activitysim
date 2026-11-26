@@ -1,0 +1,104 @@
+# MWCOG example: input columns beyond asim_core's standard tables.
+# Column names are as the models see them, after settings.yaml's renames.
+# Several columns are PUMS variables, where -9 means "not applicable".
+
+tables:
+  households:
+    columns:
+      puma_geoid: {type: int64, description: PUMA the household was drawn from.}
+      TYPE:
+        type: int64
+        description: "PUMS TYPE: 1 housing unit, 2 institutional group quarters, 3 non-institutional group quarters."
+        values: [1, 2, 3]
+      auto_ownership:
+        type: int64
+        unit: vehicles
+        description: Vehicles in the input (PUMS VEH, -9 for group quarters); the auto ownership model replaces it.
+        min: -9
+      HHT: {type: int64, description: PUMS household type (1 to 7)., values: [1, 2, 3, 4, 5, 6, 7]}
+      hhincadj: {type: int64, unit: dollars per year, description: "Household income (can be negative, as in PUMS)."}
+      workers: {type: int64, unit: persons, description: Workers in the household., min: 0}
+      has_children: {type: int64, description: "1 yes, 0 no, -9 not applicable.", values: [-9, 0, 1]}
+
+  persons:
+    columns:
+      puma_geoid: {type: int64, description: PUMA the person was drawn from.}
+      TAZ: {type: int64, description: Zone the person lives in., references: land_use.zone_id}
+      per_num: {type: int64, description: Person number within the household., min: 1}
+      age: {type: int64, unit: years, min: 0, max: 120, warn_above: 100}
+      SEX: {type: int64, description: "1 male, 2 female.", values: [1, 2]}
+      WKHP: {type: int64, unit: hours per week, description: Usual hours worked (-9 not applicable)., min: -9, max: 99}
+      WKW: {type: int64, description: PUMS weeks worked last year (codes 1 to 6; -9 not applicable)., values: [-9, 1, 2, 3, 4, 5, 6]}
+      ESR: {type: int64, description: PUMS employment status (codes 1 to 6; -9 not applicable)., values: [-9, 1, 2, 3, 4, 5, 6]}
+      RAC1P: {type: int64, description: PUMS race (codes 1 to 9)., min: 1, max: 9}
+      HISP: {type: int64, description: PUMS Hispanic origin (codes 1 to 24)., min: 1, max: 24}
+      SCHG: {type: int64, description: PUMS grade attending (codes 1 to 16; -9 not attending)., min: -9, max: 16}
+      MIL: {type: int64, description: PUMS military service (codes 1 to 4; -9 not applicable)., values: [-9, 1, 2, 3, 4]}
+      NAICSP: {type: str, description: PUMS industry code (NAICS)., missing_allowed: true}
+      INDP: {type: int64, description: PUMS industry code., missing_allowed: true}
+
+  land_use:
+    columns:
+      HH: {type: int64, unit: households, description: Households., min: 0}
+      HHPOP: {type: int64, unit: persons, description: Population in households., min: 0}
+      GQPOP: {type: int64, unit: persons, description: Population in group quarters., min: 0}
+      TOTPOP:
+        type: int64
+        unit: persons
+        description: Total population.
+        min: 0
+        sum_of: [HHPOP, GQPOP]
+        sum_tolerance: 1
+      TOTEMP:
+        type: int64
+        unit: jobs
+        description: Total employment.
+        min: 0
+        sum_of: [INDEMP, RETEMP, OFFEMP, OTHEMP]
+        sum_tolerance: 1
+      INDEMP: {type: int64, unit: jobs, description: Industrial employment., min: 0}
+      RETEMP: {type: int64, unit: jobs, description: Retail employment., min: 0}
+      OFFEMP: {type: int64, unit: jobs, description: Office employment., min: 0}
+      OTHEMP: {type: int64, unit: jobs, description: Other employment., min: 0}
+      JURCODE: {type: int64, description: Jurisdiction code., min: 0}
+      LANDAREA: {type: float64, unit: square miles, description: Land area (the models multiply by 640 for acres)., min: 0}
+      HHINCIDX: {type: int64}
+      ADISTTOX: {type: float64}
+      TAZXCRD: {type: int64, description: Zone x coordinate.}
+      TAZYCRD: {type: int64, description: Zone y coordinate.}
+      K_8: {type: int64, unit: students, description: Kindergarten to grade 8 enrollment., min: 0}
+      G9_12: {type: int64, unit: students, description: Grade 9 to 12 enrollment., min: 0}
+      COLLEGE: {type: int64, unit: students, description: College enrollment., min: 0}
+      Park_Acres: {type: float64, unit: acres, description: Park area., min: 0}
+      GC_Acres: {type: float64, unit: acres, min: 0}
+      PRKCST: {type: float64, unit: cents, description: Long-term parking cost., min: 0}
+      OPRKCST: {type: float64, unit: cents, description: Short-term parking cost., min: 0}
+      TERMINAL: {type: float64, unit: minutes, description: Terminal time., min: 0}
+      AREATYPE: {type: int64, description: Area type (lower is more urban)., min: 1}
+
+# The skims. Transit times are in minutes, fares in cents. "typical" is the
+# range a skim's median positive value should be in (a skim in other units
+# falls outside it). Names are matched without the time period, first
+# pattern first.
+skims:
+  distance: DIST
+  zone_order:
+    area: LANDAREA
+    x: TAZXCRD
+    y: TAZYCRD
+    district: JURCODE
+  measures:
+    DIST: {unit: miles, typical: [0.1, 300], max: 1000, intrazonal: positive}
+    DISTWALK: {unit: miles, typical: [0.1, 300], intrazonal: positive}
+    DISTBIKE: {unit: miles, typical: [0.1, 300], intrazonal: positive}
+    "*_DDIST": {unit: miles, description: Drive access or egress distance., typical: [0.01, 300]}
+    "*_DIST": {unit: miles, description: Highway distance., typical: [0.1, 300], max: 1000, intrazonal: positive}
+    "*_TIME": {unit: minutes, description: Highway time., typical: [0.5, 300], per_distance: [0.3, 30],
+               max: 1440, intrazonal: positive}
+    "*_DTIME": {unit: minutes, description: Drive access or egress time., typical: [0.05, 300]}
+    "*_IVT*": {unit: minutes, description: In-vehicle time., typical: [0.05, 300]}
+    "*_TOTTT": {unit: minutes, description: Total travel time., typical: [0.5, 600]}
+    "*WAIT": {unit: minutes, description: Wait time., typical: [0.05, 300]}
+    "*_WACC_EGR": {unit: minutes, description: Walk access and egress time., typical: [0.05, 300]}
+    "*_WAUX": {unit: minutes, description: Auxiliary walk time., typical: [0.01, 300]}
+    "*_FARE": {unit: cents, description: Fare., typical: [20, 5000]}

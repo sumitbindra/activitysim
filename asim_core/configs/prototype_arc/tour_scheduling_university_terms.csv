@@ -1,0 +1,42 @@
+Label,Description,Formula,coefficient
+,UNIVERSITY - Mode Choice Logsum,mode_choice_logsum,0.384091138
+,UNIVERSITY - Low income (<25000) - Departure before 8:00 am  - Linear,"(person.is_income_less25K and alt.start < 11) * (min(11 - alt.start, 8) * (alt.start <= 11) + min(alt.start - 11, 22) * (alt.start > 11))",0.246389489
+,UNIVERSITY - Low income (<25000) - Duration < 4hrs,"(person.is_income_less25K and alt.duration < 8) * (min(8 - alt.duration, 6) * (alt.duration <= 8) + min(alt.duration - 8, 28) * (alt.duration > 8))",-0.262288853
+,UNIVERSITY - Medium high income (60k to 120k) - Departure after 8:30 am - Linear,"(person.is_income_60K_to_120K and alt.start > 11) * (min(11 - alt.start, 8) * (alt.start <= 11) + min(alt.start - 11, 22) * (alt.start > 11))",-0.039079271
+,UNIVERSITY - Medium high income (60k to 120k) - Duration > 4hrs,"(person.is_income_60K_to_120K and alt.duration > 8) * (min(8 - alt.duration, 6) * (alt.duration <= 8) + min(alt.duration - 8, 28) * (alt.duration > 8))",-0.041536976
+,UNIVERSITY - High income (120k+) - Departure after 8:30 am - Linear,"(person.is_income_greater120K and alt.start > 11) * (min(11 - alt.start, 8) * (alt.start <= 11) + min(alt.start - 11, 22) * (alt.start > 11))",-0.039306518
+,UNIVERSITY - Age 41+ - Departure after 8:30 am - Linear,"(person.age >= 41 and alt.start > 11) * (min(11 - alt.start, 8) * (alt.start <= 11) + min(alt.start - 11, 22) * (alt.start > 11))",0.055344625
+,UNIVERSITY - Age 41+ - Duration< 4 hrs -Linear,"(person.age >= 41 and alt.duration < 8) * (min(8 - alt.duration, 6) * (alt.duration <= 8) + min(alt.duration - 8, 28) * (alt.duration > 8))",-0.152498075
+,UNIVERSITY - Distance to destination - Departure before 8:00 am  - Linear,"(alt.start < 11) * (min(11 - alt.start, 8) * (alt.start <= 11) + min(alt.start - 11, 22) * (alt.start > 11)) * person.distance_to_school",0.006869786
+,UNIVERSITY - Distance to destination - Departure after 8:30 am - Linear,"(alt.start > 11) * (min(11 - alt.start, 8) * (alt.start <= 11) + min(alt.start - 11, 22) * (alt.start > 11)) * person.distance_to_school",0.003686402
+,UNIVERSITY - Distance to destination - Duration< 4 hrs -Linear,"(alt.duration < 8) * (min(8 - alt.duration, 6) * (alt.duration <= 8) + min(alt.duration - 8, 28) * (alt.duration > 8)) * person.distance_to_school",-0.04027172
+,UNIVERSITY - Distance to destination - Duration> 4 hrs- Linear,"(alt.duration > 8) * (min(8 - alt.duration, 6) * (alt.duration <= 8) + min(alt.duration - 8, 28) * (alt.duration > 8)) * person.distance_to_school",0.003803244
+,UNIVERSITY - Distance to destination - Duration< 4 hrs -  Square Root,"(alt.duration < 8) * abs(min(8 - alt.duration, 6) * (alt.duration <= 8) + min(alt.duration - 8, 28) * (alt.duration > 8)) ** 0.5 * person.distance_to_school",0.041070113
+,UNIVERSITY - Subsequent tour is work tour: Departure after 8:30 am,"(((tour.tour_count > 1 and tour.tour_num > 1) and tour.tour_type == 'work') and alt.start > 11) * (min(11 - alt.start, 8) * (alt.start <= 11) + min(alt.start - 11, 22) * (alt.start > 11))",-0.29166292
+,UNIVERSITY - Subsequent tour is work tour: Duration < 4 hours,"(((tour.tour_count > 1 and tour.tour_num > 1) and tour.tour_type == 'work') and alt.duration < 8) * (min(8 - alt.duration, 6) * (alt.duration <= 8) + min(alt.duration - 8, 28) * (alt.duration > 8))",-0.482292817
+,UNIVERSITY - Subsequent tour is work tour: Duration > 4 hours,"(((tour.tour_count > 1 and tour.tour_num > 1) and tour.tour_type == 'work') and alt.duration > 8) * (min(8 - alt.duration, 6) * (alt.duration <= 8) + min(alt.duration - 8, 28) * (alt.duration > 8))",-0.364624965
+,UNIVERSITY - Subsequent tour is school tour: Departure after 8:30 am,"(((tour.tour_count > 1 and tour.tour_num > 1) and tour.tour_type == 'school') and alt.start > 11) * (min(11 - alt.start, 8) * (alt.start <= 11) + min(alt.start - 11, 22) * (alt.start > 11))",-0.286206955
+,UNIVERSITY - Subsequent tour is school tour: Duration < 4 hours,"(((tour.tour_count > 1 and tour.tour_num > 1) and tour.tour_type == 'school') and alt.duration < 8) * (min(8 - alt.duration, 6) * (alt.duration <= 8) + min(alt.duration - 8, 28) * (alt.duration > 8))",0.30341795
+,UNIVERSITY - Subsequent tour is school tour: Duration > 4 hours,"(((tour.tour_count > 1 and tour.tour_num > 1) and tour.tour_type == 'school') and alt.duration > 8) * (min(8 - alt.duration, 6) * (alt.duration <= 8) + min(alt.duration - 8, 28) * (alt.duration > 8))",-0.247436221
+,UNIVERSITY - Second tour of two mandatory tours: Duration < 4 hours,"((tour.tour_count > 1 and tour.tour_num > 1) and alt.duration < 8) * (min(8 - alt.duration, 6) * (alt.duration <= 8) + min(alt.duration - 8, 28) * (alt.duration > 8))",-0.211059285
+,UNIVERSITY - Second tour of two mandatory tours: Duration > 4 hours,"((tour.tour_count > 1 and tour.tour_num > 1) and alt.duration > 8) * (min(8 - alt.duration, 6) * (alt.duration <= 8) + min(alt.duration - 8, 28) * (alt.duration > 8))",-0.35316727
+,UNIVERSITY - Departure Constant: Shift for every 30 minutes before 07:00 am - Linear,"(alt.start < 9) * (min(9 - alt.start, 6) * (alt.start < 9) + min(alt.start - 13, 20) * (alt.start > 13))",-0.947594485
+,UNIVERSITY - Departure Constant: Before 07:30 AM,alt.start < 10,-0.296228472
+,UNIVERSITY - Departure Constant: 07:30 AM - 08:00 AM,alt.start == 10,-0.650538708
+,UNIVERSITY - Departure Constant: 08:00 AM - 08:30 AM,alt.start == 11,0.0
+,UNIVERSITY - Departure Constant: 08:30 AM - 09:00 AM,alt.start == 12,-0.525569176
+,UNIVERSITY - Departure Constant: After 09:00 AM,alt.start > 12,-0.536008149
+,UNIVERSITY - Departure Constant: Shift for every 30 minutes after 09:30 am - Square Root,"(alt.start > 13) * (min(9 - alt.start, 6) * (alt.start < 9) + min(alt.start - 13, 20) * (alt.start > 13)) ** 0.5",-0.500045988
+,UNIVERSITY - Arrival Constant: Shift for every 30 minutes before 02:30 pm - Linear,"(alt.end < 24) * (min(24 - alt.end, 12) * (alt.end < 24) + min(alt.end - 28, 19) * (alt.end > 28))",-0.209375282
+,UNIVERSITY - Arrival Constant: Before 03:00 PM,alt.end < 25,-0.962572172
+,UNIVERSITY - Arrival Constant: 03:00 PM - 03:30 PM,alt.end == 25,-0.627901132
+,UNIVERSITY - Arrival Constant: 03:30 PM - 04:00 PM,alt.end == 26,0.0
+,UNIVERSITY - Arrival Constant: 04:00 PM - 04:30 PM,alt.end == 27,-0.190818088
+,UNIVERSITY - Arrival Constant: After 04:30 PM,alt.end > 27,-0.66545038
+,UNIVERSITY - Arrival Constant: Shift for every 30 minutes after 05:00 pm - Linear,"(alt.end > 28) * (min(24 - alt.end, 12) * (alt.end < 24) + min(alt.end - 28, 19) * (alt.end > 28))",-0.209562151
+,UNIVERSITY - Arrival Constant: Shift for every 30 minutes after 05:00 pm - Square Root,"(alt.end > 28) * (min(24 - alt.end, 12) * (alt.end < 24) + min(alt.end - 28, 19) * (alt.end > 28)) ** 0.5",0.503497689
+,UNIVERSITY - Duration Constant: Shift for every 30 minutes less than 4.5 hrs - Square Root,"(alt.duration < 9) * (min(9 - alt.duration, 7) * (alt.duration < 9) + min(alt.duration - 11, 25) * (alt.duration > 11))",0.225706446
+,UNIVERSITY - Duration Constant: 4.5 hours or less,alt.duration < 10,0.03106769
+,DUNIVERSITY - Duration Constant: 5 hours,alt.duration == 10,0.0
+,UNIVERSITY - Duration Constant: 5.5 hours or more,alt.duration > 10,0.343447232
+,UNIVERSITY - Duration Constant: Shift for every 30 minutes more than 5.5 hrs - Linear,"(alt.duration > 11) * (min(9 - alt.duration, 7) * (alt.duration < 9) + min(alt.duration - 11, 25) * (alt.duration > 11)) ** 0.5",-0.115312573

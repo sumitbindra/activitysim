@@ -1,0 +1,29 @@
+# Experiments for run_experiments.py.
+#
+# Each experiment picks an implementation for some of the swappable pieces
+# ("seams"); pieces not named use the reference implementation. To see what's
+# available:
+#
+#   python asim_core/harness/run_experiments.py --list
+#
+# Every experiment is checked against ActivitySim 1.x and profiled in fresh
+# processes, next to the 1.x legacy and sharrow baselines.
+
+step: auto_ownership_simulate
+repeat: 5
+
+experiments:
+  reference: {}
+  accumulate_utilities:
+    utilities: accumulate
+  counter_random:
+    random: counter
+  accumulate_and_counter:
+    utilities: accumulate
+    random: counter
+
+# Each piece also timed on its own with synthetic data, at these row counts,
+# to show how costs grow beyond this small example.
+seam_benchmarks:
+  rows: [100000, 1000000]
+  utilities: {terms: 29, alternatives: 5}

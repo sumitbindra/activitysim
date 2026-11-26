@@ -1,0 +1,8 @@
+# Skim lookups and access on full MTC zones (docs/skim_experiments.md).
+# Run per step with --step, --page-cache cold warm.
+step: tour_mode_choice_simulate
+repeat: 3
+experiments:
+  reference: {}                         # flat_take with shared zone-pair positions, memory-mapped
+  index_2d: {skim_lookup: index_2d}     # the default before the experiment
+  prefault: {skim_access: prefault}     # pages of the declared skims mapped up front

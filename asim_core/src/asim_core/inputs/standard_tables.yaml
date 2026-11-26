@@ -1,0 +1,55 @@
+# Standard input tables: the columns every region has, under these names,
+# after the renames in its settings.yaml (input_table_list).
+#
+# A region describes its other columns, or changes a rule here, in an
+# input_tables.yaml in its configs folder, in the same format.
+#
+# Rules that stop the run:  min, max, values, unique, references, count_of,
+#                           and missing values (unless missing_allowed: true)
+# Rules that only warn:     warn_below, warn_above, sum_of (with sum_tolerance)
+
+tables:
+  households:
+    description: One row per household of the synthetic population.
+    id: household_id
+    columns:
+      household_id:
+        type: int64
+        description: Household ID.
+        unique: true
+        min: 0
+      home_zone_id:
+        type: int64
+        description: Zone the household lives in.
+        references: land_use.zone_id
+      hhsize:
+        type: int64
+        description: Number of persons in the household.
+        unit: persons
+        min: 1
+        warn_above: 20
+        count_of: persons.household_id
+
+  persons:
+    description: One row per person of the synthetic population.
+    id: person_id
+    columns:
+      person_id:
+        type: int64
+        description: Person ID.
+        unique: true
+        min: 0
+      household_id:
+        type: int64
+        description: Household the person belongs to.
+        references: households.household_id
+
+  land_use:
+    description: One row per zone.
+    id: zone_id
+    columns:
+      zone_id:
+        type: int64
+        description: Zone ID.
+        unique: true
+        min: 0

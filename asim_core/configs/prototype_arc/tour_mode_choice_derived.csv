@@ -1,0 +1,74 @@
+Description,Name,Formula
+local,_DF_IS_TOUR,has_tour_type
+,number_of_participants,tour.number_of_participants if _DF_IS_TOUR else 1
+,is_joint,tour.tour_category == 'joint' if _DF_IS_TOUR else False
+local,_HAVE_PARENT_TOURS,has_parent_tour_id
+,_parent_tour_mode,tours.tour_mode[tour.parent_tour_id] if _HAVE_PARENT_TOURS else ''
+,work_tour_is_drive,"_parent_tour_mode in ['DRIVEALONEFREE', 'DRIVEALONEPAY']"
+,work_tour_is_bike,_parent_tour_mode == 'BIKE'
+,work_tour_is_SOV,"_parent_tour_mode in ['DRIVEALONEFREE', 'DRIVEALONEPAY']"
+,is_mandatory,"tour.tour_type in ['work', 'school'] if _DF_IS_TOUR else False"
+,is_work,tour.tour_type == 'work' if _DF_IS_TOUR else False
+,is_school,tour.tour_type == 'school' and person.is_k12 if _DF_IS_TOUR else False
+,is_escort,tour.tour_type == 'escort' if _DF_IS_TOUR else False
+,is_eatout,tour.tour_type == 'eatout' if _DF_IS_TOUR else False
+,is_social,tour.tour_type == 'social' if _DF_IS_TOUR else False
+,is_othdiscr,tour.tour_type == 'othdiscr' if _DF_IS_TOUR else False
+,is_shopping,tour.tour_type == 'shopping' if _DF_IS_TOUR else False
+,is_university,tour.tour_type == 'univ' if _DF_IS_TOUR else False
+,is_joint,tour.tour_category == 'joint' if has_tour_category else False
+,is_indiv,not is_joint
+,is_atwork_subtour,tour.tour_category == 'atwork' if has_tour_category else False
+,is_intrazonal,person.home_zone_id == tour.destination if has_destination else person.home_zone_id == tour.alt_dest
+,coef_cost,coef_cost_low * person.is_low_income + coef_cost_med * person.is_medium_income + coef_cost_high * person.is_high_income + coef_cost_high * person.is_very_high_income
+,_free_parking_available,tour.tour_type == 'work' and person.free_parking_at_work if _DF_IS_TOUR else False
+,pay_to_park,not _free_parking_available
+SOV Pay unavailable if toll distance = 0,SOV_PAY_Available,"skim.SOV_TOLL_TOLLDISTANCE[o, d, out_period] > 0 and skim.SOV_TOLL_TOLLDISTANCE[d, o, in_period] > 0"
+HOV 2 Pay unavailable if toll distance = 0,HOV2_PAY_Available,"skim.HOV2_TOLL_TOLLDISTANCE[o, d, out_period] > 0 and skim.HOV2_TOLL_TOLLDISTANCE[d, o, in_period] > 0"
+HOV 3+ Pay unavailable if toll distance = 0,HOV3_PAY_Available,"skim.HOV3_TOLL_TOLLDISTANCE[o, d, out_period] > 0 and skim.HOV3_TOLL_TOLLDISTANCE[d, o, in_period] > 0"
+WALK mode availability,WalkModeAvailable,"skim.SOV_FREE_DISTANCE[o, d, out_period] < 3 and skim.SOV_FREE_DISTANCE[d, o, in_period] < 3"
+BIKE mode availability,BikeModeAvailable,"skim.SOV_FREE_DISTANCE[o, d, out_period] < 8 and skim.SOV_FREE_DISTANCE[d, o, in_period] < 8"
+WLKALL transit in-vehicle time - outbound direction,WalkAllTotalIVT_out,"skim.WLK_ALLTRN_WLK_LOCAL[o, d, out_period] + expr * skim.WLK_ALLTRN_WLK_XBUS[o, d, out_period] + hrt * skim.WLK_ALLTRN_WLK_HRT[o, d, out_period] + brt * skim.WLK_ALLTRN_WLK_BRT[o, d, out_period] + lrt * skim.WLK_ALLTRN_WLK_LRT[o, d, out_period] + crl * skim.WLK_ALLTRN_WLK_COMRAIL[o, d, out_period]"
+WLKALL transit in-vehicle time - return direction,WalkAllTotalIVT_ret,"skim.WLK_ALLTRN_WLK_LOCAL[d, o, in_period] + expr * skim.WLK_ALLTRN_WLK_XBUS[d, o, in_period] + hrt * skim.WLK_ALLTRN_WLK_HRT[d, o, in_period] + brt * skim.WLK_ALLTRN_WLK_BRT[d, o, in_period] + lrt * skim.WLK_ALLTRN_WLK_LRT[d, o, in_period] + crl * skim.WLK_ALLTRN_WLK_COMRAIL[d, o, in_period]"
+WLKALL availability,WalkAllTransitAvailable,"skim.WLK_ALLTRN_WLK_LOCAL[o, d, out_period] * skim.WLK_ALLTRN_WLK_LOCAL[d, o, in_period] > 0"
+WLKPRM transit in-vehicle time - outbound direction,WalkPrmTotalIVT_out,"skim.WLK_PRMTRN_WLK_LOCAL[o, d, out_period] + expr * skim.WLK_PRMTRN_WLK_XBUS[o, d, out_period] + hrt * skim.WLK_PRMTRN_WLK_HRT[o, d, out_period] + brt * skim.WLK_PRMTRN_WLK_BRT[o, d, out_period] + lrt * skim.WLK_PRMTRN_WLK_LRT[o, d, out_period] + crl * skim.WLK_PRMTRN_WLK_COMRAIL[o, d, out_period]"
+WLKPRM transit in-vehicle time - return direction,WalkPrmTotalIVT_ret,"skim.WLK_PRMTRN_WLK_LOCAL[d, o, in_period] + expr * skim.WLK_PRMTRN_WLK_XBUS[d, o, in_period] + hrt * skim.WLK_PRMTRN_WLK_HRT[d, o, in_period] + brt * skim.WLK_PRMTRN_WLK_BRT[d, o, in_period] + lrt * skim.WLK_PRMTRN_WLK_LRT[d, o, in_period] + crl * skim.WLK_PRMTRN_WLK_COMRAIL[d, o, in_period]"
+WLKPRM availability,WalkPrmTransitAvailable,"(WalkPrmTotalIVT_out > 0 and WalkPrmTotalIVT_ret > 0) and skim.WLK_PRMTRN_WLK_LOCAL[o, d, out_period] + skim.WLK_PRMTRN_WLK_LOCAL[d, o, in_period] == 0"
+is_morning_period,_is_morning_period,"out_period in ['EA', 'AM', 'MD']"
+is_afternoon_period,_is_afternoon_period,"in_period in ['PM', 'EV']"
+PNRALL transit in-vehicle time - outbound,PNRAllTotalIVT_out,"_is_morning_period * skim.PNR_ALLTRN_WLK_LOCAL[o, d, out_period] + _is_morning_period * expr * skim.PNR_ALLTRN_WLK_XBUS[o, d, out_period] + _is_morning_period * hrt * skim.PNR_ALLTRN_WLK_HRT[o, d, out_period] + _is_morning_period * brt * skim.PNR_ALLTRN_WLK_BRT[o, d, out_period] + _is_morning_period * lrt * skim.PNR_ALLTRN_WLK_LRT[o, d, out_period] + crl * skim.PNR_ALLTRN_WLK_COMRAIL[o, d, out_period]"
+PNRALL transit in-vehicle time - inbound,PNRAllTotalIVT_ret,"_is_afternoon_period * skim.WLK_ALLTRN_PNR_LOCAL[d, o, in_period] + _is_afternoon_period * expr * skim.WLK_ALLTRN_PNR_XBUS[d, o, in_period] + _is_afternoon_period * hrt * skim.WLK_ALLTRN_PNR_HRT[d, o, in_period] + _is_afternoon_period * brt * skim.WLK_ALLTRN_PNR_BRT[d, o, in_period] + _is_afternoon_period * lrt * skim.WLK_ALLTRN_PNR_LRT[d, o, in_period] + crl * skim.WLK_ALLTRN_PNR_COMRAIL[d, o, in_period]"
+PNRALL transit total in-vehicle time,PNRALLTotalIVT,PNRAllTotalIVT_out + PNRAllTotalIVT_ret
+PNRAllTransitAvailable_outbound direction,PNRAllTransitAvailable_out,"_is_morning_period * skim.PNR_ALLTRN_WLK_LOCAL[o, d, out_period]"
+PNRAllTransitAvailable_return direction,PNRAllTransitAvailable_ret,"_is_afternoon_period * skim.WLK_ALLTRN_PNR_LOCAL[d, o, in_period]"
+PNRAllTransitAvailable,PNRAllTransitAvailable,PNRAllTransitAvailable_out * PNRAllTransitAvailable_ret > 0
+PNRPRM transit in-vehicle time - outbound,PNRPrmTotalIVT_out,"_is_morning_period * skim.PNR_PRMTRN_WLK_LOCAL[o, d, out_period] + _is_morning_period * expr * skim.PNR_PRMTRN_WLK_XBUS[o, d, out_period] + _is_morning_period * hrt * skim.PNR_PRMTRN_WLK_HRT[o, d, out_period] + _is_morning_period * brt * skim.PNR_PRMTRN_WLK_BRT[o, d, out_period] + _is_morning_period * lrt * skim.PNR_PRMTRN_WLK_LRT[o, d, out_period] + crl * skim.PNR_PRMTRN_WLK_COMRAIL[o, d, out_period]"
+PNRPRM transit in-vehicle time - inbound,PNRPrmTotalIVT_ret,"_is_afternoon_period * skim.WLK_PRMTRN_PNR_LOCAL[d, o, in_period] + _is_afternoon_period * expr * skim.WLK_PRMTRN_PNR_XBUS[d, o, in_period] + _is_afternoon_period * hrt * skim.WLK_PRMTRN_PNR_HRT[d, o, in_period] + _is_afternoon_period * brt * skim.WLK_PRMTRN_PNR_BRT[d, o, in_period] + _is_afternoon_period * lrt * skim.WLK_PRMTRN_PNR_LRT[d, o, in_period] + crl * skim.WLK_PRMTRN_PNR_COMRAIL[d, o, in_period]"
+PNRPRM transit total in-vehicle time,PNRPrmTotalIVT,PNRPrmTotalIVT_out + PNRPrmTotalIVT_ret
+PNRPrmTransitAvailable,PNRPrmTransitAvailable,PNRPrmTotalIVT_out * PNRPrmTotalIVT_ret > 0
+KNRALL transit in-vehicle time - outbound,KNRAllTotalIVT_out,"_is_morning_period * skim.KNR_ALLTRN_WLK_LOCAL[o, d, out_period] + _is_morning_period * expr * skim.KNR_ALLTRN_WLK_XBUS[o, d, out_period] + _is_morning_period * hrt * skim.KNR_ALLTRN_WLK_HRT[o, d, out_period] + _is_morning_period * brt * skim.KNR_ALLTRN_WLK_BRT[o, d, out_period] + _is_morning_period * lrt * skim.KNR_ALLTRN_WLK_LRT[o, d, out_period] + crl * skim.KNR_ALLTRN_WLK_COMRAIL[o, d, out_period]"
+KNRALL transit in-vehicle time - inbound,KNRAllTotalIVT_ret,"_is_afternoon_period * skim.WLK_ALLTRN_KNR_LOCAL[d, o, in_period] + _is_afternoon_period * expr * skim.WLK_ALLTRN_KNR_XBUS[d, o, in_period] + _is_afternoon_period * hrt * skim.WLK_ALLTRN_KNR_HRT[d, o, in_period] + _is_afternoon_period * brt * skim.WLK_ALLTRN_KNR_BRT[d, o, in_period] + _is_afternoon_period * lrt * skim.WLK_ALLTRN_KNR_LRT[d, o, in_period] + crl * skim.WLK_ALLTRN_KNR_COMRAIL[d, o, in_period]"
+KNRALL transit total in-vehicle time,KNRALLTotalIVT,KNRAllTotalIVT_out + KNRAllTotalIVT_ret
+KNRAllTransitAvailable_outbound direction,KNRAllTransitAvailable_out,"_is_morning_period * skim.KNR_ALLTRN_WLK_LOCAL[o, d, out_period]"
+KNRAllTransitAvailable_return direction,KNRAllTransitAvailable_ret,"_is_afternoon_period * skim.WLK_ALLTRN_KNR_LOCAL[d, o, in_period]"
+KNRAllTransitAvailable,KNRAllTransitAvailable,KNRAllTransitAvailable_out * KNRAllTransitAvailable_ret > 0
+KNRPRM transit in-vehicle time - outbound,KNRPrmTotalIVT_out,"_is_morning_period * skim.KNR_PRMTRN_WLK_LOCAL[o, d, out_period] + _is_morning_period * expr * skim.KNR_PRMTRN_WLK_XBUS[o, d, out_period] + _is_morning_period * hrt * skim.KNR_PRMTRN_WLK_HRT[o, d, out_period] + _is_morning_period * brt * skim.KNR_PRMTRN_WLK_BRT[o, d, out_period] + _is_morning_period * lrt * skim.KNR_PRMTRN_WLK_LRT[o, d, out_period] + crl * skim.KNR_PRMTRN_WLK_COMRAIL[o, d, out_period]"
+KNRPRM transit in-vehicle time - inbound,KNRPrmTotalIVT_ret,"_is_afternoon_period * skim.WLK_PRMTRN_KNR_LOCAL[d, o, in_period] + _is_afternoon_period * expr * skim.WLK_PRMTRN_KNR_XBUS[d, o, in_period] + _is_afternoon_period * hrt * skim.WLK_PRMTRN_KNR_HRT[d, o, in_period] + _is_afternoon_period * brt * skim.WLK_PRMTRN_KNR_BRT[d, o, in_period] + _is_afternoon_period * lrt * skim.WLK_PRMTRN_KNR_LRT[d, o, in_period] + crl * skim.WLK_PRMTRN_KNR_COMRAIL[d, o, in_period]"
+KNRPRM transit total in-vehicle time,KNRPrmTotalIVT,KNRPrmTotalIVT_out + KNRPrmTotalIVT_ret
+KNRPrmTransitAvailable,KNRPrmTransitAvailable,KNRPrmTotalIVT_out * KNRPrmTotalIVT_ret > 0
+MARTA Time for PNR All Transit in Outbound Dir,PNRHRTAllTransit_out,"_is_morning_period * skim.PNR_ALLTRN_WLK_HRT[o, d, out_period]"
+MARTA Time for PNR All Transit in Inbound Dir,PNRHRTAllTransit_ret,"_is_afternoon_period * skim.WLK_ALLTRN_PNR_HRT[d, o, in_period]"
+MARTA Time for PNR Premium in Outbound Dir,PNRHRTPremium_out,"_is_morning_period * skim.PNR_PRMTRN_WLK_HRT[o, d, out_period]"
+MARTA Time for PNR Premium in Inbound Dir,PNRHRTPremium_ret,"_is_afternoon_period * skim.WLK_PRMTRN_PNR_HRT[d, o, in_period]"
+MARTA Time for KNR All Transit in Outbound Dir,KNRHRTAllTransit_out,"_is_morning_period * skim.KNR_ALLTRN_WLK_HRT[o, d, out_period]"
+MARTA Time for KNR All Transit in Inbound Dir,KNRHRTAllTransit_ret,"_is_afternoon_period * skim.WLK_ALLTRN_KNR_HRT[d, o, in_period]"
+MARTA Time for KNR Premium in Outbound Dir,KNRHRTPremium_out,"_is_morning_period * skim.KNR_PRMTRN_WLK_HRT[o, d, out_period]"
+MARTA Time for KNR Premium in Inbound Dir,KNRHRTPremium_ret,"_is_afternoon_period * skim.WLK_PRMTRN_KNR_HRT[d, o, in_period]"
+Depart before 6 AM (todOut==1),dep_wk_before_6_am,out_period in ['EA']
+Depart after 4 PM (todOut>4 was used in work expressions),dep_wk_after_4_pm,out_period in ['EV']
+Depart after 4 PM (for non-mandatory and at-work expressions),dep_after_4_pm,"tour.start > 26 if has_start else out_period in ['PM', 'EV']"
+"Arrive after 7PM (in java code, it was defined based on depart period)",arr_after_7_pm,tour.end > 32 if has_end else in_period in ['EV']
+destination in central business district,destination_in_cbd,land_use.CBDFlag[d] > 0
+Inc_PCTLT10K,Inc_PCTLT10K,"(min(max(person.I_PCTLT10K, 5), 30) - 5) / 25"
+Inc_PCT10TO20,Inc_PCT10TO20,"(min(max(household.I_PCT10TO20, 5), 30) - 5) / 25"
+Inc_PCT20TO40,Inc_PCT20TO40,"(min(max(household.I_PCT20TO40, 5), 30) - 5) / 25"

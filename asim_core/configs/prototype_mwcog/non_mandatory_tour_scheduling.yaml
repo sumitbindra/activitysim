@@ -1,0 +1,37 @@
+# asim_core model file (formulas in asim_core's language; see docs/model_files.md)
+# alt.<column>: the departure-return option; mode_choice_logsum, out_period,
+# in_period, start_previous, end_previous: worked out by the step
+
+kind: tour_scheduling
+description: Departure and return times for non-mandatory tours (converted from non_mandatory_tour_scheduling.yaml
+  and the files it names).
+tours: non_mandatory
+segment: tour.tour_type
+derived: non_mandatory_tour_scheduling_derived.csv
+derived_tables:
+- land_use
+- joint_tour_participants
+specs:
+  escort:
+    terms: tour_scheduling_nonmandatory_escort_terms.csv
+    coefficients: tour_scheduling_nonmandatory_escort_coefficients.csv
+  shopping:
+    terms: tour_scheduling_nonmandatory_shopping_terms.csv
+    coefficients: tour_scheduling_nonmandatory_shopping_coefficients.csv
+  eatout:
+    terms: tour_scheduling_nonmandatory_eatout_terms.csv
+    coefficients: tour_scheduling_nonmandatory_eatout_coefficients.csv
+  othdiscr:
+    terms: tour_scheduling_nonmandatory_othdiscr_terms.csv
+    coefficients: tour_scheduling_nonmandatory_othdiscr_coefficients.csv
+  othmaint:
+    terms: tour_scheduling_nonmandatory_othmaint_terms.csv
+    coefficients: tour_scheduling_nonmandatory_othmaint_coefficients.csv
+  social:
+    terms: tour_scheduling_nonmandatory_social_terms.csv
+    coefficients: tour_scheduling_nonmandatory_social_coefficients.csv
+alternatives: tour_departure_and_duration_alternatives.csv
+options:
+  utility_shift: false
+  max_rows: null
+  tours_without_spec: error

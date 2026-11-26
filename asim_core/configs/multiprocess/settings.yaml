@@ -1,0 +1,32 @@
+# Run a model in several processes, set up as ActivitySim 1.x's examples do (MTC's configs_mp).
+# List this folder first, before the region's own configs folders; everything else is inherited:
+#   --configs <this folder> configs                                   (MTC example, full MTC)
+#   --configs <this folder> configs_1_zone ../prototype_mtc/configs   (SANDAG one-zone)
+# 1.x reads it the same way, so the same folder runs both.
+inherit_settings: True
+multiprocess: True
+fail_fast: True  # 1.x requires it in multiprocess runs; results unchanged
+
+# How many processes run the households' steps. Change it here, or on the command line:
+# -m N (--multiprocess N), as 1.x's own -m N. More processes use more cores, and more memory
+# (each holds its share of the households and its own copy of the model, about 0.5 to 0.9 GB at
+# 50,000 households on full MTC zones); the skims are one shared file whatever the number.
+num_processes: 4
+
+multiprocess_steps:
+  - name: mp_initialize           # land use and households: the main process
+    begin: initialize_landuse
+  - name: mp_accessibility        # by zone (asim_core: once, in the main process)
+    begin: compute_accessibility
+    slice:
+      tables:
+        - accessibility
+      exclude: True
+  - name: mp_households           # the households' steps: split among the processes
+    begin: school_location
+    slice:
+      tables:
+        - households
+        - persons
+  - name: mp_summarize            # output files: the main process
+    begin: write_data_dictionary

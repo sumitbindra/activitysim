@@ -1,0 +1,385 @@
+"""
+A component that runs a simple choice model (multinomial or nested logit)
+from its ``ChoiceModelDefinition``: one choice per chooser, among a fixed
+list of alternatives.
+
+Choosers are seen through a ``ChooserView``: the chooser table plus other
+tables joined by a key column (e.g. households joined to land_use by
+home_zone_id). Joined columns are looked up only when a formula uses them;
+no merged copy of the tables is built.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from .. import logit
+from ..component import Component, MissingInputError, Needs, StepContext
+from ..logit import FormulaValues
+from ..seams import Engine
+from ..spec.definition import ChoiceModelDefinition
+from ..spec.translate import INDEX
+
+
+@dataclass
+class ChooserView:
+    """
+    The chooser table plus other tables joined by a key column, e.g. tours
+    joined to persons by person_id, persons to households by household_id.
+    A join's key can come from the chooser table or an earlier join.
+
+    When a column name is in several tables, the chooser table wins, then
+    the earlier join; this is the order 1.x's merged tables give.
+    """
+
+    table: str
+    # (other table, key column), in order of precedence
+    joins: list[tuple[str, str]] = field(default_factory=list)
+
+    def _join_index(self, table: str) -> int:
+        return [t for t, _ in self.joins].index(table)
+
+    def _source(self, col: str, available: Mapping[str, set[str]], upto: int | None = None):
+        if col in available.get(self.table, set()):
+            return self.table
+        for other, _ in self.joins[:upto]:
+            if col in available.get(other, set()):
+                return other
+        return None
+
+    def columns(self, available: Mapping[str, set[str]]) -> set[str]:
+        """Every column the view offers."""
+        out = set(available.get(self.table, set()))
+        for other, _ in self.joins:
+            out |= available.get(other, set())
+        return out
+
+    def resolve(self, columns: set[str], available: Mapping[str, set[str]]) -> Needs:
+        needs: dict[str, set[str]] = {self.table: set()}
+
+        def add(col: str, upto: int | None = None) -> bool:
+            src = self._source(col, available, upto)
+            if src is None:
+                return False
+            if col in needs.get(src, set()):
+                return True
+            needs.setdefault(src, set()).add(col)
+            if src != self.table:
+                i = self._join_index(src)
+                key = self.joins[i][1]
+                if not add(key, i):
+                    raise MissingInputError(
+                        f"key '{key}' to join '{src}' not found in {self.table} or an earlier join"
+                    )
+            return True
+
+        missing = [col for col in sorted(columns) if not add(col)]
+        if missing:
+            where = [self.table] + [t for t, _ in self.joins]
+            raise MissingInputError(f"columns {missing} not found in {where}")
+        return {t: sorted(c) for t, c in needs.items()}
+
+    def _collect(self, needs: Needs, column, positions, column_at) -> dict[str, object]:
+        sources: dict[str, str] = {}
+        for t in [self.table] + [o for o, _ in self.joins]:
+            for c in needs.get(t, []):
+                sources.setdefault(c, t)
+        cols: dict[str, object] = {}
+        pos: dict[str, object] = {}
+
+        def value(c):
+            if c not in cols:
+                t = sources[c]
+                if t == self.table:
+                    cols[c] = column(t, c)
+                else:
+                    if t not in pos:
+                        pos[t] = positions(t, value(self.joins[self._join_index(t)][1]))
+                    cols[c] = column_at(t, c, pos[t])
+            return cols[c]
+
+        for c in sources:
+            value(c)
+        return cols
+
+    def gather(self, ctx: StepContext, needs: Needs) -> dict[str, object]:
+        """The needed columns, in chooser row order (joined columns looked up, not merged)."""
+        return self._collect(needs, ctx.column, ctx.positions, ctx.column_at)
+
+    def gather_from_store(self, store, columns: set[str]) -> dict[str, object]:
+        """Same as ``gather``, straight from a Store (for checks and notebooks)."""
+        needs = self.resolve(columns, store.columns())
+        return self._collect(
+            needs,
+            lambda t, c: store[t][c],
+            lambda t, ids: store[t].positions(ids),
+            lambda t, c, p: store[t][c][p],
+        )
+
+
+# 1.x's persons_merged: each person with their household, home zone and its accessibility
+PERSONS_MERGED = ChooserView("persons", [
+    ("households", "household_id"),
+    ("land_use", "home_zone_id"),
+    ("accessibility", "home_zone_id"),
+])
+
+
+@dataclass
+class Choosers:
+    """Which rows of the chooser table choose: those whose ``column`` passes ``test``."""
+
+    column: str
+    test: Callable[[np.ndarray], np.ndarray]
+    description: str = ""
+
+
+@dataclass
+class ChoiceOutput:
+    """
+    What is written for each row of the chooser table: ``values(choices)``
+    for the rows that chose (``choices``: positions among the alternatives),
+    ``fill`` for the others, as ``dtype``; with ``categories``, as a pandas
+    category with them (as 1.x writes many choices).
+    """
+
+    values: Callable[[np.ndarray], np.ndarray]
+    fill: object = 0
+    dtype: object = None
+    categories: list | None = None
+
+
+@dataclass
+class Preprocessor:
+    """
+    Columns a 1.x preprocessor adds before the choice: an assignment spec and
+    the other tables it reads. ``on``: the table it runs on, when that isn't
+    the choosers but a table they join (1.x: joint tour composition annotates
+    the households, then merges them with the tours); ``rows``: which of that
+    table's rows it runs on (1.x filters them first).
+    """
+
+    spec: object
+    tables: list
+    on: str | None = None
+    rows: Choosers | None = None
+
+
+def simple_choice_component(
+    definition: ChoiceModelDefinition,
+    step: str,
+    view: ChooserView,
+    output_column: str,
+    random_channel: str | None = None,
+    shift_utilities: bool = False,
+    drop_zero_terms: bool = True,
+    roles: Mapping[str, list[str]] | None = None,
+    choosers: Choosers | None = None,
+    preprocessor: tuple | None = None,
+    output: ChoiceOutput | None = None,
+    filter_after_preprocessor: bool = False,
+) -> Component:
+    """
+    Build a component that writes the chosen alternative's position
+    (0 = first alternative) to ``view.table``.``output_column``.
+
+    ``drop_zero_terms`` skips terms whose coefficients are all zero, as
+    ActivitySim 1.x does with its legacy engine. Optional, as some 1.x
+    models do: only some rows choose (``choosers``); a preprocessor
+    (``(AssignmentSpec, tables it reads)``) adds columns to the choosers
+    first, seeing every column of the view as 1.x's merged table; and
+    ``output`` turns the choices into the written values. The preprocessor
+    runs on the choosers only, unless ``filter_after_preprocessor``: then on
+    every row, and the choosers are picked after (their column may be one
+    the preprocessor makes), as 1.x's transit_pass_subsidy does.
+    """
+    nests = definition.nest_tree()  # None for multinomial logit
+    coef = definition.coefficient_matrix()
+    keep = ~(coef == 0).all(axis=1) if drop_zero_terms else np.ones(len(coef), dtype=bool)
+    coef = coef[keep]
+    terms_fn, source = definition.utility_function(keep)
+    labels = [t.label or f"term_{i + 1}" for i, t in enumerate(definition.terms) if keep[i]]
+    formulas = [t.formula for i, t in enumerate(definition.terms) if keep[i]]
+    columns = definition.columns_used(keep)
+    channel = random_channel or view.table
+    resolved: dict[str, Needs] = {}
+    pre = preprocessor
+    if isinstance(pre, tuple):  # (spec, tables): on the choosers
+        pre = Preprocessor(*pre)
+    if filter_after_preprocessor and pre is not None and pre.on is not None:
+        raise NotImplementedError(f"{step}: a preprocessor on a joined table, before the choosers are picked")
+
+    def resolve_needs(available: Mapping[str, set[str]]) -> Needs:
+        if roles is not None:  # asim_core's language: role.column names checked
+            from .roles import check_roles, role_columns
+
+            translated = [t for i, t in enumerate(definition.translated) if keep[i]]
+            check_roles(step, translated, role_columns(view, roles, available))
+        wanted = set(columns)
+        extra: dict[str, set[str]] = {}
+        if pre is not None:
+            df_cols = view.columns(available) if pre.on is None else set(available.get(pre.on, set()))
+            bound = pre.spec.bind(df_cols, {t: available.get(t, set()) for t in pre.tables})
+            if bound.n_random or bound.skim_uses():
+                raise NotImplementedError(f"{step}: preprocessor with random draws or skims")
+            resolved["pre"] = bound
+            if pre.on is None:
+                wanted = (wanted - set(bound.targets)) | (bound.columns_used() - {INDEX})
+            else:  # runs on the joined table: its columns are read there, its results joined
+                if pre.on not in dict(view.joins):
+                    raise MissingInputError(f"{step}: the preprocessor's table '{pre.on}' isn't joined")
+                wanted = (wanted - set(bound.targets)) | {dict(view.joins)[pre.on]}
+                own = set(bound.columns_used() - {INDEX}) | ({pre.rows.column} if pre.rows else set())
+                extra.setdefault(pre.on, set()).update(own)
+            for t, c in bound.tables_used():
+                extra.setdefault(t, set()).add(c)
+        made = set(resolved["pre"].targets) if pre is not None and pre.on is None else set()
+        if choosers is not None and not (filter_after_preprocessor and choosers.column in made):
+            wanted.add(choosers.column)
+        resolved["view_needs"] = view_needs = view.resolve(wanted, available)
+        needs = {t: set(c) for t, c in view_needs.items()}
+        for t, c in extra.items():  # read by the preprocessor's lookups, not through the view
+            needs[t] = needs.get(t, set()) | c
+        resolved["needs"] = needs
+        return needs
+
+    def compute(cols: Mapping[str, object], n: int, engine: Engine):
+        """Utilities and probabilities for ``n`` choosers, using ``engine``'s pieces."""
+        with np.errstate(divide="ignore", invalid="ignore"):
+            utils = engine.utilities(FormulaValues(terms_fn, cols), coef, n)
+        if nests is None:
+            probs, bad = engine.probabilities(utils, shift=shift_utilities)
+        else:  # 1.x uses no overflow protection for nested logit
+            probs, bad, _ = engine.nested_probabilities(utils, definition.alternatives, nests)
+        return utils, probs, bad
+
+    def run(ctx: StepContext):
+        ids = all_ids = ctx.ids(view.table)
+        cols = view.gather(ctx, resolved["view_needs"])
+        bound_pre = resolved.get("pre")
+        own_pre = bound_pre is not None and pre.on is None  # runs on the choosers' rows
+        if own_pre and filter_after_preprocessor:  # on every row, then the choosers are picked
+            cols = _preprocess(ctx, bound_pre, cols, ids)
+        rows_choosing = None
+        if choosers is not None:
+            rows_choosing = np.flatnonzero(choosers.test(np.asarray(cols[choosers.column])))
+            ids = all_ids[rows_choosing]
+            cols = {c: (v[rows_choosing] if np.ndim(v) else v) for c, v in cols.items()}
+        if own_pre and not filter_after_preprocessor:
+            cols = _preprocess(ctx, bound_pre, cols, ids)
+        elif bound_pre is not None and pre.on is not None:
+            cols = dict(cols)
+            cols.update(_joined_preprocessor(ctx, pre, bound_pre, np.asarray(cols[dict(view.joins)[pre.on]])))
+        utils, probs, bad = compute(cols, len(ids), ctx.engine)
+        if bad.any():
+            raise ValueError(
+                f"{step}: {int(bad.sum())} choosers have no usable probabilities, "
+                f"e.g. IDs {ids[bad][:5].tolist()}"
+            )
+        rands = ctx.random.uniform(channel, ids)
+        choices = ctx.engine.choose(probs, rands)
+        rows = ctx.tracer.targets(view.table, ids)
+        if len(rows):
+            _trace(ctx, ids, rows, cols, terms_fn, labels, formulas, coef, utils, probs,
+                   rands, choices, definition.alternatives)
+        if output is None and rows_choosing is None:
+            return {view.table: {output_column: choices}}
+        values = choices if output is None else np.asarray(output.values(choices))
+        dtype = values.dtype if output is None or output.dtype is None else output.dtype
+        full = np.full(len(all_ids), 0 if output is None else output.fill, dtype=dtype)
+        full[slice(None) if rows_choosing is None else rows_choosing] = values
+        if output is not None and output.categories is not None:
+            import pandas as pd
+
+            full = pd.Categorical(full, categories=output.categories)
+        return {view.table: {output_column: full}}
+
+    return Component(
+        name=step,
+        run=run,
+        provides={view.table: [output_column]},
+        resolve_needs=resolve_needs,
+        description=f"{definition.name}: {'nested' if nests else 'multinomial'} logit over "
+                    f"{definition.alternatives}",
+        info={
+            "definition": definition,
+            "generated_source": source,
+            "chooser_table": view.table,
+            "trace_table": view.table,
+            "view": view,
+            "columns": columns,
+            "compute": compute,  # for utility- and probability-level checks
+        },
+    )
+
+
+def _trace(ctx, ids, rows, cols, terms_fn, labels, formulas, coef, utils, probs, rands,
+           choices, alts):
+    # re-evaluate the formulas for the traced rows only, so tracing works the
+    # same whichever implementation computed the utilities
+    subset = {c: (v[rows] if np.ndim(v) else v) for c, v in cols.items()}
+    with np.errstate(divide="ignore", invalid="ignore"):
+        values = logit.term_values(terms_fn(subset), len(rows), n_terms=len(labels))
+    term_rows = []
+    for j, r in enumerate(rows):
+        for k, (label, formula) in enumerate(zip(labels, formulas)):
+            term_rows.append([ids[r], label, formula, values[k, j]] + list(values[k, j] * coef[k]))
+    ctx.tracer.write(ctx.step, "terms", ["id", "label", "formula", "value"] + alts, term_rows)
+    choice_rows = []
+    for r in rows:
+        choice_rows.append(
+            [ids[r]] + list(utils[r]) + list(probs[r]) + [rands[r, 0], choices[r], alts[choices[r]]]
+        )
+    header = (["id"] + [f"utility_{a}" for a in alts] + [f"probability_{a}" for a in alts]
+              + ["random_draw", "choice_position", "choice"])
+    ctx.tracer.write(ctx.step, "choices", header, choice_rows)
+
+
+def _preprocess(ctx, bound, cols: Mapping[str, object], ids: np.ndarray) -> dict:
+    """The choosers' columns with a preprocessor's results added (it runs on these rows)."""
+    from .annotate import _update
+    from .runtime import TableLookup
+
+    c = {k: cols[k] for k in bound.columns_used() - {INDEX}}
+    c[INDEX] = ids
+    with np.errstate(all="ignore"):  # 1.x logs numpy warnings and carries on
+        v = bound.function(c, None, len(ids), TableLookup(ctx), None, {})
+    cols = dict(cols)
+    for target in bound.targets:
+        cols[target] = _update(cols.get(target), np.asarray(v[target]))
+    return cols
+
+
+def _joined_preprocessor(ctx, pre: Preprocessor, bound, keys: np.ndarray) -> dict:
+    """
+    Run a preprocessor on the joined table's rows (those passing ``pre.rows``),
+    then give each chooser its row's results, as 1.x's merge of the annotated
+    table does (choosers whose row isn't there get missing values).
+    """
+    from .annotate import _update
+    from .runtime import TableLookup, plain
+
+    ids = ctx.ids(pre.on)
+    rows = np.arange(len(ids)) if pre.rows is None else \
+        np.flatnonzero(pre.rows.test(np.asarray(plain(ctx.column(pre.on, pre.rows.column)))))
+    c = {k: np.asarray(plain(ctx.column(pre.on, k)))[rows] for k in bound.columns_used() - {INDEX}}
+    c[INDEX] = ids[rows]
+    with np.errstate(all="ignore"):  # 1.x logs numpy warnings and carries on
+        v = bound.function(c, None, len(rows), TableLookup(ctx), None, {})
+    import pandas as pd
+
+    pos = pd.Index(ids[rows]).get_indexer(keys)
+    found = pos >= 0
+    out = {}
+    for target in bound.targets:
+        values = _update(c.get(target), np.asarray(v[target]))
+        if found.all():
+            out[target] = values[pos]
+        else:
+            col = np.full(len(keys), np.nan)
+            col[found] = values[pos[found]]
+            out[target] = col
+    return out

@@ -1,0 +1,120 @@
+# asim_core model file (formulas in asim_core's language; see docs/model_files.md)
+# parameters: 1.x tested which columns the choosers have; each step using
+# this model now says so (these values are for this model's own step).
+
+kind: tour_mode_choice
+description: A mode for every tour, and the tour's mode choice logsum (converted from tour_mode_choice.yaml,
+  tour_mode_choice.csv, tour_mode_choice_coeffs.csv, tour_mode_choice_coeffs_template.csv, tour_mode_choice_annotate_choosers_preprocessor.csv).
+alternatives:
+- DRIVEALONE
+- SHARED2
+- SHARED3
+- WALK
+- BIKE
+- WALK_AB
+- WALK_BM
+- WALK_MR
+- WALK_CR
+- PNR_AB
+- PNR_BM
+- PNR_MR
+- PNR_CR
+- KNR_AB
+- KNR_BM
+- KNR_MR
+- KNR_CR
+- SCHOOLBUS
+- TAXI
+- TNC_SINGLE
+- TNC_SHARED
+nests:
+  name: root
+  coefficient: coef_nest_root
+  alternatives:
+  - name: AUTO
+    coefficient: coef_nest_AUTO
+    alternatives:
+    - DRIVEALONE
+    - SHARED2
+    - SHARED3
+  - name: NONMOTORIZED
+    coefficient: coef_nest_NONMOTORIZED
+    alternatives:
+    - WALK
+    - BIKE
+  - name: TRANSIT
+    coefficient: coef_nest_TRANSIT
+    alternatives:
+    - name: WALKACCESS
+      coefficient: coef_nest_TRANSIT_WALKACCESS
+      alternatives:
+      - WALK_AB
+      - WALK_BM
+      - WALK_MR
+      - WALK_CR
+    - name: PNRACCESS
+      coefficient: coef_nest_TRANSIT_PNRACCESS
+      alternatives:
+      - PNR_AB
+      - PNR_BM
+      - PNR_MR
+      - PNR_CR
+    - name: KNRACCESS
+      coefficient: coef_nest_TRANSIT_KNRACCESS
+      alternatives:
+      - KNR_AB
+      - KNR_BM
+      - KNR_MR
+      - KNR_CR
+  - name: SCHOOL_BUS
+    coefficient: coef_nest_SCHOOL_BUS
+    alternatives:
+    - SCHOOLBUS
+  - name: RIDEHAIL
+    coefficient: coef_nest_RIDEHAIL
+    alternatives:
+    - TAXI
+    - TNC_SINGLE
+    - TNC_SHARED
+terms: tour_mode_choice_terms.csv
+coefficients: tour_mode_choice_coefficients.csv
+derived: tour_mode_choice_derived.csv
+derived_tables:
+- land_use
+- tours
+formulas_see_coefficients: true
+parameters:
+  has_parent_tour_id: false
+  has_tour_category: true
+  has_tour_type: true
+tour_purpose: where(tour.tour_type == 'school' and person.is_university, 'univ', tour.tour_type)
+time_periods:
+  out_period: tour.start
+  in_period: tour.end
+outputs:
+  choice: tour_mode
+  logsum: mode_choice_logsum
+constants:
+  walkThresh: 1.5
+  shortWalk: 0.333
+  longWalk: 0.667
+  walkSpeed: 3.0
+  bikeThresh: 6.0
+  bikeSpeed: 12.0
+  maxCbdAreaTypeThresh: 2
+  indivTour: 1.0
+  Taxi_waitTime_mean:
+    1: 5.5
+    2: 9.5
+    3: 13.3
+    4: 17.3
+    5: 26.5
+  Taxi_waitTime_sd:
+    1: 0
+    2: 0
+    3: 0
+    4: 0
+    5: 0
+options:
+  drop_zero_terms: true
+  random_draws: chooser_stream

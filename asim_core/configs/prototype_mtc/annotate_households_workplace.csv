@@ -1,0 +1,2 @@
+Description,Name,Formula
+,hh_work_auto_savings_ratio,"fillna(sum_by(persons.work_auto_savings_ratio, persons.household_id, household.household_id), 0.0)"
